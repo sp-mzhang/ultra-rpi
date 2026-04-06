@@ -39,5 +39,6 @@ See `tsh_ultra.yaml` and `quick_demo.yaml` for examples.
 
 ## Architecture
 
-See `.cursor/plans/ultra_rpi_architecture_*.plan.md` for the full
-architecture document.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full software
+architecture. The [docs/](docs/) folder holds design documentation that
+ships with the repository.
