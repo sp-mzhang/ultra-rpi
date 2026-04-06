@@ -139,19 +139,27 @@ def create_api_router(
                 )
         runner.stm32 = stm32
 
+        def _hw_init_and_run():
+            '''Pre-flight init + protocol run in thread.'''
+            stm32.send_command_wait_done(
+                cmd={'cmd': 'pump_init'},
+                timeout_s=30.0,
+            )
+            stm32.send_command_wait_done(
+                cmd={'cmd': 'home_all'},
+                timeout_s=60.0,
+            )
+            return runner._run_sync(
+                req.recipe,
+                chip_id=req.chip_id,
+            )
+
         async def _run():
             try:
-                stm32.send_command_wait_done(
-                    cmd={'cmd': 'pump_init'},
-                    timeout_s=30.0,
-                )
-                stm32.send_command_wait_done(
-                    cmd={'cmd': 'home_all'},
-                    timeout_s=60.0,
-                )
-                await runner.run(
-                    req.recipe,
-                    chip_id=req.chip_id,
+                loop = asyncio.get_running_loop()
+                app.event_bus.set_loop(loop)
+                await loop.run_in_executor(
+                    None, _hw_init_and_run,
                 )
             except Exception as err:
                 LOG.error(

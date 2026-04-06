@@ -9,7 +9,6 @@ dependencies removed.
 '''
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from typing import Optional
@@ -1258,7 +1257,7 @@ class STM32Interface:
             timeout_s=timeout_s,
         )
 
-    async def wait_centrifuge_idle(
+    def wait_centrifuge_idle(
             self,
             timeout_s: float = 60.0,
             poll_interval_s: float = 0.2,
@@ -1281,7 +1280,7 @@ class STM32Interface:
         while time.time() < deadline:
             r = self.centrifuge_status(timeout_s=5.0)
             if r is None:
-                await asyncio.sleep(poll_interval_s)
+                time.sleep(poll_interval_s)
                 continue
             state = r.get('state', -1)
             if state == self.CFUGE_ST_ERROR:
@@ -1300,7 +1299,7 @@ class STM32Interface:
                     f'rpm={r.get("rpm", 0)}',
                 )
                 return True
-            await asyncio.sleep(poll_interval_s)
+            time.sleep(poll_interval_s)
 
         LOG.warning(
             'Timed out waiting for centrifuge idle '
@@ -1330,7 +1329,7 @@ class STM32Interface:
 
     _LIFT_USTEPS_PER_MM = 16.0 / 0.0254  # ~629.92
 
-    async def wait_lift_idle(
+    def wait_lift_idle(
             self,
             target_mm: float,
             tol_mm: float = 1.5,
@@ -1354,7 +1353,7 @@ class STM32Interface:
         while time.time() < deadline:
             r = self.lift_status(timeout_s=5.0)
             if r is None:
-                await asyncio.sleep(poll_interval_s)
+                time.sleep(poll_interval_s)
                 continue
             pos_steps = r.get('position_steps', 0)
             pos_mm = round(
@@ -1366,7 +1365,7 @@ class STM32Interface:
                     f'(target={target_mm} mm)',
                 )
                 return True
-            await asyncio.sleep(poll_interval_s)
+            time.sleep(poll_interval_s)
 
         LOG.warning(
             'Timed out waiting for lift to reach '
@@ -1378,7 +1377,7 @@ class STM32Interface:
     # High-level pipetting helpers
     # ============================================================
 
-    async def aspirate_at(
+    def aspirate_at(
             self,
             loc_id: int,
             volume_ul: int,
@@ -1422,7 +1421,7 @@ class STM32Interface:
                 f'({loc_id}) FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         if piston_reset:
             r = self.send_command_wait_done(
@@ -1445,7 +1444,7 @@ class STM32Interface:
                 f'FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         r = self.send_command_wait_done(
             cmd={
@@ -1462,7 +1461,7 @@ class STM32Interface:
             )
             return False
         LOG.info(f'aspirate_at: {volume_ul} ul OK')
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         r = self.send_command_wait_done(
             cmd={'cmd': 'home_z_axis'},
@@ -1471,10 +1470,10 @@ class STM32Interface:
         if not _resp_ok(r):
             LOG.error('aspirate_at: home Z FAILED')
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
         return True
 
-    async def smart_aspirate_at(
+    def smart_aspirate_at(
             self,
             loc_id: int,
             volume_ul: int,
@@ -1533,7 +1532,7 @@ class STM32Interface:
                 f'({loc_id}) FAILED',
             )
             return None
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         if piston_reset:
             r = self.send_command_wait_done(
@@ -1569,7 +1568,7 @@ class STM32Interface:
         LOG.info(
             f'smart_aspirate_at: {volume_ul} ul OK',
         )
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         r = self.send_command_wait_done(
             cmd={'cmd': 'home_z_axis'},
@@ -1580,10 +1579,10 @@ class STM32Interface:
                 'smart_aspirate_at: home Z FAILED',
             )
             return None
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
         return resp
 
-    async def dispense_at(
+    def dispense_at(
             self,
             loc_id: int,
             volume_ul: int,
@@ -1624,7 +1623,7 @@ class STM32Interface:
                 f'({loc_id}) FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         r = self.send_command_wait_done(
             cmd={'cmd': 'move_gantry', 'z_mm': z_mm},
@@ -1636,7 +1635,7 @@ class STM32Interface:
                 f'FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         r = self.send_command_wait_done(
             cmd={
@@ -1653,7 +1652,7 @@ class STM32Interface:
             )
             return False
         LOG.info(f'dispense_at: {volume_ul} ul OK')
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         r = self.send_command_wait_done(
             cmd={'cmd': 'home_z_axis'},
@@ -1662,10 +1661,10 @@ class STM32Interface:
         if not _resp_ok(r):
             LOG.error('dispense_at: home Z FAILED')
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
         return True
 
-    async def well_dispense_at(
+    def well_dispense_at(
             self,
             loc_id: int,
             volume_ul: int,
@@ -1708,7 +1707,7 @@ class STM32Interface:
                 f' FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         r = self.send_command_wait_done(
             cmd={
@@ -1731,7 +1730,7 @@ class STM32Interface:
             f'well_dispense_at loc={loc_id}: '
             f'{volume_ul} ul OK',
         )
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         r = self.send_command_wait_done(
             cmd={'cmd': 'home_z_axis'},
@@ -1742,10 +1741,10 @@ class STM32Interface:
                 'well_dispense_at: home Z FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
         return True
 
-    async def cart_dispense_at(
+    def cart_dispense_at(
             self,
             loc_id: int,
             volume_ul: int,
@@ -1794,7 +1793,7 @@ class STM32Interface:
                 f' FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         if cartridge_z:
             r = self.send_command_wait_done(
@@ -1809,7 +1808,7 @@ class STM32Interface:
                     'cart_dispense_at: Z move FAILED',
                 )
                 return False
-            await asyncio.sleep(0.3)
+            time.sleep(0.3)
 
         dispense_time = (
             float(volume_ul) / max(vel_ul_s, 0.01)
@@ -1845,7 +1844,7 @@ class STM32Interface:
             f'cart_dispense_at loc={loc_id}: '
             f'{volume_ul} ul OK',
         )
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         rh = self.send_command_wait_done(
             cmd={'cmd': 'home_z_axis'},
@@ -1856,7 +1855,7 @@ class STM32Interface:
                 'cart_dispense_at: home Z FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
         if stream:
             return {
                 'ok': True,
@@ -1864,7 +1863,7 @@ class STM32Interface:
             }
         return True
 
-    async def cart_dispense_bf_at(
+    def cart_dispense_bf_at(
             self,
             loc_id: int,
             total_volume_ul: int,
@@ -1917,7 +1916,7 @@ class STM32Interface:
                 f'move_to({loc_id}) FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         if cartridge_z:
             r = self.send_command_wait_done(
@@ -1932,7 +1931,7 @@ class STM32Interface:
                     'cart_dispense_bf_at: Z move FAILED',
                 )
                 return False
-            await asyncio.sleep(0.3)
+            time.sleep(0.3)
 
         net_per_cycle = max(
             for_vol_ul - back_vol_ul, 1,
@@ -1980,7 +1979,7 @@ class STM32Interface:
             f'cart_dispense_bf_at loc={loc_id}: '
             f'{total_volume_ul} ul OK',
         )
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         rh = self.send_command_wait_done(
             cmd={'cmd': 'home_z_axis'},
@@ -1991,7 +1990,7 @@ class STM32Interface:
                 'cart_dispense_bf_at: home Z FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
         if stream:
             return {
                 'ok': True,
@@ -1999,7 +1998,7 @@ class STM32Interface:
             }
         return True
 
-    async def tip_mix_at(
+    def tip_mix_at(
             self,
             loc_id: int,
             mix_vol_ul: int = 150,
@@ -2043,7 +2042,7 @@ class STM32Interface:
                 f' FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         z_target = (
             z_depth_mm if z_depth_mm != 0.0
@@ -2062,7 +2061,7 @@ class STM32Interface:
                 f'{z_target} mm FAILED',
             )
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         r = self.send_command_wait_done(
             cmd={
@@ -2084,7 +2083,7 @@ class STM32Interface:
             f'tip_mix_at loc={loc_id}: '
             f'{mix_vol_ul} ul x{cycles} OK',
         )
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
 
         r = self.send_command_wait_done(
             cmd={'cmd': 'home_z_axis'},
@@ -2093,7 +2092,7 @@ class STM32Interface:
         if not _resp_ok(r):
             LOG.error('tip_mix_at: home Z FAILED')
             return False
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
         return True
 
 

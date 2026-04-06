@@ -3,6 +3,13 @@
 Orchestrates recipe execution with pause/resume support,
 state tracking, background reader acquisition, and
 sway-compatible run data persistence.
+
+The entire protocol loop runs in a dedicated OS thread
+(``_run_sync``), so all STM32 serial calls block naturally
+without starving the asyncio event loop. A thin
+``async def run()`` wrapper launches the thread via
+``run_in_executor`` to preserve the awaitable API contract
+for callers (e.g. ``api.py``).
 '''
 from __future__ import annotations
 
@@ -33,8 +40,10 @@ class ProtocolRunner:
     '''Orchestrates protocol recipe execution.
 
     Iterates through recipe phases and steps, delegating to
-    registered StepExecutor classes. Supports pause/resume
-    via asyncio.Event, tracks state via ProtocolStateTracker,
+    registered StepExecutor classes.  The step loop runs in a
+    dedicated OS thread so synchronous STM32 serial calls
+    never block the asyncio event loop.  Supports pause/resume
+    via threading.Event, tracks state via ProtocolStateTracker,
     runs a background reader acquisition loop, and persists
     run data in sway-compatible format.
 
@@ -75,9 +84,9 @@ class ProtocolRunner:
         self.recipe: Recipe | None = None
         self.cartridge_z_mm: float = 0.0
 
-        self._pause_event = asyncio.Event()
+        self._pause_event = threading.Event()
         self._pause_event.set()
-        self._abort_event = asyncio.Event()
+        self._abort_event = threading.Event()
         self._running = False
         self._reader_thread: threading.Thread | None = None
         self._reader_stop = threading.Event()
@@ -117,26 +126,27 @@ class ProtocolRunner:
             self._abort_event.set()
             self._pause_event.set()
 
-    async def check_pause(self) -> None:
+    def check_pause(self) -> None:
         '''Check for pause at a step boundary.
 
-        Called between steps. Blocks if paused until resume
-        or abort is called.
+        Called between steps from the protocol thread. Blocks
+        the thread if paused until resume or abort is called.
+        Events are emitted via ``emit_sync`` (thread-safe).
         '''
         if self._abort_event.is_set():
             return
 
         if not self._pause_event.is_set():
             self.tracker.is_paused = True
-            await self._event_bus.emit(
+            self._event_bus.emit_sync(
                 'protocol_paused',
                 self.tracker.snapshot().to_dict(),
             )
             LOG.info('Protocol PAUSED -- waiting...')
-            await self._pause_event.wait()
+            self._pause_event.wait()
             if not self._abort_event.is_set():
                 self.tracker.is_paused = False
-                await self._event_bus.emit(
+                self._event_bus.emit_sync(
                     'protocol_resumed',
                     self.tracker.snapshot().to_dict(),
                 )
@@ -151,9 +161,10 @@ class ProtocolRunner:
         OS thread.
 
         Runs entirely outside the asyncio event loop so
-        protocol steps (which block the loop via synchronous
-        STM32 serial calls) can never starve the serial
-        reader. This mirrors sway's separate-process reader.
+        protocol steps (which block their own thread via
+        synchronous STM32 serial calls) can never starve the
+        serial reader. This mirrors sway's separate-process
+        reader.
 
         ``capture_block()`` and ``process_tlv_file()`` are
         both synchronous and run back-to-back in this thread.
@@ -217,10 +228,24 @@ class ProtocolRunner:
             )
 
     def _start_reader(self) -> None:
-        '''Start the background reader thread.'''
+        '''Start the background reader thread.
+
+        Caches the asyncio event loop on the event bus so
+        ``emit_sync()`` (called from both reader and protocol
+        threads) can schedule callbacks on the correct loop.
+        '''
         if self._acquisition and self._pipeline:
             self._pipeline.reset_baseline()
             self._reader_stop.clear()
+            try:
+                loop = asyncio.get_running_loop()
+                self._event_bus.set_loop(loop)
+            except RuntimeError:
+                LOG.warning(
+                    'No running loop to cache for '
+                    'emit_sync -- events from background '
+                    'threads may not reach GUI',
+                )
             self._reader_thread = threading.Thread(
                 target=self._reader_loop,
                 name='reader-acq',
@@ -236,14 +261,14 @@ class ProtocolRunner:
                 'ok' if self._pipeline else 'NONE',
             )
 
-    async def _wait_for_reader_data(self) -> None:
+    def _wait_for_reader_data(self) -> None:
         '''Wait for initial reader blocks before protocol
         steps begin.
 
         Polls the acquisition block counter until
         ``_READER_WARMUP_BLOCKS`` have been captured or a
-        timeout is reached. Uses ``asyncio.sleep`` so the
-        event loop stays responsive for other tasks.
+        timeout is reached. Runs inside the protocol thread
+        so ``time.sleep`` is fine.
         '''
         if self._acquisition is None:
             return
@@ -265,7 +290,7 @@ class ProtocolRunner:
                     captured,
                 )
                 return
-            await asyncio.sleep(0.5)
+            time.sleep(0.5)
 
         captured = self._acquisition._block_counter + 1
         LOG.warning(
@@ -275,21 +300,15 @@ class ProtocolRunner:
             captured, target,
         )
 
-    async def _stop_reader(self) -> None:
+    def _stop_reader(self) -> None:
         '''Signal the reader thread to stop and wait for it.
 
-        Uses a threading.Event for the stop signal and joins
-        in a thread-pool executor so we don't block the
-        event loop while waiting for the thread to finish.
+        Called from the protocol thread, so a direct join is
+        safe (no event loop to block).
         '''
         if self._reader_thread is not None:
             self._reader_stop.set()
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None,
-                self._reader_thread.join,
-                10.0,
-            )
+            self._reader_thread.join(10.0)
             if self._reader_thread.is_alive():
                 LOG.warning(
                     'Reader thread did not exit within '
@@ -350,20 +369,19 @@ class ProtocolRunner:
         return rg, run_dir
 
     # ----------------------------------------------------------
-    # Main run
+    # Main run -- synchronous core in protocol thread
     # ----------------------------------------------------------
 
-    async def run(
+    def _run_sync(
             self,
             recipe_name: str,
             chip_id: str = '',
     ) -> list[dict]:
-        '''Execute a complete protocol recipe.
+        '''Execute a complete protocol recipe (synchronous).
 
-        Loads the recipe, creates a sway-compatible run
-        directory, starts background reader acquisition,
-        iterates through all phases and steps, then
-        persists results.
+        Runs entirely in a dedicated OS thread. All STM32
+        calls block naturally and events reach the GUI via
+        ``emit_sync``.
 
         Args:
             recipe_name: Recipe name or path to YAML file.
@@ -402,9 +420,9 @@ class ProtocolRunner:
                 self._pipeline.set_run_dir(run_dir)
 
         self._start_reader()
-        await self._wait_for_reader_data()
+        self._wait_for_reader_data()
 
-        await self._event_bus.emit(
+        self._event_bus.emit_sync(
             'protocol_started', {
                 'recipe': self.recipe.name,
                 'chip_id': chip_id,
@@ -421,10 +439,10 @@ class ProtocolRunner:
         try:
             for phase in self.recipe.phases:
                 for step_def in phase.steps:
-                    await self.check_pause()
+                    self.check_pause()
                     if self._abort_event.is_set():
                         LOG.warning('Protocol ABORTED')
-                        await self._event_bus.emit(
+                        self._event_bus.emit_sync(
                             'protocol_aborted',
                             self.tracker.snapshot(
                             ).to_dict(),
@@ -453,7 +471,7 @@ class ProtocolRunner:
                     )
 
                     executor = executor_cls()
-                    ok = await executor.execute(
+                    ok = executor.execute(
                         step_def.params, self,
                     )
                     self.tracker.end_step(
@@ -466,7 +484,7 @@ class ProtocolRunner:
                             f'"{step_def.label}" '
                             f'FAILED -- aborting',
                         )
-                        await self._event_bus.emit(
+                        self._event_bus.emit_sync(
                             'protocol_error', {
                                 'step': step_index,
                                 'label': step_def.label,
@@ -474,7 +492,7 @@ class ProtocolRunner:
                         )
                         return self.tracker.results
         finally:
-            await self._stop_reader()
+            self._stop_reader()
             self._running = False
             if rg_writer is not None:
                 try:
@@ -495,11 +513,37 @@ class ProtocolRunner:
             f'({step_index} steps, '
             f'{self.tracker.snapshot().elapsed_s:.1f}s)',
         )
-        await self._event_bus.emit(
+        self._event_bus.emit_sync(
             'protocol_done',
             self.tracker.snapshot().to_dict(),
         )
         return self.tracker.results
+
+    async def run(
+            self,
+            recipe_name: str,
+            chip_id: str = '',
+    ) -> list[dict]:
+        '''Async wrapper that launches ``_run_sync`` in
+        a thread pool.
+
+        Preserves the ``await runner.run()`` API contract for
+        callers. Caches the event loop first so both the
+        protocol thread and reader thread can reach the GUI
+        via ``emit_sync``.
+
+        Args:
+            recipe_name: Recipe name or path to YAML file.
+            chip_id: Optional chip ID for tracking.
+
+        Returns:
+            List of per-step result dicts.
+        '''
+        loop = asyncio.get_running_loop()
+        self._event_bus.set_loop(loop)
+        return await loop.run_in_executor(
+            None, self._run_sync, recipe_name, chip_id,
+        )
 
     def collect_pressure(
             self,

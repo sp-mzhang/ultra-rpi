@@ -52,6 +52,7 @@ class Application:
     async def start(self) -> None:
         '''Boot all services and run until shutdown.'''
         loop = asyncio.get_event_loop()
+        self.event_bus.set_loop(loop)
 
         use_mock = os.environ.get(
             'ULTRA_MOCK', '',

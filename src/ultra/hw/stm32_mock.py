@@ -4,10 +4,13 @@ Provides a drop-in replacement for STM32Interface that
 simulates command responses without requiring physical
 hardware. Useful for GUI development, recipe validation,
 and integration testing.
+
+All methods are synchronous to match the real
+STM32Interface contract (protocol thread calls these
+directly).
 '''
 from __future__ import annotations
 
-import asyncio
 import logging
 import random
 import time
@@ -245,7 +248,7 @@ class STM32Mock:
             'is_homed': True,
         }
 
-    async def wait_centrifuge_idle(
+    def wait_centrifuge_idle(
             self,
             timeout_s: float = 60.0,
             poll_interval_s: float = 0.2,
@@ -255,10 +258,10 @@ class STM32Mock:
         Returns:
             Always True after a short delay.
         '''
-        await asyncio.sleep(0.5)
+        time.sleep(0.5)
         return True
 
-    async def wait_lift_idle(
+    def wait_lift_idle(
             self,
             target_mm: float,
             tol_mm: float = 1.5,
@@ -270,10 +273,10 @@ class STM32Mock:
         Returns:
             Always True after a short delay.
         '''
-        await asyncio.sleep(0.3)
+        time.sleep(0.3)
         return True
 
-    async def aspirate_at(
+    def aspirate_at(
             self, loc_id: int, volume_ul: int,
             **kwargs,
     ) -> bool:
@@ -282,10 +285,10 @@ class STM32Mock:
         Returns:
             True unless configured to fail.
         '''
-        await asyncio.sleep(self._delay_s)
+        time.sleep(self._delay_s)
         return 'pump_aspirate' not in self._fail_commands
 
-    async def smart_aspirate_at(
+    def smart_aspirate_at(
             self, loc_id: int, volume_ul: int,
             **kwargs,
     ) -> dict | None:
@@ -294,7 +297,7 @@ class STM32Mock:
         Returns:
             Mock response dict.
         '''
-        await asyncio.sleep(self._delay_s)
+        time.sleep(self._delay_s)
         if 'smart_aspirate' in self._fail_commands:
             return None
         result: dict = {
@@ -304,49 +307,49 @@ class STM32Mock:
             result['_pressure_samples'] = []
         return result
 
-    async def dispense_at(
+    def dispense_at(
             self, loc_id: int, volume_ul: int,
             **kwargs,
     ) -> bool:
         '''Simulate dispense at location.'''
-        await asyncio.sleep(self._delay_s)
+        time.sleep(self._delay_s)
         return 'pump_dispense' not in self._fail_commands
 
-    async def well_dispense_at(
+    def well_dispense_at(
             self, loc_id: int, volume_ul: int,
             **kwargs,
     ) -> bool:
         '''Simulate well dispense at location.'''
-        await asyncio.sleep(self._delay_s)
+        time.sleep(self._delay_s)
         return 'well_dispense' not in self._fail_commands
 
-    async def cart_dispense_at(
+    def cart_dispense_at(
             self, loc_id: int, volume_ul: int,
             **kwargs,
     ) -> dict | bool:
         '''Simulate cart dispense at location.'''
-        await asyncio.sleep(self._delay_s)
+        time.sleep(self._delay_s)
         if 'cart_dispense' in self._fail_commands:
             return False
         if kwargs.get('stream'):
             return {'ok': True, '_pressure_samples': []}
         return True
 
-    async def cart_dispense_bf_at(
+    def cart_dispense_bf_at(
             self, loc_id: int, total_volume_ul: int,
             **kwargs,
     ) -> dict | bool:
         '''Simulate back-and-forth cart dispense.'''
-        await asyncio.sleep(self._delay_s * 3)
+        time.sleep(self._delay_s * 3)
         if 'cart_dispense_bf' in self._fail_commands:
             return False
         if kwargs.get('stream'):
             return {'ok': True, '_pressure_samples': []}
         return True
 
-    async def tip_mix_at(
+    def tip_mix_at(
             self, loc_id: int, **kwargs,
     ) -> bool:
         '''Simulate tip mix at location.'''
-        await asyncio.sleep(self._delay_s)
+        time.sleep(self._delay_s)
         return 'tip_mix' not in self._fail_commands

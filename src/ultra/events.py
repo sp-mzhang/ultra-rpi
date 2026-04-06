@@ -40,6 +40,23 @@ class EventBus:
         ] = defaultdict(list)
         self._loop: asyncio.AbstractEventLoop | None = None
 
+    def set_loop(
+            self,
+            loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        '''Cache the asyncio event loop for ``emit_sync``.
+
+        Must be called from the asyncio thread before any
+        background thread calls ``emit_sync()``. Without
+        this, ``emit_sync`` from a non-asyncio thread
+        cannot discover the event loop and silently drops
+        events.
+
+        Args:
+            loop: The running asyncio event loop.
+        '''
+        self._loop = loop
+
     def on(
             self,
             event: str,

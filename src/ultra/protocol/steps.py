@@ -4,11 +4,15 @@ Each step type is a class with an execute() method. The runner
 dispatches by the 'type' field in the YAML step definition.
 New step types can be added by decorating a class with
 @step_type('name').
+
+All execute() methods are synchronous -- the entire protocol
+loop runs in a dedicated OS thread so STM32 serial calls
+block naturally without starving the asyncio event loop.
 '''
 from __future__ import annotations
 
-import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -36,9 +40,11 @@ class StepExecutor:
 
     Subclasses must implement execute() which performs
     the hardware operations for a single protocol step.
+    All methods are synchronous -- they run in the
+    protocol thread.
     '''
 
-    async def execute(
+    def execute(
             self,
             params: dict[str, Any],
             runner: 'ProtocolRunner',
@@ -60,7 +66,7 @@ class StepExecutor:
 class CentrifugeUnlockStep(StepExecutor):
     '''Unlock the cartridge holder.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         r = runner.stm32.send_command(
             cmd={'cmd': 'centrifuge_unlock'},
             timeout_s=600.0,
@@ -72,7 +78,7 @@ class CentrifugeUnlockStep(StepExecutor):
 class CentrifugeLockStep(StepExecutor):
     '''Lock the cartridge holder.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         r = runner.stm32.send_command(
             cmd={'cmd': 'centrifuge_lock'},
             timeout_s=600.0,
@@ -84,7 +90,7 @@ class CentrifugeLockStep(StepExecutor):
 class CentrifugeSpinStep(StepExecutor):
     '''Spin centrifuge at given RPM for duration.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         rpm = params.get('rpm', 500)
         duration_s = params.get('duration_s', 5)
         r = runner.stm32.send_command(
@@ -97,7 +103,7 @@ class CentrifugeSpinStep(StepExecutor):
         )
         if not _ok(r):
             return False
-        ok = await runner.stm32.wait_centrifuge_idle(
+        ok = runner.stm32.wait_centrifuge_idle(
             timeout_s=float(duration_s) + 60.0,
         )
         return ok
@@ -107,7 +113,7 @@ class CentrifugeSpinStep(StepExecutor):
 class CentrifugeRotateStep(StepExecutor):
     '''Rotate centrifuge to a specific angle.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         angle = params.get('angle_001deg', 0)
         move_rpm = params.get('move_rpm', 1)
         r = runner.stm32.send_command(
@@ -120,7 +126,7 @@ class CentrifugeRotateStep(StepExecutor):
         )
         if not _ok(r):
             return False
-        await asyncio.sleep(1.0)
+        time.sleep(1.0)
         return True
 
 
@@ -128,7 +134,7 @@ class CentrifugeRotateStep(StepExecutor):
 class LiftMoveStep(StepExecutor):
     '''Move lift to a target height in mm.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         target_mm = params.get('target_mm', 18.0)
         r = runner.stm32.send_command_wait_done(
             cmd={
@@ -139,7 +145,7 @@ class LiftMoveStep(StepExecutor):
         )
         if not _ok(r):
             return False
-        ok = await runner.stm32.wait_lift_idle(
+        ok = runner.stm32.wait_lift_idle(
             target_mm=target_mm,
             timeout_s=90.0,
         )
@@ -150,7 +156,7 @@ class LiftMoveStep(StepExecutor):
 class LidStep(StepExecutor):
     '''Open or close the lid.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         open_lid = params.get('open', True)
         r = runner.stm32.send_command_wait_done(
             cmd={
@@ -170,7 +176,7 @@ class TipPickStep(StepExecutor):
     not the raw tip_pickup command.
     '''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         tip_id = params.get('tip_id', 4)
         r = runner.stm32.send_command_wait_done(
             cmd={
@@ -189,7 +195,7 @@ class TipPickStep(StepExecutor):
 class TipSwapStep(StepExecutor):
     '''Swap from one tip to another.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         from_id = params.get('from_id', 4)
         to_id = params.get('to_id', 5)
         r = runner.stm32.send_command_wait_done(
@@ -209,7 +215,7 @@ class TipSwapStep(StepExecutor):
 class TipReturnStep(StepExecutor):
     '''Return tip via gantry_tip_swap to_id=0.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         tip_id = params.get('tip_id', 5)
         r = runner.stm32.send_command_wait_done(
             cmd={
@@ -228,7 +234,7 @@ class TipReturnStep(StepExecutor):
 class LLDStep(StepExecutor):
     '''Perform liquid level detection at current position.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         threshold = params.get(
             'threshold',
             runner.recipe.constants.get(
@@ -257,7 +263,7 @@ class ReagentTransferStep(StepExecutor):
     collection, well state updates.
     '''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         source = runner.tracker.get_well(
             params['source'],
         )
@@ -276,7 +282,7 @@ class ReagentTransferStep(StepExecutor):
         reasp = consts.get('reasp_ul', 12)
         remainder = asp_vol - cart_vol + reasp
 
-        sa = await runner.stm32.smart_aspirate_at(
+        sa = runner.stm32.smart_aspirate_at(
             loc_id=source.loc_id,
             volume_ul=asp_vol,
             speed_ul_s=consts.get(
@@ -297,7 +303,7 @@ class ReagentTransferStep(StepExecutor):
         )
         runner.collect_pressure(sa, params['label'])
 
-        cd_r = await runner.stm32.cart_dispense_at(
+        cd_r = runner.stm32.cart_dispense_at(
             loc_id=target.loc_id,
             volume_ul=cart_vol,
             vel_ul_s=params.get(
@@ -319,7 +325,7 @@ class ReagentTransferStep(StepExecutor):
                 cd_r, params['label'],
             )
 
-        ok = await runner.stm32.well_dispense_at(
+        ok = runner.stm32.well_dispense_at(
             loc_id=source.loc_id,
             volume_ul=int(remainder),
             speed_ul_s=consts.get(
@@ -342,7 +348,7 @@ class ReagentTransferBFStep(StepExecutor):
     prolonged incubation with mixing.
     '''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         source = runner.tracker.get_well(
             params['source'],
         )
@@ -361,7 +367,7 @@ class ReagentTransferBFStep(StepExecutor):
         reasp = consts.get('reasp_ul', 12)
         remainder = asp_vol - cart_vol + reasp
 
-        sa = await runner.stm32.smart_aspirate_at(
+        sa = runner.stm32.smart_aspirate_at(
             loc_id=source.loc_id,
             volume_ul=asp_vol,
             speed_ul_s=consts.get(
@@ -382,7 +388,7 @@ class ReagentTransferBFStep(StepExecutor):
         )
         runner.collect_pressure(sa, params['label'])
 
-        cd_r = await runner.stm32.cart_dispense_bf_at(
+        cd_r = runner.stm32.cart_dispense_bf_at(
             loc_id=target.loc_id,
             total_volume_ul=cart_vol,
             vel_ul_s=params.get(
@@ -407,7 +413,7 @@ class ReagentTransferBFStep(StepExecutor):
                 cd_r, params['label'],
             )
 
-        ok = await runner.stm32.well_dispense_at(
+        ok = runner.stm32.well_dispense_at(
             loc_id=source.loc_id,
             volume_ul=int(remainder),
             speed_ul_s=consts.get(
@@ -426,7 +432,7 @@ class ReagentTransferBFStep(StepExecutor):
 class WellToWellStep(StepExecutor):
     '''Direct well-to-well transfer (no cartridge).'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         source = runner.tracker.get_well(
             params['source'],
         )
@@ -438,7 +444,7 @@ class WellToWellStep(StepExecutor):
             return False
 
         volume = params['volume']
-        ok = await runner.stm32.aspirate_at(
+        ok = runner.stm32.aspirate_at(
             loc_id=source.loc_id,
             volume_ul=volume,
             piston_reset=True,
@@ -450,7 +456,7 @@ class WellToWellStep(StepExecutor):
             operation=f'asp {volume}uL',
         )
 
-        ok = await runner.stm32.dispense_at(
+        ok = runner.stm32.dispense_at(
             loc_id=dest.loc_id,
             volume_ul=volume,
         )
@@ -472,7 +478,7 @@ class WellTransferReturnStep(StepExecutor):
     the overshoot is returned to the source well.
     '''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         source = runner.tracker.get_well(
             params['source'],
         )
@@ -488,7 +494,7 @@ class WellTransferReturnStep(StepExecutor):
         vel = params.get('vel', 20.0)
         consts = runner.recipe.constants
 
-        sa = await runner.stm32.smart_aspirate_at(
+        sa = runner.stm32.smart_aspirate_at(
             loc_id=source.loc_id,
             volume_ul=asp_vol,
             speed_ul_s=consts.get(
@@ -509,7 +515,7 @@ class WellTransferReturnStep(StepExecutor):
             operation=f'asp {asp_vol}uL',
         )
 
-        ok = await runner.stm32.well_dispense_at(
+        ok = runner.stm32.well_dispense_at(
             loc_id=dest.loc_id,
             volume_ul=disp_vol,
             speed_ul_s=vel,
@@ -524,7 +530,7 @@ class WellTransferReturnStep(StepExecutor):
 
         remainder = asp_vol - disp_vol
         if remainder > 0:
-            ok = await runner.stm32.well_dispense_at(
+            ok = runner.stm32.well_dispense_at(
                 loc_id=source.loc_id,
                 volume_ul=remainder,
                 speed_ul_s=consts.get(
@@ -551,7 +557,7 @@ class WellToChipStep(StepExecutor):
     chip_vol through PP4, returns overshoot to source.
     '''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         source = runner.tracker.get_well(
             params['source'],
         )
@@ -569,7 +575,7 @@ class WellToChipStep(StepExecutor):
         asp_vol = chip_vol + overshoot
         consts = runner.recipe.constants
 
-        sa = await runner.stm32.smart_aspirate_at(
+        sa = runner.stm32.smart_aspirate_at(
             loc_id=source.loc_id,
             volume_ul=asp_vol,
             speed_ul_s=consts.get(
@@ -592,7 +598,7 @@ class WellToChipStep(StepExecutor):
         )
         runner.collect_pressure(sa, params['label'])
 
-        cd_r = await runner.stm32.cart_dispense_at(
+        cd_r = runner.stm32.cart_dispense_at(
             loc_id=target.loc_id,
             volume_ul=chip_vol,
             vel_ul_s=params.get(
@@ -614,7 +620,7 @@ class WellToChipStep(StepExecutor):
                 cd_r, params['label'],
             )
 
-        ok = await runner.stm32.well_dispense_at(
+        ok = runner.stm32.well_dispense_at(
             loc_id=source.loc_id,
             volume_ul=overshoot,
             speed_ul_s=consts.get(
@@ -633,12 +639,12 @@ class WellToChipStep(StepExecutor):
 class TipMixStep(StepExecutor):
     '''Mix reagent in a well by repeated asp/disp cycles.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         well = runner.tracker.get_well(params['well'])
         if well is None:
             LOG.error('tip_mix: unknown well ref')
             return False
-        return await runner.stm32.tip_mix_at(
+        return runner.stm32.tip_mix_at(
             loc_id=well.loc_id,
             mix_vol_ul=params.get('mix_vol', 150),
             speed_ul_s=params.get('speed', 100.0),
@@ -651,7 +657,7 @@ class TipMixStep(StepExecutor):
 class HomeAllStep(StepExecutor):
     '''Home all axes.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         r = runner.stm32.send_command_wait_done(
             cmd={'cmd': 'home_all'},
             timeout_s=60.0,
@@ -663,7 +669,7 @@ class HomeAllStep(StepExecutor):
 class HomeCloseStep(StepExecutor):
     '''Home all axes and close lid.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         r = runner.stm32.send_command_wait_done(
             cmd={'cmd': 'home_all'},
             timeout_s=60.0,
@@ -681,7 +687,7 @@ class HomeCloseStep(StepExecutor):
 class PumpInitStep(StepExecutor):
     '''Initialize the pump.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         r = runner.stm32.send_command_wait_done(
             cmd={'cmd': 'pump_init'},
             timeout_s=30.0,
@@ -693,7 +699,7 @@ class PumpInitStep(StepExecutor):
 class LEDPatternStep(StepExecutor):
     '''Set LED pattern.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         pattern = params.get('pattern', 0)
         stage = params.get('stage', 0)
         r = runner.stm32.send_command(
@@ -710,9 +716,9 @@ class LEDPatternStep(StepExecutor):
 class DelayStep(StepExecutor):
     '''Wait for a specified duration.'''
 
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         seconds = params.get('seconds', 1.0)
-        await asyncio.sleep(seconds)
+        time.sleep(seconds)
         return True
 
 

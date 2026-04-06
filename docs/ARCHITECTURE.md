@@ -108,14 +108,19 @@ graph TD
     end
 
     subgraph mainThread ["Main Thread (asyncio event loop)"]
-        Runner["ProtocolRunner -- pause/resume"]
+        API2["FastAPI HTTP + WebSocket"]
+        EvLoop["uvicorn event loop"]
+    end
+
+    subgraph protoThread ["Protocol Thread (per run)"]
+        Runner["ProtocolRunner._run_sync()"]
         Tracker["ProtocolStateTracker"]
-        Recipe["Step Executors -- tsh_ultra etc"]
+        Recipe["Step Executors -- sync"]
         STM["STM32Interface -- UART (blocking)"]
         FP["frame_protocol -- SOH frames"]
     end
 
-    subgraph readerThread ["Reader Thread (dedicated OS thread)"]
+    subgraph readerThread ["Reader Thread (dedicated)"]
         Acq["AcquisitionService -- TLV capture"]
         Reader["ReaderInterface -- PProc USB serial"]
         Pipe["ReaderPipeline -- spectra + peaks"]
@@ -123,15 +128,15 @@ graph TD
     end
 
     subgraph monitor [Status Monitor Thread]
-        Mon["STM32StatusMonitor -- async listener"]
+        Mon["STM32StatusMonitor -- listener"]
     end
 
     App --> SM
     App --> IoT
     App --> WiFi
-    App -.->|"optional"| API
-    API <--> FE
-    API --> Runner
+    App -.->|"optional"| API2
+    API2 <--> FE
+    API2 -->|"run_in_executor"| Runner
     SM -->|"protocol_trigger"| Runner
     Runner --> Tracker
     Runner --> Recipe
@@ -143,8 +148,8 @@ graph TD
     Acq --> Reader
     Acq --> Pipe
     Pipe --> AT
-    Pipe -->|"emit_sync (thread-safe)"| API
-    Tracker -->|"status events"| API
+    Pipe -->|"emit_sync"| API2
+    Runner -->|"emit_sync"| API2
     Tracker -->|"status snapshots"| IoT
 ```
 
@@ -152,95 +157,131 @@ graph TD
 
 ## Key Design Decisions
 
-### 1. Concurrency: asyncio + dedicated reader thread
+### 1. Concurrency: three-thread model
 
-ultra-rpi uses a **hybrid concurrency model**: an asyncio event loop for
-protocol orchestration, GUI, and cloud, plus a **dedicated OS thread** for
-reader data acquisition.
+ultra-rpi uses a **three-thread, single-process** concurrency model:
+
+1. **Main thread** -- asyncio event loop running FastAPI, WebSocket
+   broadcast, cloud (IoT), and HTTP API. Handles NO serial I/O.
+2. **Protocol thread** -- spawned per `runner.run()` call via
+   `run_in_executor`. Runs the entire step loop synchronously:
+   STM32 serial calls block naturally. Events reach the GUI via
+   `emit_sync()` (`call_soon_threadsafe`).
+3. **Reader thread** -- dedicated OS thread (`reader-acq`) that
+   continuously captures TLV blocks from the PProc optical reader
+   and runs the peak detection pipeline. Also uses `emit_sync()`.
+
+This is the closest analogue to sway's model while staying
+single-process.
 
 #### Why sway uses multiprocessing
 
-sway supports up to 8 readers simultaneously and runs a Qt GUI that must
-stay responsive during long hardware operations. It achieves this with
-`multiprocessing`:
+sway supports up to 8 readers simultaneously and runs a Qt GUI that
+must stay responsive during long hardware operations. It achieves
+this with `multiprocessing`:
 
-- **Separate reader processes** (`readeracquire.py`) -- one per reader,
-  each with its own serial port. A `multiprocessing.Barrier` synchronises
-  startup across all reader processes, the spectrify process, and the
-  main process.
-- **Spectrify process** -- decodes TLV, runs peak detection, writes log
-  files. Communicates results back to the main process via ZeroMQ
-  PUB/SUB.
-- **Main process** -- runs Qt GUI, protocol execution, cloud upload.
+- **Separate reader processes** (`readeracquire.py`) -- one per
+  reader, each with its own serial port. A
+  `multiprocessing.Barrier` synchronises startup.
+- **Spectrify process** -- decodes TLV, runs peak detection,
+  writes log files. Communicates results back to the main process
+  via ZeroMQ PUB/SUB.
+- **Main process** -- runs Qt GUI, protocol execution, cloud
+  upload. Blocking STM32 calls happen directly on the main thread;
+  this is fine because the Qt event loop and ZMQ receiver handle
+  GUI updates independently.
 
-The multi-process design ensures no single blocking call can starve the
-readers or freeze the GUI. But it comes with significant complexity:
-`multiprocessing.Barrier`, ZeroMQ sockets, shared-memory coordination,
-process lifecycle management, and platform-specific forking behaviour.
+The multi-process design ensures no single blocking call can starve
+the readers or freeze the GUI. But it comes with complexity:
+`multiprocessing.Barrier`, ZeroMQ sockets, shared-memory
+coordination, process lifecycle management, and platform-specific
+forking behaviour.
 
-#### Why ultra-rpi uses a thread instead
+#### Why ultra-rpi uses threads instead
 
-ultra-rpi runs **one reader** and has a lightweight web GUI (FastAPI +
-WebSocket) instead of Qt. The architectural constraints are different:
+ultra-rpi runs **one reader** and has a lightweight web GUI (FastAPI
++ WebSocket) instead of Qt. Key differences:
 
-| Concern | sway (multiprocessing) | ultra-rpi (thread) |
+| Concern | sway (multiprocessing) | ultra-rpi (threads) |
 |---------|------------------------|---------------------|
 | Reader count | 1--8 | 1 |
-| GUI framework | Qt (needs own process) | FastAPI (same event loop) |
-| IPC overhead | ZeroMQ, Barriers, pipes | direct function calls |
+| GUI framework | Qt (C++ event loop) | FastAPI (asyncio) |
+| Protocol executor | blocks main thread OK (Qt doesn't care) | dedicated thread (asyncio would block) |
+| IPC | ZeroMQ, Barriers, pipes | `emit_sync` + `call_soon_threadsafe` |
 | Startup complexity | fork + barrier sync | `thread.start()` |
 | Memory | N copies of Python interpreter | shared address space |
 | Debugging | multi-process tracing | single-process, `gdb`/`pdb` |
 | Serial port isolation | guaranteed (separate PIDs) | guaranteed (different ports) |
+| Risk of blocking GUI | zero (separate processes) | zero (separate threads) |
 
 The STM32 (UART `/dev/ttyAMA3`) and PProc reader (USB serial) use
-**different physical serial ports**. There is zero contention between the
-protocol thread (STM32) and the reader thread (PProc), so OS-level
-process isolation is unnecessary.
+**different physical serial ports**. There is zero contention between
+the protocol thread (STM32) and the reader thread (PProc).
+
+The key insight vs. the earlier architecture: putting protocol
+execution on the asyncio event loop required wrapping **every**
+blocking STM32 call in `run_in_executor`. Missing even one wrapper
+silently froze the WebSocket. By moving the entire protocol to its
+own thread, STM32 calls are plain synchronous Python -- impossible
+to get wrong.
 
 #### How it works
 
 ```
-Main thread (asyncio event loop)          Reader thread ("reader-acq")
-─────────────────────────────────         ──────────────────────────────
-ProtocolRunner.run()                      _reader_loop()
-  │                                         │
-  ├─ _start_reader()  ──────────────────►  threading.Thread.start()
-  │                                         │
-  ├─ _wait_for_reader_data()                ├─ capture_block()  [time.sleep]
-  │   (polls block counter via              │   └─ serial.read() on PProc USB
-  │    asyncio.sleep)                       │
-  │                                         ├─ process_tlv_file()  [CPU-bound]
-  ├─ for step in recipe:                    │   └─ siphox.analysis_tools
-  │     await executor.execute()            │
-  │       └─ stm32.send_command_wait_done() ├─ capture_block()   ← runs freely
-  │           └─ BLOCKS event loop          │     while STM32 cmd blocks the
-  │              for 1--60+ seconds         │     event loop
-  │                                         │
-  ├─ _stop_reader()                         ├─ _reader_stop.wait() → exits
-  │   └─ _reader_stop.set()                 │
-  │   └─ thread.join()                      └─ acquisition.stop()
+Main thread (asyncio)       Protocol thread         Reader thread
+──────────────────────     ──────────────────       ──────────────
+FastAPI + WebSocket        (spawned by run())       (spawned by
+uvicorn event loop                                   _start_reader)
+  │                          │                        │
+  ├─ POST /api/run           │                        │
+  │   └─ run_in_executor ──► _run_sync()              │
+  │                          │                        │
+  │                          ├─ _start_reader() ────► Thread.start()
+  │                          │                        │
+  │                          ├─ _wait_for_reader()    ├─ capture_block()
+  │                          │   [time.sleep polls]   │  └─ serial.read()
+  │  ◄── emit_sync ─────────┤                        │
+  │  (protocol_started)      │                        ├─ process_tlv()
+  │                          │                        │  └─ emit_sync ──► WS
+  │                          ├─ step.execute()        │
+  │                          │  └─ stm32.send_cmd()   ├─ capture_block()
+  │                          │     [blocks THIS       │   (runs freely)
+  │                          │      thread only]      │
+  │  ◄── emit_sync ─────────┤                        │
+  │  (step_changed)          │                        │
+  │                          │ ...more steps...       │ ...more blocks...
+  │                          │                        │
+  │                          ├─ _stop_reader()        │
+  │                          │  └─ thread.join() ◄────┘
+  │  ◄── emit_sync ─────────┤
+  │  (protocol_done)         │
+  │                          └─ returns to pool
 ```
 
 Key properties:
 
-- **`capture_block()`** is fully synchronous: `time.sleep(0.003)` +
-  `serial.read()`. It never touches the asyncio event loop, so it
-  cannot be starved by protocol steps that block the loop.
-- **`process_tlv_file()`** (peak detection) runs in the same reader
-  thread, immediately after each block capture. Results are pushed to
-  the GUI via `event_bus.emit_sync()` which uses
-  `loop.call_soon_threadsafe` to schedule the async broadcast.
-- **Stop signal** uses `threading.Event` (`_reader_stop`). The reader
-  loop checks it between blocks. `_stop_reader()` sets the event and
-  joins the thread (via `run_in_executor` to avoid blocking the event
-  loop during join).
-- **Thread safety**: the only shared mutable state is the acquisition
-  `_block_counter` (an integer, atomic under CPython's GIL) and
-  `ProtocolStateTracker.snapshot()` (read-only snapshots).
+- **The asyncio event loop is never blocked.** All serial I/O
+  happens in the protocol thread (STM32) or reader thread (PProc).
+  WebSocket broadcasts, HTTP requests, and `emit_sync` callbacks
+  are processed immediately.
+- **Step executors are plain synchronous `def execute()`** methods
+  that call `stm32.send_command()` directly. No `await`, no
+  `_in_thread` wrappers. Adding a new step type is trivial and
+  cannot accidentally block the event loop.
+- **Pause/resume** uses `threading.Event` (not `asyncio.Event`).
+  The protocol thread calls `_pause_event.wait()` which blocks
+  only that thread. The GUI API sets/clears the event from the
+  asyncio thread -- `threading.Event` is inherently thread-safe.
+- **`emit_sync()`** bridges both background threads to the asyncio
+  loop via `loop.call_soon_threadsafe(asyncio.ensure_future, ...)`.
+  The loop reference is cached by `EventBus.set_loop()` before
+  any thread starts.
+- **Thread safety**: the only shared mutable state is the
+  acquisition `_block_counter` (atomic under CPython's GIL) and
+  `ProtocolStateTracker` (read-only snapshots).
 
-This gives the same **continuous, uninterrupted reader coverage** as
-sway's separate process, with far less complexity.
+This gives the same **continuous, uninterrupted reader coverage**
+as sway's separate process, with far less complexity.
 
 ### 2. Event bus replaces GUI callbacks
 
@@ -310,43 +351,45 @@ Pause/resume works at **step boundaries** -- we cannot interrupt a mid-flight as
 
 ```python
 class ProtocolRunner:
-    _pause_event: asyncio.Event  # cleared = paused
-    _abort_event: asyncio.Event
+    _pause_event: threading.Event  # cleared = paused
+    _abort_event: threading.Event
 
-    async def check_pause(self) -> None:
-        '''Called by recipe between steps. Blocks if paused.'''
+    def check_pause(self) -> None:
+        '''Called between steps in the protocol thread.
+        Blocks that thread if paused.'''
         if not self._pause_event.is_set():
             self.tracker.is_paused = True
-            self._emit('protocol_paused', self.tracker.snapshot())
-            await self._pause_event.wait()
+            self._event_bus.emit_sync(
+                'protocol_paused', ...)
+            self._pause_event.wait()  # blocks thread
             self.tracker.is_paused = False
-            self._emit('protocol_resumed', self.tracker.snapshot())
+            self._event_bus.emit_sync(
+                'protocol_resumed', ...)
 
     def pause(self) -> None:
-        '''Called by GUI / API.'''
+        '''Called by GUI API (asyncio thread).'''
         self._pause_event.clear()
 
     def resume(self) -> None:
-        '''Called by GUI / API.'''
+        '''Called by GUI API (asyncio thread).'''
         self._pause_event.set()
 ```
 
-**Recipe integration** -- every step calls `runner.check_pause()`:
+`threading.Event` is inherently thread-safe: `pause()` and `resume()`
+are called from the asyncio thread (HTTP handler), while `check_pause()`
+runs in the protocol thread. No lock needed.
+
+**Recipe integration** -- the runner calls `check_pause()` between
+steps in the synchronous `_run_sync()` loop:
 
 ```python
-async def run_protocol(runner: ProtocolRunner) -> dict:
-    # step 1: unlock cartridge
-    await runner.check_pause()
-    runner.tracker.begin_step(1, 'Unlock cartridge', phase='A')
-    r = runner.stm32.send_command(...)
-    runner.tracker.end_step(1, ok=True)
-
-    # step 9: Hydrophilic aspirate
-    await runner.check_pause()
-    runner.tracker.begin_step(9, 'Hydrophilic: asp 110uL', phase='B')
-    runner.tracker.update_tip(tip_id=4)
-    runner.tracker.update_well(LOC_S1, delta_ul=-110)
-    ...
+def _run_sync(self, recipe_name, chip_id) -> list:
+    for phase in recipe.phases:
+        for step_def in phase.steps:
+            self.check_pause()  # blocks if paused
+            executor = STEP_REGISTRY[step_def.type]()
+            ok = executor.execute(step_def.params, self)
+            ...
 ```
 
 **Safe pause points** (26 steps in TSH, pause can happen before any step):
@@ -504,8 +547,12 @@ def step_type(name: str):
     return wrapper
 
 class StepExecutor:
-    '''Base class for all step executors.'''
-    async def execute(
+    '''Base class for all step executors.
+
+    All methods are synchronous -- they run in the
+    protocol thread and call STM32 methods directly.
+    '''
+    def execute(
             self,
             params: dict,
             runner: ProtocolRunner,
@@ -515,12 +562,8 @@ class StepExecutor:
 class ReagentTransferStep(StepExecutor):
     '''asp from source -> cart_dispense to target
     -> well_dispense remainder back to source.
-
-    Handles: piston reset, air slug, LLD aspiration,
-    cartridge dispense with reasp, blowout, timing
-    markers, well state updates.
     '''
-    async def execute(self, params, runner) -> bool:
+    def execute(self, params, runner) -> bool:
         source = runner.tracker.get_well(params['source'])
         target = runner.tracker.get_well(params['target'])
         asp_vol = params['asp_vol']
@@ -528,20 +571,10 @@ class ReagentTransferStep(StepExecutor):
         reasp = runner.recipe.constants['reasp_ul']
         remainder = asp_vol - cart_vol + reasp
 
-        # 1. aspirate from source
-        sa = await runner.stm32.smart_aspirate_at(
+        sa = runner.stm32.smart_aspirate_at(
             loc_id=source.loc_id,
             volume_ul=asp_vol,
-            speed_ul_s=runner.recipe.constants[
-                'aspirate_speed'
-            ],
-            lld_threshold=runner.recipe.constants[
-                'lld_threshold'
-            ],
-            piston_reset=True,
-            air_slug_ul=runner.recipe.constants[
-                'air_slug_ul'
-            ],
+            ...
         )
         if sa is None:
             return False
@@ -550,16 +583,10 @@ class ReagentTransferStep(StepExecutor):
             operation='aspirate',
         )
 
-        # 2. cart dispense to target
-        cd_r = await runner.stm32.cart_dispense_at(
+        cd_r = runner.stm32.cart_dispense_at(
             loc_id=target.loc_id,
             volume_ul=cart_vol,
-            vel_ul_s=params.get(
-                'cart_vel',
-                runner.recipe.constants['cart_disp_vel'],
-            ),
-            reasp_ul=reasp,
-            cartridge_z=runner.cartridge_z_mm,
+            ...
         )
         if not cd_r:
             return False
@@ -568,14 +595,10 @@ class ReagentTransferStep(StepExecutor):
             operation='dispense',
         )
 
-        # 3. return remainder to source well
-        ok = await runner.stm32.well_dispense_at(
+        ok = runner.stm32.well_dispense_at(
             loc_id=source.loc_id,
             volume_ul=remainder,
-            speed_ul_s=runner.recipe.constants[
-                'well_disp_speed'
-            ],
-            blowout=True,
+            ...
         )
         runner.tracker.update_well(
             source.name, delta_ul=remainder,
@@ -636,24 +659,30 @@ class HomeCloseStep(StepExecutor): ...
 
 ```python
 class ProtocolRunner:
-    async def run(self, recipe_name: str) -> list[dict]:
+    async def run(self, recipe_name, chip_id=''):
+        '''Thin async wrapper -- launches _run_sync
+        in a thread pool so callers can await it.'''
+        loop = asyncio.get_running_loop()
+        self._event_bus.set_loop(loop)
+        return await loop.run_in_executor(
+            None, self._run_sync, recipe_name, chip_id,
+        )
+
+    def _run_sync(self, recipe_name, chip_id=''):
+        '''Runs entirely in a dedicated OS thread.
+        All STM32 calls block naturally.'''
         recipe = load_recipe(recipe_name)
         self.tracker.init_wells(recipe.wells)
         step_index = 0
 
         for phase in recipe.phases:
             for step_def in phase.steps:
-                await self.check_pause()
+                self.check_pause()  # threading.Event
                 step_index += 1
-                executor = STEP_REGISTRY[step_def['type']]()
-                self.tracker.begin_step(
-                    index=step_index,
-                    total=recipe.total_steps,
-                    label=step_def['label'],
-                    phase=phase.name,
-                )
-                ok = await executor.execute(
-                    step_def, self,
+                executor = STEP_REGISTRY[step_def.type]()
+                self.tracker.begin_step(...)
+                ok = executor.execute(
+                    step_def.params, self,
                 )
                 self.tracker.end_step(step_index, ok=ok)
                 if not ok:
@@ -716,8 +745,11 @@ Source: `sway/instruments/ultra/frame_protocol.py` (2257 lines, identical to `ul
 Port `ultra_interface.py` with these changes:
 - Remove `sway.utils.loghelp` dependency (use stdlib `logging`)
 - Remove GUI progress callbacks
-- Keep the three-tier command API: `send_command()`, `send_command_wait_done()`, and high-level helpers (`aspirate_at`, `dispense_at`, `ping`, `smart_aspirate`)
-- Make async-friendly: wrap blocking serial I/O in `asyncio.to_thread()`
+- Keep the three-tier command API: `send_command()`,
+  `send_command_wait_done()`, and high-level helpers
+  (`aspirate_at`, `dispense_at`, `ping`, `smart_aspirate`)
+- **All methods are synchronous** -- the protocol thread calls
+  them directly. No `async def`, no `_in_thread` wrappers.
 
 ### 8. STM32StatusMonitor (replaces DoorMonitor)
 
@@ -1199,18 +1231,19 @@ sequenceDiagram
     SM->>PR: run_protocol(tsh_ultra)
     PR->>STM: connect(), ping(), pump_init, home_all
 
-    Note over PR,RT: Reader thread starts BEFORE protocol steps
-    PR->>RT: threading.Thread.start()
+    Note over PR,RT: Protocol thread + reader thread start
+    PR->>RT: threading.Thread.start() (reader)
     RT->>Acq: capture_block() [warm-up block 1]
     Acq->>Pipe: process_tlv_file()
     Pipe-->>GUI: emit_sync('peak_data')
     RT->>Acq: capture_block() [warm-up block 2]
     PR-->>PR: _wait_for_reader_data() ✓
 
-    Note over PR,RT: Protocol steps and reader run IN PARALLEL
-    par Main thread: protocol steps
+    Note over PR,RT: Protocol thread and reader thread run IN PARALLEL
+    par Protocol thread: step execution
         PR->>STM: centrifuge_unlock, spin, rotate
         PR->>STM: aspirate_at, cart_dispense_at (×N)
+        PR-->>GUI: emit_sync('step_changed')
         PR->>STM: centrifuge_lock, home_all
     and Reader thread: continuous capture
         loop Every ~4s until protocol ends
