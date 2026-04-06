@@ -66,6 +66,17 @@ setup_venv() {
             "$VENV_DIR/bin/pip" install --quiet \
             --ignore-requires-python -e "$PROJECT_DIR"
     fi
+
+    if ! "$VENV_DIR/bin/python" -c \
+        "import siphox.analysis_tools" 2>/dev/null; then
+        echo "Installing analysis-tools (reader pipeline)..."
+        PIP_CONFIG_FILE="$PROJECT_DIR/pip.conf" \
+            "$VENV_DIR/bin/pip" install --quiet \
+            --ignore-requires-python \
+            "analysis-tools @ git+ssh://git@github.com/siphox-inc/sway.git@main#subdirectory=analysis_tools" \
+            || echo "WARNING: analysis-tools install failed." \
+               " Peak detection will be disabled."
+    fi
 }
 
 setup_venv

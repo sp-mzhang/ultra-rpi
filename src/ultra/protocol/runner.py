@@ -237,14 +237,10 @@ class ProtocolRunner:
         if self._acquisition and self._pipeline:
             self._pipeline.reset_baseline()
             self._reader_stop.clear()
-            try:
-                loop = asyncio.get_running_loop()
-                self._event_bus.set_loop(loop)
-            except RuntimeError:
+            if self._event_bus._loop is None:
                 LOG.warning(
-                    'No running loop to cache for '
-                    'emit_sync -- events from background '
-                    'threads may not reach GUI',
+                    'EventBus loop not cached -- '
+                    'call set_loop() before _start_reader()',
                 )
             self._reader_thread = threading.Thread(
                 target=self._reader_loop,
