@@ -3,7 +3,6 @@
   'use strict';
 
   const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => document.querySelectorAll(sel);
 
   /* ---- State ---- */
   let ws = null;
@@ -67,7 +66,7 @@
       }
       if (qr.chip_id) elChipId.value = qr.chip_id;
     } catch (e) {
-      console.warn('Failed to load quick_run defaults', e);
+      console.warn('Failed to load quick_run', e);
     }
   }
 
@@ -122,6 +121,9 @@
         break;
       case 'peak_data':
         addPeakPoint(data);
+        break;
+      case 'sweep_data':
+        updateSpectrum(data);
         break;
       case 'protocol_paused':
         updateButtons(true, true);
@@ -178,7 +180,9 @@
       const initVol = init.initial_volume_ul || 1;
       const pct = Math.max(
         0,
-        Math.min(100, d.current_volume_ul / initVol * 100)
+        Math.min(
+          100, d.current_volume_ul / initVol * 100,
+        ),
       );
       fillEl.style.width = pct + '%';
     }
@@ -228,7 +232,9 @@
         <div class="well-name">${name}</div>
         <div class="well-reagent"
              title="${w.reagent}">${w.reagent}</div>
-        <div class="well-vol">${curVol.toFixed(0)} µL</div>
+        <div class="well-vol">
+          ${curVol.toFixed(0)} µL
+        </div>
         <div class="fill-bar">
           <div class="fill-bar-inner"
                style="width:${pct}%"></div>
@@ -238,12 +244,14 @@
     });
   }
 
-  /* ============================================================
-   * Charts -- Sensorgram (wavelength nm) + Peak Shift (pm)
-   * ============================================================
-   * Each chart is an independent ChartManager with its own
-   * rawData store, baselines, freeze/align state, and controls.
-   * ========================================================== */
+  /* ==========================================================
+   * Charts
+   * ==========================================================
+   * Sensorgram: peak wavelength (nm) vs time (s)
+   *   -- accumulates points over time
+   * Spectrum: power (dB) vs wavelength (nm)
+   *   -- replaces data each sweep (latest snapshot)
+   * ======================================================== */
 
   const COLORS = [
     '#1F77B4', '#FF7F0E', '#2CA02C', '#D62728',
@@ -252,232 +260,136 @@
     '#98DF8A', '#FF9896', '#C5B0D5',
   ];
 
-  class ChartManager {
-    constructor(canvasId, yLabel, yAxisId, opts) {
-      this.rawData = {};
-      this.baselines = {};
-      this.frozen = false;
-      this.alignY = false;
-      this.startX = 0;
-      this.dirty = false;
-      this.yField = opts.yField;
-      this.yDecimals = opts.yDecimals || 4;
+  /* ---------- Sensorgram (time-series) ---------- */
+  let sgChart = null;
+  const sgRaw = {};
+  const sgBaselines = {};
+  let sgFrozen = false;
+  let sgAlignY = false;
+  let sgStartX = 0;
+  let sgDirty = false;
 
-      const ctx = $(canvasId).getContext('2d');
-      this.chart = new Chart(ctx, {
-        type: 'line',
-        data: { datasets: [] },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          animation: false,
-          scales: {
-            x: {
-              type: 'linear',
-              title: {
-                display: true, text: 'Time (s)',
-                color: '#8b8fa3',
-              },
-              grid: { color: '#2a2d3a' },
-              ticks: { color: '#8b8fa3' },
+  function initSensorgram() {
+    const ctx = $('#sensorgram-canvas')
+      .getContext('2d');
+    sgChart = new Chart(ctx, {
+      type: 'line',
+      data: { datasets: [] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        scales: {
+          x: {
+            type: 'linear',
+            title: {
+              display: true, text: 'Time (s)',
+              color: '#8b8fa3',
             },
-            [yAxisId]: {
-              position: 'left',
-              title: {
-                display: true, text: yLabel,
-                color: '#1F77B4',
-              },
-              grid: { color: '#2a2d3a' },
-              ticks: {
-                color: '#8b8fa3',
-                callback: (v) =>
-                  v.toFixed(this.yDecimals),
-              },
-            },
+            grid: { color: '#2a2d3a' },
+            ticks: { color: '#8b8fa3' },
           },
-          plugins: {
-            legend: { display: false },
-            zoom: {
-              pan: { enabled: true, mode: 'xy' },
-              zoom: {
-                wheel: { enabled: true },
-                pinch: { enabled: true },
-                mode: 'xy',
-              },
+          yPeak: {
+            position: 'left',
+            title: {
+              display: true,
+              text: 'Wavelength (nm)',
+              color: '#1F77B4',
+            },
+            grid: { color: '#2a2d3a' },
+            ticks: {
+              color: '#8b8fa3',
+              callback: (v) => v.toFixed(4),
             },
           },
         },
-      });
-      this._yAxisId = yAxisId;
-    }
+        plugins: {
+          legend: { display: false },
+          zoom: {
+            pan: { enabled: true, mode: 'xy' },
+            zoom: {
+              wheel: { enabled: true },
+              pinch: { enabled: true },
+              mode: 'xy',
+            },
+          },
+        },
+      },
+    });
+    bindSgControls();
+  }
 
-    bindControls(ids) {
-      const elStartX = $(ids.startX);
-      const elAlignY = ids.alignY ? $(ids.alignY) : null;
-      const elFreeze = $(ids.freeze);
-      const elReset = $(ids.resetZoom);
-      const elClear = $(ids.clear);
-      this._togglesEl = $(ids.toggles);
+  function bindSgControls() {
+    const elStartX = $('#sg-start-x');
+    const elAlignY = $('#sg-align-y');
+    const elFreeze = $('#sg-freeze');
+    const elReset = $('#sg-reset-zoom');
+    const elClear = $('#sg-clear');
 
-      if (elStartX) {
-        elStartX.addEventListener('change', () => {
-          this.startX =
-            parseFloat(elStartX.value) || 0;
-          this.applyStartX();
-          if (this.alignY) this.recomputeAlign();
-          this.dirty = true;
-        });
+    elStartX.addEventListener('change', () => {
+      sgStartX = parseFloat(elStartX.value) || 0;
+      sgChart.options.scales.x.min =
+        sgStartX || undefined;
+      if (sgAlignY) sgRecomputeAlign();
+      sgDirty = true;
+    });
+
+    elAlignY.onclick = () => {
+      sgAlignY = !sgAlignY;
+      elAlignY.classList.toggle('active', sgAlignY);
+      if (sgAlignY) {
+        sgRecomputeAlign();
+      } else {
+        sgRestoreRaw();
       }
+      sgDirty = true;
+    };
 
-      if (elAlignY) {
-        elAlignY.onclick = () => {
-          this.alignY = !this.alignY;
-          elAlignY.classList.toggle(
-            'active', this.alignY,
-          );
-          if (this.alignY) {
-            this.recomputeAlign();
-          } else {
-            this.restoreRawY();
-          }
-          this.dirty = true;
-        };
-      }
+    elFreeze.onclick = () => {
+      sgFrozen = !sgFrozen;
+      elFreeze.classList.toggle('active', sgFrozen);
+      elFreeze.textContent = sgFrozen
+        ? 'Frozen' : 'Freeze';
+    };
 
-      if (elFreeze) {
-        elFreeze.onclick = () => {
-          this.frozen = !this.frozen;
-          elFreeze.classList.toggle(
-            'active', this.frozen,
-          );
-          elFreeze.textContent = this.frozen
-            ? 'Frozen' : 'Freeze';
-        };
-      }
+    elReset.onclick = () => sgChart.resetZoom();
 
-      if (elReset) {
-        elReset.onclick = () => this.chart.resetZoom();
-      }
-
-      if (elClear) {
-        elClear.onclick = () => this.clearAll();
-      }
-    }
-
-    clearAll() {
-      Object.keys(this.rawData).forEach(
-        (k) => delete this.rawData[k],
+    elClear.onclick = () => {
+      Object.keys(sgRaw).forEach(
+        (k) => delete sgRaw[k],
       );
-      Object.keys(this.baselines).forEach(
-        (k) => delete this.baselines[k],
+      Object.keys(sgBaselines).forEach(
+        (k) => delete sgBaselines[k],
       );
-      this.chart.data.datasets = [];
-      this.chart.update('none');
-      if (this._togglesEl) {
-        this._togglesEl.innerHTML = '';
-      }
-    }
+      sgChart.data.datasets = [];
+      sgChart.update('none');
+      $('#sg-channel-toggles').innerHTML = '';
+    };
+  }
 
-    applyStartX() {
-      this.chart.options.scales.x.min =
-        this.startX || undefined;
-      this.dirty = true;
-    }
-
-    recomputeAlign() {
-      this.chart.data.datasets.forEach((ds) => {
-        const key = ds._rawKey;
-        const raw = this.rawData[key];
-        if (!raw || !raw.length) return;
-        const ref = nearestY(raw, this.startX);
-        this.baselines[key] = ref;
-        ds.data = raw.map(
-          (p) => ({ x: p.x, y: p.y - ref }),
-        );
-      });
-    }
-
-    restoreRawY() {
-      this.chart.data.datasets.forEach((ds) => {
-        const key = ds._rawKey;
-        const raw = this.rawData[key];
-        if (!raw) return;
-        ds.data = raw.map(
-          (p) => ({ x: p.x, y: p.y }),
-        );
-        delete this.baselines[key];
-      });
-    }
-
-    flush() {
-      if (this.dirty && !this.frozen) {
-        this.chart.update('none');
-        this.dirty = false;
-      }
-    }
-
-    ensureDataset(key, label, colorIdx) {
-      if (this.rawData[key]) return;
-      this.rawData[key] = [];
-      const color = COLORS[colorIdx % COLORS.length];
-      this.chart.data.datasets.push({
-        label: label,
-        data: this.rawData[key],
-        borderColor: color,
-        borderWidth: 1.5,
-        pointRadius: 2,
-        pointBackgroundColor: color,
-        tension: 0,
-        yAxisID: this._yAxisId,
-        hidden: false,
-        _rawKey: key,
-      });
-      const dsIdx =
-        this.chart.data.datasets.length - 1;
-      this._addChip(key, label, color, dsIdx);
-    }
-
-    _addChip(key, label, color, dsIdx) {
-      if (!this._togglesEl) return;
-      const chip = document.createElement('span');
-      chip.className = 'ch-chip';
-      chip.textContent = label;
-      chip.style.background = color;
-      chip.style.color = '#fff';
-      chip.dataset.key = key;
-      chip.dataset.idx = dsIdx;
-      const chart = this.chart;
-      chip.onclick = () => {
-        const idx = parseInt(chip.dataset.idx);
-        const meta = chart.getDatasetMeta(idx);
-        const ds = chart.data.datasets[idx];
-        const nowHidden = !meta.hidden;
-        meta.hidden = nowHidden;
-        ds.hidden = nowHidden;
-        chip.classList.toggle('hidden', nowHidden);
-        chart.update('none');
-      };
-      this._togglesEl.appendChild(chip);
-    }
-
-    addPoint(key, label, colorIdx, x, y) {
-      if (this.frozen) return;
-      this.ensureDataset(key, label, colorIdx);
-      const pt = { x: x, y: y };
-      this.rawData[key].push(pt);
-      const ds = this.chart.data.datasets.find(
-        (s) => s._rawKey === key,
+  function sgRecomputeAlign() {
+    sgChart.data.datasets.forEach((ds) => {
+      const key = ds._rawKey;
+      const raw = sgRaw[key];
+      if (!raw || !raw.length) return;
+      const ref = nearestY(raw, sgStartX);
+      sgBaselines[key] = ref;
+      ds.data = raw.map(
+        (p) => ({ x: p.x, y: p.y - ref }),
       );
-      if (ds) {
-        if (this.alignY) {
-          const ref = this.baselines[key] ?? 0;
-          ds.data.push({ x: pt.x, y: pt.y - ref });
-        } else {
-          ds.data.push(pt);
-        }
-      }
-      this.dirty = true;
-    }
+    });
+  }
+
+  function sgRestoreRaw() {
+    sgChart.data.datasets.forEach((ds) => {
+      const key = ds._rawKey;
+      const raw = sgRaw[key];
+      if (!raw) return;
+      ds.data = raw.map(
+        (p) => ({ x: p.x, y: p.y }),
+      );
+      delete sgBaselines[key];
+    });
   }
 
   function nearestY(arr, targetX) {
@@ -492,59 +404,228 @@
     return best.y;
   }
 
-  /* ---- Chart instances ---- */
-  let sgChart = null;
-  let psChart = null;
-
-  function initCharts() {
-    sgChart = new ChartManager(
-      '#sensorgram-canvas', 'Wavelength (nm)',
-      'yPeak', { yField: 'wavelength_nm', yDecimals: 4 },
-    );
-    sgChart.bindControls({
-      startX: '#sg-start-x',
-      alignY: '#sg-align-y',
-      freeze: '#sg-freeze',
-      resetZoom: '#sg-reset-zoom',
-      clear: '#sg-clear',
-      toggles: '#sg-channel-toggles',
+  function sgEnsureDataset(key, label, colorIdx) {
+    if (sgRaw[key]) return;
+    sgRaw[key] = [];
+    const color = COLORS[colorIdx % COLORS.length];
+    sgChart.data.datasets.push({
+      label: label,
+      data: sgRaw[key],
+      borderColor: color,
+      borderWidth: 1.5,
+      pointRadius: 2,
+      pointBackgroundColor: color,
+      tension: 0,
+      yAxisID: 'yPeak',
+      hidden: false,
+      _rawKey: key,
     });
-
-    psChart = new ChartManager(
-      '#shift-canvas', 'Shift (pm)',
-      'yShift', { yField: 'shift_pm', yDecimals: 1 },
+    const dsIdx = sgChart.data.datasets.length - 1;
+    addChip(
+      '#sg-channel-toggles', sgChart,
+      key, label, color, dsIdx,
     );
-    psChart.bindControls({
-      startX: '#ps-start-x',
-      alignY: null,
-      freeze: '#ps-freeze',
-      resetZoom: '#ps-reset-zoom',
-      clear: '#ps-clear',
-      toggles: '#ps-channel-toggles',
-    });
-
-    setInterval(() => {
-      sgChart.flush();
-      psChart.flush();
-    }, 500);
   }
 
   function addPeakPoint(d) {
+    if (sgFrozen) return;
     const chNum = d.channel || 1;
     const key = 'ch' + chNum;
     const label = '' + chNum;
     const colorIdx = (chNum - 1) % COLORS.length;
     const t = d.timestamp_s || 0;
+    const wl = d.wavelength_nm;
+    if (wl == null) return;
 
-    if (sgChart && d.wavelength_nm != null) {
-      sgChart.addPoint(
-        key, label, colorIdx, t, d.wavelength_nm,
-      );
+    sgEnsureDataset(key, label, colorIdx);
+    const pt = { x: t, y: wl };
+    sgRaw[key].push(pt);
+    const ds = sgChart.data.datasets.find(
+      (s) => s._rawKey === key,
+    );
+    if (ds) {
+      if (sgAlignY) {
+        const ref = sgBaselines[key] ?? 0;
+        ds.data.push({ x: pt.x, y: pt.y - ref });
+      } else {
+        ds.data.push(pt);
+      }
     }
-    if (psChart && d.shift_pm != null) {
-      psChart.addPoint(
-        key, label, colorIdx, t, d.shift_pm,
-      );
+    sgDirty = true;
+  }
+
+  /* ---------- Spectrum (live sweep snapshot) ---------- */
+  let spChart = null;
+  let spFrozen = false;
+  let spDirty = false;
+  const spTogglesEl = () => $('#sp-channel-toggles');
+
+  function initSpectrum() {
+    const ctx = $('#spectrum-canvas')
+      .getContext('2d');
+    spChart = new Chart(ctx, {
+      type: 'line',
+      data: { datasets: [] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        scales: {
+          x: {
+            type: 'linear',
+            title: {
+              display: true,
+              text: 'Wavelength (nm)',
+              color: '#8b8fa3',
+            },
+            grid: { color: '#2a2d3a' },
+            ticks: {
+              color: '#8b8fa3',
+              callback: (v) => v.toFixed(2),
+            },
+          },
+          yDb: {
+            position: 'left',
+            title: {
+              display: true, text: 'dB',
+              color: '#1F77B4',
+            },
+            grid: { color: '#2a2d3a' },
+            ticks: {
+              color: '#8b8fa3',
+              callback: (v) => v.toFixed(1),
+            },
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          zoom: {
+            pan: { enabled: true, mode: 'xy' },
+            zoom: {
+              wheel: { enabled: true },
+              pinch: { enabled: true },
+              mode: 'xy',
+            },
+          },
+        },
+      },
+    });
+    bindSpControls();
+  }
+
+  function bindSpControls() {
+    const elFreeze = $('#sp-freeze');
+    const elReset = $('#sp-reset-zoom');
+
+    elFreeze.onclick = () => {
+      spFrozen = !spFrozen;
+      elFreeze.classList.toggle('active', spFrozen);
+      elFreeze.textContent = spFrozen
+        ? 'Frozen' : 'Freeze';
+    };
+
+    elReset.onclick = () => spChart.resetZoom();
+  }
+
+  let spChipsBuilt = false;
+
+  function updateSpectrum(d) {
+    if (spFrozen || !spChart) return;
+    const wls = d.wavelengths;
+    const curves = d.curves;
+    if (!wls || !curves) return;
+
+    const chNums = Object.keys(curves)
+      .map(Number).sort((a, b) => a - b);
+
+    if (!spChipsBuilt && chNums.length) {
+      spChipsBuilt = true;
+      chNums.forEach((ch, idx) => {
+        const color =
+          COLORS[(ch - 1) % COLORS.length];
+        addChip(
+          '#sp-channel-toggles', spChart,
+          'sp-ch' + ch, '' + ch, color, idx,
+        );
+      });
+    }
+
+    while (
+      spChart.data.datasets.length < chNums.length
+    ) {
+      const idx = spChart.data.datasets.length;
+      const ch = chNums[idx];
+      const color =
+        COLORS[(ch - 1) % COLORS.length];
+      spChart.data.datasets.push({
+        label: '' + ch,
+        data: [],
+        borderColor: color,
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0,
+        yAxisID: 'yDb',
+        hidden: false,
+        _rawKey: 'sp-ch' + ch,
+      });
+    }
+
+    chNums.forEach((ch, idx) => {
+      const ds = spChart.data.datasets[idx];
+      const vals = curves[ch];
+      if (!vals) return;
+      ds.data = wls.map((w, j) => ({
+        x: w,
+        y: vals[j] != null ? vals[j] : NaN,
+      }));
+    });
+    spDirty = true;
+  }
+
+  /* ---------- Shared helpers ---------- */
+
+  function addChip(
+      containerSel, chart,
+      key, label, color, dsIdx,
+  ) {
+    const container = $(containerSel);
+    if (!container) return;
+    const chip = document.createElement('span');
+    chip.className = 'ch-chip';
+    chip.textContent = label;
+    chip.style.background = color;
+    chip.style.color = '#fff';
+    chip.dataset.key = key;
+    chip.dataset.idx = dsIdx;
+    chip.onclick = () => {
+      const idx = parseInt(chip.dataset.idx);
+      const meta = chart.getDatasetMeta(idx);
+      const ds = chart.data.datasets[idx];
+      const nowHidden = !meta.hidden;
+      meta.hidden = nowHidden;
+      ds.hidden = nowHidden;
+      chip.classList.toggle('hidden', nowHidden);
+      chart.update('none');
+    };
+    container.appendChild(chip);
+  }
+
+  /* ---------- Chart init + flush ---------- */
+
+  function initCharts() {
+    initSensorgram();
+    initSpectrum();
+    setInterval(flushCharts, 500);
+  }
+
+  function flushCharts() {
+    if (sgDirty && sgChart && !sgFrozen) {
+      sgChart.update('none');
+      sgDirty = false;
+    }
+    if (spDirty && spChart && !spFrozen) {
+      spChart.update('none');
+      spDirty = false;
     }
   }
 

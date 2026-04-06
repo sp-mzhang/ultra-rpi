@@ -115,29 +115,22 @@
       </div>
     </section>
 
-    <section id="shift-panel" class="panel chart-panel">
-      <h2>Peak Shift</h2>
+    <section id="spectrum-panel" class="panel chart-panel">
+      <h2>Spectrum</h2>
       <div class="chart-toolbar">
-        <label for="ps-start-x">Start X:</label>
-        <input type="number" id="ps-start-x" value="0"
-               step="1" min="0" title="X-axis start (s)">
-        <button id="ps-freeze" class="chart-btn"
+        <button id="sp-freeze" class="chart-btn"
                 title="Freeze: pause live updates">
           Freeze
         </button>
-        <button id="ps-reset-zoom" class="chart-btn"
+        <button id="sp-reset-zoom" class="chart-btn"
                 title="Reset zoom / pan">
           Reset
         </button>
-        <button id="ps-clear" class="chart-btn"
-                title="Clear all chart data">
-          Clear
-        </button>
       </div>
-      <div id="ps-channel-toggles" class="channel-toggles">
+      <div id="sp-channel-toggles" class="channel-toggles">
       </div>
       <div class="canvas-wrap">
-        <canvas id="shift-canvas"></canvas>
+        <canvas id="spectrum-canvas"></canvas>
       </div>
     </section>
   </main>

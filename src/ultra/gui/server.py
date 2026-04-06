@@ -129,7 +129,7 @@ def create_app(application: 'Application') -> FastAPI:
 
     _BROADCAST_EVENTS = [
         'step_changed', 'well_updated', 'tip_changed',
-        'peak_data', 'protocol_paused',
+        'peak_data', 'sweep_data', 'protocol_paused',
         'protocol_resumed', 'protocol_started',
         'protocol_done', 'protocol_error',
         'protocol_aborted', 'status_changed',

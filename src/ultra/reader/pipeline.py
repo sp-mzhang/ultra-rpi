@@ -352,6 +352,7 @@ class ReaderPipeline:
 
             tracked = span_peaks.track_peaks(peaks_nm)
             self._emit_peaks(tracked)
+            self._emit_sweep(wl_arr, sensor_arr, no_ch)
             results.extend(self._last_emitted)
 
         if results:
@@ -529,3 +530,53 @@ class ReaderPipeline:
             self._event_bus.emit_sync(
                 'peak_data', result,
             )
+
+    def _emit_sweep(
+            self,
+            wl_arr: Any,
+            sensor_arr: Any,
+            no_ch: int,
+    ) -> None:
+        '''Emit latest sweep spectrum for the GUI.
+
+        Sends one ``sweep_data`` event containing the
+        wavelength x-axis and per-channel dB curves so the
+        web UI can render a live spectrum plot (matching
+        sway's Spectrum view).
+
+        The arrays are down-sampled to keep the WebSocket
+        payload manageable (~every 4th point).
+
+        Args:
+            wl_arr: 1-D wavelength array (nm).
+            sensor_arr: 2-D sensor array (no_ch x points)
+                or 1-D for single channel, in dB.
+            no_ch: Number of channels in this sweep.
+        '''
+        import numpy as np
+        step = max(1, len(wl_arr) // 200)
+        wl_ds = wl_arr[::step]
+        curves: dict[int, list[float]] = {}
+        for ch_idx in range(no_ch):
+            row = (
+                sensor_arr[ch_idx]
+                if sensor_arr.ndim > 1
+                else sensor_arr
+            )
+            ds = row[::step]
+            vals = [
+                round(float(v), 2)
+                if not np.isnan(v) else None
+                for v in ds
+            ]
+            curves[ch_idx + 1] = vals
+
+        self._event_bus.emit_sync(
+            'sweep_data',
+            {
+                'wavelengths': [
+                    round(float(w), 4) for w in wl_ds
+                ],
+                'curves': curves,
+            },
+        )
