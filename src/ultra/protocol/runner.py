@@ -25,6 +25,8 @@ LOG = logging.getLogger(__name__)
 
 DEFAULT_DATA_DIR = '~/sway_runs'
 _MAX_PIPELINE_Q = 3
+_READER_WARMUP_BLOCKS = 2
+_READER_WARMUP_TIMEOUT_S = 30
 
 
 class ProtocolRunner:
@@ -274,6 +276,46 @@ class ProtocolRunner:
                 'ok' if self._pipeline else 'NONE',
             )
 
+    async def _wait_for_reader_data(self) -> None:
+        '''Wait for initial reader blocks before protocol
+        steps begin.
+
+        Blocks until ``_READER_WARMUP_BLOCKS`` TLV blocks
+        have been captured (checked via the acquisition
+        service block counter) or a timeout is reached.
+        This ensures baseline peak data is available and
+        plotted before any hardware movement.
+        '''
+        if self._acquisition is None:
+            return
+
+        target = _READER_WARMUP_BLOCKS
+        deadline = time.monotonic() + _READER_WARMUP_TIMEOUT_S
+        LOG.info(
+            'Waiting for %d reader blocks '
+            'before starting protocol...',
+            target,
+        )
+
+        while time.monotonic() < deadline:
+            captured = self._acquisition._block_counter + 1
+            if captured >= target:
+                LOG.info(
+                    'Reader warm-up complete '
+                    '(%d blocks captured)',
+                    captured,
+                )
+                return
+            await asyncio.sleep(0.5)
+
+        captured = self._acquisition._block_counter + 1
+        LOG.warning(
+            'Reader warm-up timeout after %ds '
+            '(%d/%d blocks captured)',
+            _READER_WARMUP_TIMEOUT_S,
+            captured, target,
+        )
+
     async def _stop_reader(self) -> None:
         '''Cancel and await the background reader task.'''
         if self._reader_task is not None:
@@ -389,6 +431,7 @@ class ProtocolRunner:
                 self._pipeline.set_run_dir(run_dir)
 
         self._start_reader()
+        await self._wait_for_reader_data()
 
         await self._event_bus.emit(
             'protocol_started', {
