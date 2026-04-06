@@ -7,7 +7,6 @@
 
   /* ---- State ---- */
   let ws = null;
-  let peakChart = null;
   let wellDefs = {};
 
   /* ---- Elements ---- */
@@ -33,7 +32,7 @@
     await loadQuickRunDefaults();
     await loadStatus();
     connectWS();
-    initChart();
+    initCharts();
   }
 
   async function loadRecipes() {
@@ -239,8 +238,13 @@
     });
   }
 
-  /* ---- Chart ---- */
-  /* D3 category20 palette (matches sway) */
+  /* ============================================================
+   * Charts -- Sensorgram (wavelength nm) + Peak Shift (pm)
+   * ============================================================
+   * Each chart is an independent ChartManager with its own
+   * rawData store, baselines, freeze/align state, and controls.
+   * ========================================================== */
+
   const COLORS = [
     '#1F77B4', '#FF7F0E', '#2CA02C', '#D62728',
     '#9467BD', '#8C564B', '#E377C2', '#7F7F7F',
@@ -248,143 +252,232 @@
     '#98DF8A', '#FF9896', '#C5B0D5',
   ];
 
-  const rawData = {};
-  let chartDirty = false;
-  let frozen = false;
-  let alignY = false;
-  let startX = 0;
-  const baselines = {};
-  const elStartX = $('#start-x');
-  const elBtnAlignY = $('#btn-align-y');
-  const elBtnFreeze = $('#btn-freeze');
-  const elBtnResetZoom = $('#btn-reset-zoom');
-  const elBtnClear = $('#btn-clear');
-  const elChToggles = $('#channel-toggles');
+  class ChartManager {
+    constructor(canvasId, yLabel, yAxisId, opts) {
+      this.rawData = {};
+      this.baselines = {};
+      this.frozen = false;
+      this.alignY = false;
+      this.startX = 0;
+      this.dirty = false;
+      this.yField = opts.yField;
+      this.yDecimals = opts.yDecimals || 4;
 
-  function initChart() {
-    const ctx = $('#peak-canvas').getContext('2d');
-    peakChart = new Chart(ctx, {
-      type: 'line',
-      data: { datasets: [] },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        scales: {
-          x: {
-            type: 'linear',
-            title: {
-              display: true, text: 'Time (s)',
-              color: '#8b8fa3',
+      const ctx = $(canvasId).getContext('2d');
+      this.chart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets: [] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          scales: {
+            x: {
+              type: 'linear',
+              title: {
+                display: true, text: 'Time (s)',
+                color: '#8b8fa3',
+              },
+              grid: { color: '#2a2d3a' },
+              ticks: { color: '#8b8fa3' },
             },
-            grid: { color: '#2a2d3a' },
-            ticks: { color: '#8b8fa3' },
+            [yAxisId]: {
+              position: 'left',
+              title: {
+                display: true, text: yLabel,
+                color: '#1F77B4',
+              },
+              grid: { color: '#2a2d3a' },
+              ticks: {
+                color: '#8b8fa3',
+                callback: (v) =>
+                  v.toFixed(this.yDecimals),
+              },
+            },
           },
-          yPeak: {
-            position: 'left',
-            title: {
-              display: true, text: 'nm',
-              color: '#1F77B4',
-            },
-            grid: { color: '#2a2d3a' },
-            ticks: {
-              color: '#8b8fa3',
-              callback: (v) => v.toFixed(4),
-            },
-          },
-        },
-        plugins: {
-          legend: { display: false },
-          zoom: {
-            pan: {
-              enabled: true,
-              mode: 'xy',
-            },
+          plugins: {
+            legend: { display: false },
             zoom: {
-              wheel: { enabled: true },
-              pinch: { enabled: true },
-              mode: 'xy',
+              pan: { enabled: true, mode: 'xy' },
+              zoom: {
+                wheel: { enabled: true },
+                pinch: { enabled: true },
+                mode: 'xy',
+              },
             },
           },
         },
-      },
-    });
-    setInterval(flushChart, 500);
-    bindChartControls();
-  }
+      });
+      this._yAxisId = yAxisId;
+    }
 
-  function bindChartControls() {
-    elStartX.addEventListener('change', () => {
-      startX = parseFloat(elStartX.value) || 0;
-      applyStartX();
-      if (alignY) recomputeAlign();
-      chartDirty = true;
-    });
+    bindControls(ids) {
+      const elStartX = $(ids.startX);
+      const elAlignY = ids.alignY ? $(ids.alignY) : null;
+      const elFreeze = $(ids.freeze);
+      const elReset = $(ids.resetZoom);
+      const elClear = $(ids.clear);
+      this._togglesEl = $(ids.toggles);
 
-    elBtnAlignY.onclick = () => {
-      alignY = !alignY;
-      elBtnAlignY.classList.toggle('active', alignY);
-      if (alignY) {
-        recomputeAlign();
-      } else {
-        restoreRawY();
+      if (elStartX) {
+        elStartX.addEventListener('change', () => {
+          this.startX =
+            parseFloat(elStartX.value) || 0;
+          this.applyStartX();
+          if (this.alignY) this.recomputeAlign();
+          this.dirty = true;
+        });
       }
-      chartDirty = true;
-    };
 
-    elBtnFreeze.onclick = () => {
-      frozen = !frozen;
-      elBtnFreeze.classList.toggle('active', frozen);
-      elBtnFreeze.textContent = frozen
-        ? 'Frozen' : 'Freeze';
-    };
-
-    elBtnResetZoom.onclick = () => {
-      if (peakChart) peakChart.resetZoom();
-    };
-
-    elBtnClear.onclick = () => {
-      Object.keys(rawData).forEach((k) => delete rawData[k]);
-      Object.keys(baselines).forEach(
-        (k) => delete baselines[k],
-      );
-      if (peakChart) {
-        peakChart.data.datasets = [];
-        peakChart.update('none');
+      if (elAlignY) {
+        elAlignY.onclick = () => {
+          this.alignY = !this.alignY;
+          elAlignY.classList.toggle(
+            'active', this.alignY,
+          );
+          if (this.alignY) {
+            this.recomputeAlign();
+          } else {
+            this.restoreRawY();
+          }
+          this.dirty = true;
+        };
       }
-      elChToggles.innerHTML = '';
-    };
-  }
 
-  function applyStartX() {
-    if (!peakChart) return;
-    peakChart.options.scales.x.min = startX || undefined;
-    chartDirty = true;
-  }
+      if (elFreeze) {
+        elFreeze.onclick = () => {
+          this.frozen = !this.frozen;
+          elFreeze.classList.toggle(
+            'active', this.frozen,
+          );
+          elFreeze.textContent = this.frozen
+            ? 'Frozen' : 'Freeze';
+        };
+      }
 
-  function recomputeAlign() {
-    if (!peakChart) return;
-    peakChart.data.datasets.forEach((ds) => {
-      const key = ds._rawKey;
-      const raw = rawData[key];
-      if (!raw || !raw.length) return;
-      const ref = nearestY(raw, startX);
-      baselines[key] = ref;
-      ds.data = raw.map(
-        (p) => ({ x: p.x, y: p.y - ref }),
+      if (elReset) {
+        elReset.onclick = () => this.chart.resetZoom();
+      }
+
+      if (elClear) {
+        elClear.onclick = () => this.clearAll();
+      }
+    }
+
+    clearAll() {
+      Object.keys(this.rawData).forEach(
+        (k) => delete this.rawData[k],
       );
-    });
-  }
+      Object.keys(this.baselines).forEach(
+        (k) => delete this.baselines[k],
+      );
+      this.chart.data.datasets = [];
+      this.chart.update('none');
+      if (this._togglesEl) {
+        this._togglesEl.innerHTML = '';
+      }
+    }
 
-  function restoreRawY() {
-    if (!peakChart) return;
-    peakChart.data.datasets.forEach((ds) => {
-      const key = ds._rawKey;
-      const raw = rawData[key];
-      if (!raw) return;
-      ds.data = raw.map((p) => ({ x: p.x, y: p.y }));
-      delete baselines[key];
-    });
+    applyStartX() {
+      this.chart.options.scales.x.min =
+        this.startX || undefined;
+      this.dirty = true;
+    }
+
+    recomputeAlign() {
+      this.chart.data.datasets.forEach((ds) => {
+        const key = ds._rawKey;
+        const raw = this.rawData[key];
+        if (!raw || !raw.length) return;
+        const ref = nearestY(raw, this.startX);
+        this.baselines[key] = ref;
+        ds.data = raw.map(
+          (p) => ({ x: p.x, y: p.y - ref }),
+        );
+      });
+    }
+
+    restoreRawY() {
+      this.chart.data.datasets.forEach((ds) => {
+        const key = ds._rawKey;
+        const raw = this.rawData[key];
+        if (!raw) return;
+        ds.data = raw.map(
+          (p) => ({ x: p.x, y: p.y }),
+        );
+        delete this.baselines[key];
+      });
+    }
+
+    flush() {
+      if (this.dirty && !this.frozen) {
+        this.chart.update('none');
+        this.dirty = false;
+      }
+    }
+
+    ensureDataset(key, label, colorIdx) {
+      if (this.rawData[key]) return;
+      this.rawData[key] = [];
+      const color = COLORS[colorIdx % COLORS.length];
+      this.chart.data.datasets.push({
+        label: label,
+        data: this.rawData[key],
+        borderColor: color,
+        borderWidth: 1.5,
+        pointRadius: 2,
+        pointBackgroundColor: color,
+        tension: 0,
+        yAxisID: this._yAxisId,
+        hidden: false,
+        _rawKey: key,
+      });
+      const dsIdx =
+        this.chart.data.datasets.length - 1;
+      this._addChip(key, label, color, dsIdx);
+    }
+
+    _addChip(key, label, color, dsIdx) {
+      if (!this._togglesEl) return;
+      const chip = document.createElement('span');
+      chip.className = 'ch-chip';
+      chip.textContent = label;
+      chip.style.background = color;
+      chip.style.color = '#fff';
+      chip.dataset.key = key;
+      chip.dataset.idx = dsIdx;
+      const chart = this.chart;
+      chip.onclick = () => {
+        const idx = parseInt(chip.dataset.idx);
+        const meta = chart.getDatasetMeta(idx);
+        const ds = chart.data.datasets[idx];
+        const nowHidden = !meta.hidden;
+        meta.hidden = nowHidden;
+        ds.hidden = nowHidden;
+        chip.classList.toggle('hidden', nowHidden);
+        chart.update('none');
+      };
+      this._togglesEl.appendChild(chip);
+    }
+
+    addPoint(key, label, colorIdx, x, y) {
+      if (this.frozen) return;
+      this.ensureDataset(key, label, colorIdx);
+      const pt = { x: x, y: y };
+      this.rawData[key].push(pt);
+      const ds = this.chart.data.datasets.find(
+        (s) => s._rawKey === key,
+      );
+      if (ds) {
+        if (this.alignY) {
+          const ref = this.baselines[key] ?? 0;
+          ds.data.push({ x: pt.x, y: pt.y - ref });
+        } else {
+          ds.data.push(pt);
+        }
+      }
+      this.dirty = true;
+    }
   }
 
   function nearestY(arr, targetX) {
@@ -392,98 +485,67 @@
     let bestDist = Math.abs(best.x - targetX);
     for (let i = 1; i < arr.length; i++) {
       const d = Math.abs(arr[i].x - targetX);
-      if (d < bestDist) { best = arr[i]; bestDist = d; }
+      if (d < bestDist) {
+        best = arr[i]; bestDist = d;
+      }
     }
     return best.y;
   }
 
-  function flushChart() {
-    if (chartDirty && peakChart && !frozen) {
-      peakChart.update('none');
-      chartDirty = false;
-    }
-  }
+  /* ---- Chart instances ---- */
+  let sgChart = null;
+  let psChart = null;
 
-  function ensureDataset(key, label, opts) {
-    if (!rawData[key]) {
-      const o = opts || {};
-      const axisID = o.axisID || 'yPeak';
-      const hidden = o.hidden || false;
-      rawData[key] = [];
-      const cIdx = o.colorIdx != null
-        ? o.colorIdx
-        : peakChart.data.datasets.length;
-      const color = COLORS[cIdx % COLORS.length];
-      peakChart.data.datasets.push({
-        label: label,
-        data: rawData[key],
-        borderColor: color,
-        borderWidth: axisID === 'yPeak' ? 1.5 : 1,
-        pointRadius: axisID === 'yPeak' ? 2 : 0,
-        pointBackgroundColor: color,
-        tension: 0,
-        yAxisID: axisID,
-        hidden: hidden,
-        _rawKey: key,
-      });
-      const dsIdx = peakChart.data.datasets.length - 1;
-      if (hidden) {
-        peakChart.getDatasetMeta(dsIdx).hidden = true;
-      }
-      addChannelChip(
-        key, label, color, dsIdx, hidden,
-      );
-    }
-  }
+  function initCharts() {
+    sgChart = new ChartManager(
+      '#sensorgram-canvas', 'Wavelength (nm)',
+      'yPeak', { yField: 'wavelength_nm', yDecimals: 4 },
+    );
+    sgChart.bindControls({
+      startX: '#sg-start-x',
+      alignY: '#sg-align-y',
+      freeze: '#sg-freeze',
+      resetZoom: '#sg-reset-zoom',
+      clear: '#sg-clear',
+      toggles: '#sg-channel-toggles',
+    });
 
-  function addChannelChip(
-      key, label, color, dsIdx, startHidden,
-  ) {
-    const chip = document.createElement('span');
-    chip.className = 'ch-chip'
-      + (startHidden ? ' hidden' : '');
-    chip.textContent = label;
-    chip.style.background = color;
-    chip.style.color = '#fff';
-    chip.dataset.key = key;
-    chip.dataset.idx = dsIdx;
-    chip.onclick = () => {
-      const idx = parseInt(chip.dataset.idx);
-      const meta = peakChart.getDatasetMeta(idx);
-      const ds = peakChart.data.datasets[idx];
-      const nowHidden = !meta.hidden;
-      meta.hidden = nowHidden;
-      ds.hidden = nowHidden;
-      chip.classList.toggle('hidden', nowHidden);
-      peakChart.update('none');
-    };
-    elChToggles.appendChild(chip);
+    psChart = new ChartManager(
+      '#shift-canvas', 'Shift (pm)',
+      'yShift', { yField: 'shift_pm', yDecimals: 1 },
+    );
+    psChart.bindControls({
+      startX: '#ps-start-x',
+      alignY: null,
+      freeze: '#ps-freeze',
+      resetZoom: '#ps-reset-zoom',
+      clear: '#ps-clear',
+      toggles: '#ps-channel-toggles',
+    });
+
+    setInterval(() => {
+      sgChart.flush();
+      psChart.flush();
+    }, 500);
   }
 
   function addPeakPoint(d) {
-    if (frozen) return;
     const chNum = d.channel || 1;
     const key = 'ch' + chNum;
     const label = '' + chNum;
     const colorIdx = (chNum - 1) % COLORS.length;
-    ensureDataset(key, label, { colorIdx: colorIdx });
-    const pt = {
-      x: d.timestamp_s || 0,
-      y: d.wavelength_nm || 0,
-    };
-    rawData[key].push(pt);
-    const ds = peakChart.data.datasets.find(
-      (s) => s._rawKey === key,
-    );
-    if (ds) {
-      if (alignY) {
-        const ref = baselines[key] ?? 0;
-        ds.data.push({ x: pt.x, y: pt.y - ref });
-      } else {
-        ds.data.push({ x: pt.x, y: pt.y });
-      }
+    const t = d.timestamp_s || 0;
+
+    if (sgChart && d.wavelength_nm != null) {
+      sgChart.addPoint(
+        key, label, colorIdx, t, d.wavelength_nm,
+      );
     }
-    chartDirty = true;
+    if (psChart && d.shift_pm != null) {
+      psChart.addPoint(
+        key, label, colorIdx, t, d.shift_pm,
+      );
+    }
   }
 
   /* ---- Button Handlers ---- */
@@ -495,7 +557,9 @@
     try {
       const res = await fetch('/api/run', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify(body),
       });
       if (!res.ok) {
@@ -515,9 +579,13 @@
     fetch('/api/abort', { method: 'POST' });
 
   elBtnSmStart.onclick = () =>
-    fetch('/api/state-machine/start', { method: 'POST' });
+    fetch('/api/state-machine/start', {
+      method: 'POST',
+    });
   elBtnSmStop.onclick = () =>
-    fetch('/api/state-machine/stop', { method: 'POST' });
+    fetch('/api/state-machine/stop', {
+      method: 'POST',
+    });
 
   /* ---- Boot ---- */
   init();

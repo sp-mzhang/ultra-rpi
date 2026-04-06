@@ -21,6 +21,7 @@
   </header>
 
   <main>
+    <!-- Top row: 3 equal panels, 1/3 screen height -->
     <section id="controls" class="panel">
       <h2>Protocol Control</h2>
       <div class="control-row">
@@ -83,31 +84,61 @@
       <div id="wells-grid"></div>
     </section>
 
-    <section id="peak-chart" class="panel">
+    <!-- Bottom area: full-width charts, 2/3 screen height -->
+    <section id="sensorgram-panel" class="panel chart-panel">
       <h2>Sensorgram</h2>
-      <div id="chart-toolbar">
-        <label for="start-x">Start X:</label>
-        <input type="number" id="start-x" value="0"
+      <div class="chart-toolbar">
+        <label for="sg-start-x">Start X:</label>
+        <input type="number" id="sg-start-x" value="0"
                step="1" min="0" title="X-axis start (s)">
-        <button id="btn-align-y" class="chart-btn"
-                title="Align Y: subtract baseline at Start X">
+        <button id="sg-align-y" class="chart-btn"
+                title="Align Y: subtract baseline">
           Align Y
         </button>
-        <button id="btn-freeze" class="chart-btn"
+        <button id="sg-freeze" class="chart-btn"
                 title="Freeze: pause live updates">
           Freeze
         </button>
-        <button id="btn-reset-zoom" class="chart-btn"
+        <button id="sg-reset-zoom" class="chart-btn"
                 title="Reset zoom / pan">
           Reset
         </button>
-        <button id="btn-clear" class="chart-btn"
+        <button id="sg-clear" class="chart-btn"
                 title="Clear all chart data">
           Clear
         </button>
       </div>
-      <div id="channel-toggles"></div>
-      <canvas id="peak-canvas"></canvas>
+      <div id="sg-channel-toggles" class="channel-toggles">
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="sensorgram-canvas"></canvas>
+      </div>
+    </section>
+
+    <section id="shift-panel" class="panel chart-panel">
+      <h2>Peak Shift</h2>
+      <div class="chart-toolbar">
+        <label for="ps-start-x">Start X:</label>
+        <input type="number" id="ps-start-x" value="0"
+               step="1" min="0" title="X-axis start (s)">
+        <button id="ps-freeze" class="chart-btn"
+                title="Freeze: pause live updates">
+          Freeze
+        </button>
+        <button id="ps-reset-zoom" class="chart-btn"
+                title="Reset zoom / pan">
+          Reset
+        </button>
+        <button id="ps-clear" class="chart-btn"
+                title="Clear all chart data">
+          Clear
+        </button>
+      </div>
+      <div id="ps-channel-toggles" class="channel-toggles">
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="shift-canvas"></canvas>
+      </div>
     </section>
   </main>
 

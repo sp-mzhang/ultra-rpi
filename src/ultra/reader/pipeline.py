@@ -476,6 +476,13 @@ class ReaderPipeline:
                     run_dir_path=self._run_dir,
                     peak_config=peak_cfg,
                 )
+            except TypeError:
+                peaklogutils.save_resonances_log(
+                    resonance_props_fp=(
+                        self._resonance_props_fp
+                    ),
+                    resonance_props=res_props,
+                )
             except Exception:
                 LOG.exception(
                     'Failed to save resonance props',

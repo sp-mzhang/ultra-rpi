@@ -13,6 +13,10 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html, body {
+  height: 100%;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont,
     'Segoe UI', Roboto, sans-serif;
@@ -25,92 +29,131 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
+  padding: 6px 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  height: 50px;
+  height: 40px;
   flex-shrink: 0;
 }
 
 header h1 {
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   font-weight: 600;
 }
 
 .badge {
-  padding: 4px 12px;
+  padding: 3px 10px;
   border-radius: 12px;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-weight: 500;
 }
 
 .badge-blue { background: #1e3a5f; color: var(--blue); }
 .badge-green { background: #0d2818; color: var(--green); }
 
-html, body {
-  height: 100%;
-}
-
+/* --- Layout: 3-column top row, 2-column charts below --- */
 main {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  gap: 12px;
-  padding: 12px;
-  height: calc(100vh - 50px);
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 8px;
+  padding: 8px;
+  height: calc(100vh - 40px);
 }
 
+#controls      { grid-column: 1; grid-row: 1; }
+#progress      { grid-column: 2; grid-row: 1; }
+#cartridge-map { grid-column: 3; grid-row: 1; }
+
+#sensorgram-panel {
+  grid-column: 1 / 3;
+  grid-row: 2;
+}
+
+#shift-panel {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+/* --- Panels --- */
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 16px;
+  padding: 10px 12px;
   overflow: auto;
   min-height: 0;
+  min-width: 0;
 }
 
 .panel h2 {
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
+/* Chart panels need flex column so canvas fills */
+.chart-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chart-panel h2 {
+  flex-shrink: 0;
+}
+
+.canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.canvas-wrap canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* --- Protocol Control --- */
 .control-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
 .control-row label {
-  min-width: 60px;
+  min-width: 50px;
   color: var(--text-dim);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 
 select, input[type="text"] {
   flex: 1;
-  padding: 6px 10px;
+  padding: 4px 8px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--text);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 
 .btn-row {
   display: flex;
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
 }
 
 .btn {
-  padding: 8px 16px;
+  padding: 5px 12px;
   border: none;
   border-radius: 6px;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.2s;
@@ -126,41 +169,43 @@ select, input[type="text"] {
 .btn-blue { background: var(--blue); color: #fff; }
 .btn-red { background: var(--red); color: #fff; }
 .btn-sm {
-  padding: 4px 10px;
-  font-size: 0.75rem;
+  padding: 3px 8px;
+  font-size: 0.7rem;
   background: var(--border);
   color: var(--text-dim);
 }
 
+/* --- Step Progress --- */
 #step-info {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
 }
 
 .phase-badge {
   background: var(--accent);
   color: #fff;
-  padding: 2px 8px;
+  padding: 2px 6px;
   border-radius: 4px;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   font-weight: 600;
 }
 
 .tip-badge {
   margin-left: auto;
   background: var(--bg);
-  padding: 2px 8px;
+  padding: 2px 6px;
   border-radius: 4px;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: var(--text-dim);
 }
 
 .progress-bar-outer {
   background: var(--bg);
   border-radius: 4px;
-  height: 24px;
+  height: 20px;
   overflow: hidden;
 }
 
@@ -170,23 +215,24 @@ select, input[type="text"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 500;
   transition: width 0.3s;
   min-width: fit-content;
-  padding: 0 8px;
+  padding: 0 6px;
 }
 
 #elapsed {
-  margin-top: 4px;
-  font-size: 0.8rem;
+  margin-top: 2px;
+  font-size: 0.75rem;
   color: var(--text-dim);
 }
 
+/* --- Cartridge / Wells --- */
 #wells-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 4px;
   align-content: start;
 }
 
@@ -194,8 +240,8 @@ select, input[type="text"] {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 6px;
-  font-size: 0.75rem;
+  padding: 4px;
+  font-size: 0.7rem;
   text-align: center;
 }
 
@@ -206,21 +252,21 @@ select, input[type="text"] {
 
 .well-card .well-reagent {
   color: var(--text-dim);
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .well-card .well-vol {
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .well-card .fill-bar {
   height: 3px;
   background: var(--border);
   border-radius: 2px;
-  margin-top: 3px;
+  margin-top: 2px;
   overflow: hidden;
 }
 
@@ -232,45 +278,42 @@ select, input[type="text"] {
 
 .well-card.active {
   border-color: var(--accent);
-  box-shadow: 0 0 6px rgba(79, 125, 249, 0.3);
+  box-shadow: 0 0 4px rgba(79, 125, 249, 0.3);
 }
 
-#peak-chart {
-  display: flex;
-  flex-direction: column;
-}
-
-#chart-toolbar {
+/* --- Chart Toolbar --- */
+.chart-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: 4px;
+  margin-bottom: 4px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
-#chart-toolbar label {
+.chart-toolbar label {
   color: var(--text-dim);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   white-space: nowrap;
 }
 
-#chart-toolbar input[type="number"] {
-  width: 60px;
-  padding: 3px 6px;
+.chart-toolbar input[type="number"] {
+  width: 50px;
+  padding: 2px 4px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--text);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
 }
 
 .chart-btn {
-  padding: 3px 8px;
+  padding: 2px 6px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg);
   color: var(--text-dim);
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   cursor: pointer;
   transition: background 0.15s, color 0.15s,
     border-color 0.15s;
@@ -288,23 +331,24 @@ select, input[type="text"] {
   border-color: var(--accent);
 }
 
-#channel-toggles {
+/* --- Channel toggles --- */
+.channel-toggles {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 6px;
+  gap: 3px;
+  margin-bottom: 4px;
   flex-shrink: 0;
   min-height: 0;
 }
 
-#channel-toggles:empty {
+.channel-toggles:empty {
   display: none;
 }
 
 .ch-chip {
-  padding: 2px 8px;
+  padding: 1px 6px;
   border-radius: 10px;
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   font-weight: 500;
   cursor: pointer;
   border: 1px solid transparent;
@@ -315,17 +359,19 @@ select, input[type="text"] {
   opacity: 0.3;
 }
 
-#peak-canvas {
-  width: 100%;
-  flex: 1;
-  min-height: 0;
-}
-
+/* --- Responsive fallback --- */
 @media (max-width: 768px) {
   main {
     grid-template-columns: 1fr;
     grid-template-rows: auto;
     height: auto;
     overflow: auto;
+  }
+  #controls, #progress, #cartridge-map {
+    grid-column: 1;
+  }
+  #sensorgram-panel, #shift-panel {
+    grid-column: 1;
+    min-height: 300px;
   }
 }
