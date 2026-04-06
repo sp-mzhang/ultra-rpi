@@ -486,10 +486,6 @@
     chartDirty = true;
   }
 
-
-    chartDirty = true;
-  }
-
   /* ---- Button Handlers ---- */
   elBtnRun.onclick = async () => {
     const body = {
