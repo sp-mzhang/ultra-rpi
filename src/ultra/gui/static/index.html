@@ -6,8 +6,9 @@
         content="width=device-width, initial-scale=1.0">
   <title>Ultra RPi</title>
   <link rel="stylesheet" href="/static/style.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js">
-  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2/dist/chartjs-plugin-zoom.min.js"></script>
 </head>
 <body>
   <header>
@@ -81,7 +82,29 @@
     </section>
 
     <section id="peak-chart" class="panel">
-      <h2>Peak Shift</h2>
+      <h2>Live Data</h2>
+      <div id="chart-toolbar">
+        <label for="start-x">Start X:</label>
+        <input type="number" id="start-x" value="0"
+               step="1" min="0" title="X-axis start (s)">
+        <button id="btn-align-y" class="chart-btn"
+                title="Align Y: subtract baseline at Start X">
+          Align Y
+        </button>
+        <button id="btn-freeze" class="chart-btn"
+                title="Freeze: pause live updates">
+          Freeze
+        </button>
+        <button id="btn-reset-zoom" class="chart-btn"
+                title="Reset zoom / pan">
+          Reset
+        </button>
+        <button id="btn-clear" class="chart-btn"
+                title="Clear all chart data">
+          Clear
+        </button>
+      </div>
+      <div id="channel-toggles"></div>
       <canvas id="peak-canvas"></canvas>
     </section>
   </main>

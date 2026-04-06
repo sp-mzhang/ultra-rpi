@@ -236,7 +236,10 @@ class ProtocolRunner:
             resp: dict | None,
             label: str,
     ) -> None:
-        '''Extract and store pressure samples from a response.
+        '''Extract, store, and emit pressure samples.
+
+        Stores samples in the tracker and emits each as a
+        pressure_update event for real-time GUI display.
 
         Args:
             resp: Command response dict that may contain
@@ -246,7 +249,22 @@ class ProtocolRunner:
         if resp is None:
             return
         samples = resp.get('_pressure_samples', [])
-        if samples:
-            for s in samples:
-                s['label'] = label
-            self.tracker.add_pressure_data(samples)
+        if not samples:
+            return
+        elapsed = self.tracker.snapshot().elapsed_s
+        for s in samples:
+            s['label'] = label
+        self.tracker.add_pressure_data(samples)
+        self._event_bus.emit_sync(
+            'pressure_update', {
+                'label': label,
+                'timestamp_s': round(elapsed, 2),
+                'samples': [
+                    {
+                        'pressure': s.get('pressure', 0),
+                        'position': s.get('position', 0),
+                    }
+                    for s in samples
+                ],
+            },
+        )

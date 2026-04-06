@@ -8,7 +8,6 @@
   /* ---- State ---- */
   let ws = null;
   let peakChart = null;
-  const peakData = {};
   let wellDefs = {};
 
   /* ---- Elements ---- */
@@ -103,6 +102,9 @@
         break;
       case 'peak_data':
         addPeakPoint(data);
+        break;
+      case 'pressure_update':
+        addPressurePoints(data);
         break;
       case 'protocol_paused':
         updateButtons(true, true);
@@ -219,7 +221,27 @@
     });
   }
 
-  /* ---- Peak Chart ---- */
+  /* ---- Chart ---- */
+  const COLORS = [
+    '#4f7df9', '#2ea44f', '#d29922', '#da3633',
+    '#8b5cf6', '#06b6d4', '#f97316', '#ec4899',
+    '#14b8a6', '#eab308', '#6366f1', '#84cc16',
+    '#f43f5e', '#22d3ee', '#a855f7',
+  ];
+
+  const rawData = {};
+  let chartDirty = false;
+  let frozen = false;
+  let alignY = false;
+  let startX = 0;
+  const baselines = {};
+  const elStartX = $('#start-x');
+  const elBtnAlignY = $('#btn-align-y');
+  const elBtnFreeze = $('#btn-freeze');
+  const elBtnResetZoom = $('#btn-reset-zoom');
+  const elBtnClear = $('#btn-clear');
+  const elChToggles = $('#channel-toggles');
+
   function initChart() {
     const ctx = $('#peak-canvas').getContext('2d');
     peakChart = new Chart(ctx, {
@@ -232,52 +254,232 @@
         scales: {
           x: {
             type: 'linear',
-            title: { display: true, text: 'Time (s)' },
-            grid: { color: '#2a2d3a' },
-            ticks: { color: '#8b8fa3' },
-          },
-          y: {
             title: {
-              display: true, text: 'Shift (pm)',
+              display: true, text: 'Time (s)',
+              color: '#8b8fa3',
             },
             grid: { color: '#2a2d3a' },
             ticks: { color: '#8b8fa3' },
           },
+          yPeak: {
+            position: 'left',
+            title: {
+              display: true, text: 'Shift (pm)',
+              color: '#4f7df9',
+            },
+            grid: { color: '#2a2d3a' },
+            ticks: { color: '#8b8fa3' },
+          },
+          yPressure: {
+            position: 'right',
+            title: {
+              display: true, text: 'Pressure',
+              color: '#2ea44f',
+            },
+            grid: { drawOnChartArea: false },
+            ticks: { color: '#8b8fa3' },
+          },
         },
         plugins: {
-          legend: {
-            labels: { color: '#e4e6eb', boxWidth: 10 },
+          legend: { display: false },
+          zoom: {
+            pan: {
+              enabled: true,
+              mode: 'xy',
+            },
+            zoom: {
+              wheel: { enabled: true },
+              pinch: { enabled: true },
+              mode: 'xy',
+            },
           },
         },
       },
     });
+    setInterval(flushChart, 500);
+    bindChartControls();
+  }
+
+  function bindChartControls() {
+    elStartX.addEventListener('change', () => {
+      startX = parseFloat(elStartX.value) || 0;
+      applyStartX();
+      if (alignY) recomputeAlign();
+      chartDirty = true;
+    });
+
+    elBtnAlignY.onclick = () => {
+      alignY = !alignY;
+      elBtnAlignY.classList.toggle('active', alignY);
+      if (alignY) {
+        recomputeAlign();
+      } else {
+        restoreRawY();
+      }
+      chartDirty = true;
+    };
+
+    elBtnFreeze.onclick = () => {
+      frozen = !frozen;
+      elBtnFreeze.classList.toggle('active', frozen);
+      elBtnFreeze.textContent = frozen
+        ? 'Frozen' : 'Freeze';
+    };
+
+    elBtnResetZoom.onclick = () => {
+      if (peakChart) peakChart.resetZoom();
+    };
+
+    elBtnClear.onclick = () => {
+      Object.keys(rawData).forEach((k) => delete rawData[k]);
+      Object.keys(baselines).forEach(
+        (k) => delete baselines[k],
+      );
+      if (peakChart) {
+        peakChart.data.datasets = [];
+        peakChart.update('none');
+      }
+      elChToggles.innerHTML = '';
+    };
+  }
+
+  function applyStartX() {
+    if (!peakChart) return;
+    peakChart.options.scales.x.min = startX || undefined;
+    chartDirty = true;
+  }
+
+  function recomputeAlign() {
+    if (!peakChart) return;
+    peakChart.data.datasets.forEach((ds) => {
+      const key = ds._rawKey;
+      const raw = rawData[key];
+      if (!raw || !raw.length) return;
+      const ref = nearestY(raw, startX);
+      baselines[key] = ref;
+      ds.data = raw.map(
+        (p) => ({ x: p.x, y: p.y - ref }),
+      );
+    });
+  }
+
+  function restoreRawY() {
+    if (!peakChart) return;
+    peakChart.data.datasets.forEach((ds) => {
+      const key = ds._rawKey;
+      const raw = rawData[key];
+      if (!raw) return;
+      ds.data = raw.map((p) => ({ x: p.x, y: p.y }));
+      delete baselines[key];
+    });
+  }
+
+  function nearestY(arr, targetX) {
+    let best = arr[0];
+    let bestDist = Math.abs(best.x - targetX);
+    for (let i = 1; i < arr.length; i++) {
+      const d = Math.abs(arr[i].x - targetX);
+      if (d < bestDist) { best = arr[i]; bestDist = d; }
+    }
+    return best.y;
+  }
+
+  function flushChart() {
+    if (chartDirty && peakChart && !frozen) {
+      peakChart.update('none');
+      chartDirty = false;
+    }
+  }
+
+  function ensureDataset(key, label, axisID) {
+    if (!rawData[key]) {
+      rawData[key] = [];
+      const idx = peakChart.data.datasets.length;
+      const color = COLORS[idx % COLORS.length];
+      peakChart.data.datasets.push({
+        label: label,
+        data: rawData[key],
+        borderColor: color,
+        borderWidth: axisID === 'yPeak' ? 1.5 : 1,
+        pointRadius: 0,
+        tension: axisID === 'yPeak' ? 0.2 : 0.1,
+        yAxisID: axisID,
+        _rawKey: key,
+      });
+      addChannelChip(key, label, color,
+        peakChart.data.datasets.length - 1);
+    }
+  }
+
+  function addChannelChip(key, label, color, dsIdx) {
+    const chip = document.createElement('span');
+    chip.className = 'ch-chip';
+    chip.textContent = label;
+    chip.style.background = color;
+    chip.style.color = '#fff';
+    chip.dataset.key = key;
+    chip.dataset.idx = dsIdx;
+    chip.onclick = () => {
+      const meta = peakChart.getDatasetMeta(
+        parseInt(chip.dataset.idx),
+      );
+      meta.hidden = !meta.hidden;
+      chip.classList.toggle('hidden', meta.hidden);
+      peakChart.update('none');
+    };
+    elChToggles.appendChild(chip);
   }
 
   function addPeakPoint(d) {
+    if (frozen) return;
     const ch = 'Ch ' + (d.channel || 0);
-    if (!peakData[ch]) {
-      peakData[ch] = [];
-      const colors = [
-        '#4f7df9', '#2ea44f', '#d29922', '#da3633',
-        '#8b5cf6', '#06b6d4', '#f97316', '#ec4899',
-        '#14b8a6', '#eab308', '#6366f1', '#84cc16',
-        '#f43f5e', '#22d3ee', '#a855f7',
-      ];
-      const idx = peakChart.data.datasets.length;
-      peakChart.data.datasets.push({
-        label: ch,
-        data: peakData[ch],
-        borderColor: colors[idx % colors.length],
-        borderWidth: 1.5,
-        pointRadius: 0,
-        tension: 0.2,
-      });
-    }
-    peakData[ch].push({
+    ensureDataset(ch, ch, 'yPeak');
+    const pt = {
       x: d.timestamp_s || 0,
       y: d.shift_pm || 0,
+    };
+    rawData[ch].push(pt);
+    const ds = peakChart.data.datasets.find(
+      (s) => s._rawKey === ch,
+    );
+    if (ds) {
+      if (alignY) {
+        const ref = baselines[ch] ?? 0;
+        ds.data.push({ x: pt.x, y: pt.y - ref });
+      } else {
+        ds.data.push({ x: pt.x, y: pt.y });
+      }
+    }
+    chartDirty = true;
+  }
+
+  function addPressurePoints(d) {
+    if (frozen) return;
+    const label = d.label || 'Pressure';
+    const key = 'P:' + label;
+    ensureDataset(key, label, 'yPressure');
+    const ts = d.timestamp_s || 0;
+    const samples = d.samples || [];
+    const count = samples.length;
+    const ds = peakChart.data.datasets.find(
+      (s) => s._rawKey === key,
+    );
+    samples.forEach((s, i) => {
+      const pt = {
+        x: ts + (count > 1 ? i / count : 0),
+        y: s.pressure || 0,
+      };
+      rawData[key].push(pt);
+      if (ds) {
+        if (alignY) {
+          const ref = baselines[key] ?? 0;
+          ds.data.push({ x: pt.x, y: pt.y - ref });
+        } else {
+          ds.data.push({ x: pt.x, y: pt.y });
+        }
+      }
     });
-    peakChart.update('none');
+    chartDirty = true;
   }
 
   /* ---- Button Handlers ---- */
