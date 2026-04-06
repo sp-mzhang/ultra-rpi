@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import os.path as op
 import struct
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from ultra.events import EventBus
@@ -61,7 +63,7 @@ class AcquisitionService:
         self._reader = reader
         self._event_bus = event_bus
         self._output_dir = output_dir
-        self._block_counter = 0
+        self._block_counter = -1
         os.makedirs(output_dir, exist_ok=True)
 
     def set_output_dir(self, path: str) -> None:
@@ -74,7 +76,7 @@ class AcquisitionService:
             path: New output directory path.
         '''
         self._output_dir = path
-        self._block_counter = 0
+        self._block_counter = -1
         os.makedirs(path, exist_ok=True)
 
     async def capture_block(
@@ -131,32 +133,85 @@ class AcquisitionService:
             LOG.warning('No TLV data captured')
             return None
 
+        end_time = time.time()
+        duration = end_time - start_time
         self._block_counter += 1
+        bc = self._block_counter
+
         tlv_path = os.path.join(
             self._output_dir,
-            f'data_{self._block_counter}.tlv',
+            f'data_{bc}.tlv',
         )
         tmp_path = tlv_path + '0'
         with open(tmp_path, 'wb') as fh:
             fh.write(buf[:total_bytes])
         os.replace(tmp_path, tlv_path)
 
-        duration = time.time() - start_time
+        self._write_time_log(bc, start_time, end_time)
+        self._append_root_time_log(start_time, end_time)
+
         LOG.info(
-            f'TLV block {self._block_counter}: '
-            f'{total_bytes} bytes in {duration:.1f}s '
-            f'-> {tlv_path}',
+            'TLV block %d: %d bytes in %.1fs -> %s',
+            bc, total_bytes, duration, tlv_path,
         )
 
         self._event_bus.emit_sync(
             'tlv_block_captured', {
-                'block': self._block_counter,
+                'block': bc,
                 'path': tlv_path,
                 'bytes': total_bytes,
                 'duration_s': round(duration, 2),
             },
         )
         return tlv_path
+
+    def _write_time_log(
+            self,
+            block_idx: int,
+            t_start: float,
+            t_end: float,
+    ) -> None:
+        '''Write per-block time_N.log matching sway format.
+
+        Format::
+            Time,Counter,Start,End,Duration
+            2026/04/06-20:15:55,0,1743972955.12,...,3.33
+        '''
+        dt = datetime.fromtimestamp(
+            t_start,
+            tz=timezone.utc,
+        ).astimezone()
+        ts = dt.strftime('%Y/%m/%d-%H:%M:%S')
+        dur = t_end - t_start
+
+        path = os.path.join(
+            self._output_dir,
+            f'time_{block_idx}.log',
+        )
+        tmp = path + '0'
+        with open(tmp, 'w') as fh:
+            fh.write('Time,Counter,Start,End,Duration\n')
+            fh.write(
+                f'{ts},{block_idx},'
+                f'{t_start:.2f},{t_end:.2f},'
+                f'{dur:.2f}\n',
+            )
+        os.replace(tmp, path)
+
+    def _append_root_time_log(
+            self,
+            t_start: float,
+            t_end: float,
+    ) -> None:
+        '''Append to the run-root time.log (legacy).
+
+        The run directory is the parent of ``self._output_dir``
+        (which points to ``{run_dir}/tlv/``).
+        '''
+        run_dir = op.dirname(self._output_dir)
+        fp = op.join(run_dir, 'time.log')
+        with open(fp, 'a') as fh:
+            fh.write(f'{t_start:.2f}, {t_end:.2f}\n')
 
     def parse_tlv_chunks(
             self,

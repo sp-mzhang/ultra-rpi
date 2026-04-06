@@ -8,15 +8,21 @@ Directory structure::
     {data_dir}/{year}/{month:02d}/
       rg-{ts}-{user}-{name}-{rg_uuid[:8]}/
         rungroup.json
-        chip.log
+        config.log
+        spectrify_tlv_data_complete.txt
         R{reader_sn}-{chip_id}-{note}-{ts}/
           run.json
           run_cal.json
+          config.log
           chip.log
+          time.log
+          comments.log
+          result.log
+          peaks_nm.log
+          resonance_props.csv
           tlv/
-            data_1.tlv  ...
+            data_0.tlv  time_0.log  ...
           spectra/
-            peaks_nm.log  ...
 '''
 from __future__ import annotations
 
@@ -103,6 +109,21 @@ def _sanitize(name: str) -> str:
     return name
 
 
+def _write_config_log(
+        path: str,
+        config: dict[str, Any],
+) -> None:
+    '''Write a flat key = value config log matching sway.
+
+    Args:
+        path: Destination file path.
+        config: Configuration dict to serialise.
+    '''
+    with open(path, 'w') as fh:
+        for k, v in sorted(config.items()):
+            fh.write(f'{k} = {v}\n')
+
+
 class RunGroupWriter:
     '''Creates and manages a sway-compatible RunGroup on disk.
 
@@ -179,6 +200,10 @@ class RunGroupWriter:
             'well_plate': {},
         }
         self._write_rg_json()
+        _write_config_log(
+            op.join(self.rg_dir, 'config.log'),
+            self.rg_dict.get('config', {}),
+        )
         LOG.info(
             'RunGroup created: %s', self.rg_dir,
         )
@@ -257,6 +282,11 @@ class RunGroupWriter:
             run_dir, run_uuid, chip_id,
             chip_pos, note, reader_sn, run_meta,
         )
+        _write_config_log(
+            op.join(run_dir, 'config.log'),
+            self.rg_dict.get('config', {}),
+        )
+        self._write_run_stubs(run_dir)
 
         LOG.info('Run created: %s', run_dir)
         return run_dir, rdt
@@ -289,9 +319,42 @@ class RunGroupWriter:
             if op.isfile(src):
                 shutil.copy2(src, op.join(run_dir, fn))
 
+    def write_spectrify_complete(self) -> None:
+        '''Write spectrify_tlv_data_complete.txt marker.
+
+        Called after all TLV processing finishes, matching
+        sway's ``create_spectrify_tlv_data_complete_file``.
+        '''
+        fp = op.join(
+            self.rg_dir,
+            'spectrify_tlv_data_complete.txt',
+        )
+        with open(fp, 'w') as fh:
+            fh.write(_ts_str())
+
     # ----------------------------------------------------------
     # private writers
     # ----------------------------------------------------------
+
+    @staticmethod
+    def _write_run_stubs(run_dir: str) -> None:
+        '''Create sway-compatible stub log files.
+
+        Downstream tools may check for the existence of
+        these files even if they remain empty.
+        '''
+        stubs = {
+            'time.log': 'start time, end time\n',
+            'comments.log': 'datetime,start_time,comment\n',
+            'result.log': (
+                'Analysis Configurations and Results\n'
+            ),
+        }
+        for fn, header in stubs.items():
+            fp = op.join(run_dir, fn)
+            if not op.exists(fp):
+                with open(fp, 'w') as fh:
+                    fh.write(header)
 
     def _write_chip_log(
             self,

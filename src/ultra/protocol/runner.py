@@ -411,6 +411,7 @@ class ProtocolRunner:
             if rg_writer is not None:
                 try:
                     rg_writer.mark_completed()
+                    rg_writer.write_spectrify_complete()
                     if run_dir:
                         rg_writer.copy_rg_files_to_run(
                             run_dir,

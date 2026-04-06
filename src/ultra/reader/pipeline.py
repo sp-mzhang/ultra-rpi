@@ -2,94 +2,57 @@
 
 Bridges raw TLV data from the acquisition service to
 the siphox.analysis_tools package (installed from sway
-repo via pip). Uses the real sway peak detection API
-when available, with a lightweight fallback that does
-simple min-finding on raw spectral data.
+repo via pip). Uses the real sway peak detection API:
 
-Data flow (sway path):
+Data flow:
   raw TLV file
   -> readertospectra.process_tlv_file_to_sweeps()
-     (decode, unpack, bin, wavelength-calibrate)
+     (decode, demux adc_id 1/2, unpack 15-ch interleave,
+      bin sweeps, wavelength-calibrate)
   -> peaks.run_peak_detection(channels, SweepData,
      config_peak_detect, chip_mapping)
   -> event_bus.emit('peak_data', ...)
 
-Fallback path (no analysis_tools):
-  raw TLV file -> _parse_tlv_chunks()
-  -> numpy find-minimum on raw ADC sensor data
-  -> event_bus.emit('peak_data', ...)
+Requires siphox.analysis_tools to be installed:
+  pip install "analysis-tools @ git+https://..."
 '''
 from __future__ import annotations
 
 import logging
-import os
-import struct
+import os.path as op
 import tempfile
+import time as _time
 from typing import Any
 
 from ultra.events import EventBus
 
 LOG = logging.getLogger(__name__)
 
-TLV_HEADER_SIZE = 4
-TLV_TYPE_CHUNK = 4
-
-NOMINAL_WL_START_NM = 1530.0
-NOMINAL_WL_SPAN_NM = 50.0
-
-
-def _parabolic_min(
-        wl: 'np.ndarray',
-        vals: 'np.ndarray',
-        idx: int,
-) -> float:
-    '''Sub-bin minimum via 3-point parabolic interpolation.
-
-    Fits a parabola through the minimum and its two
-    neighbours to find a sub-sample estimate of the
-    resonance dip wavelength. Falls back to the bin
-    center when the index is at the array edge.
-
-    Args:
-        wl: Wavelength axis array.
-        vals: Sample values (uint16 ADC counts).
-        idx: Index of the discrete minimum.
-
-    Returns:
-        Interpolated wavelength of the minimum.
-    '''
-    n = len(vals)
-    if idx <= 0 or idx >= n - 1:
-        return float(wl[idx])
-
-    y0 = float(vals[idx - 1])
-    y1 = float(vals[idx])
-    y2 = float(vals[idx + 1])
-    denom = 2.0 * (y0 - 2.0 * y1 + y2)
-    if abs(denom) < 1e-12:
-        return float(wl[idx])
-
-    frac = (y0 - y2) / denom
-    return float(wl[idx]) + frac * float(
-        wl[1] - wl[0],
-    )
-
 
 class ReaderPipeline:
     '''Glue layer between raw TLV data and analysis tools.
 
-    Tries siphox.analysis_tools for real peak detection.
-    Falls back to simple min-finding on raw TLV spectral
-    data when analysis_tools is not available.
+    Uses siphox.analysis_tools to decode TLV binary data,
+    demux PProc/SProc streams, de-interleave 15 optical
+    channels, wavelength-calibrate sweeps, run peak
+    detection, and emit per-channel wavelength results
+    to the event bus.
+
+    Also writes sway-compatible log files:
+    - ``peaks_nm.log`` (via ``peaklogutils``)
+    - ``resonance_props.csv`` (via ``save_resonances_log``)
 
     Attributes:
         _event_bus: Application event bus.
         _peak_config: Peak detection config dict from YAML.
         _baseline: Per-channel baseline wavelengths for
-            shift calculation.
+            optional shift calculation.
         _wl_rth_fit: Persistent wavelength-vs-thermistor
             calibration (mutated across TLV files).
         _pow_rth_fit: Persistent power calibration.
+        _peaks_nm_fp: Path to peaks_nm.log (set on first
+            successful calibration sweep).
+        _resonance_props_fp: Path to resonance_props.csv.
     '''
 
     def __init__(
@@ -120,13 +83,16 @@ class ReaderPipeline:
         self._tlvtospec: Any = None
         self._sway_ok: bool | None = None
         self._run_dir: str = ''
+        self._peaks_nm_fp: str | None = None
+        self._resonance_props_fp: str | None = None
+        self._sweep_idx: int = 0
 
     def set_run_dir(self, run_dir: str) -> None:
         '''Set the run directory for TlvToSpectra logs.
 
-        Reinitialises the internal TlvToSpectra instance so
-        that any resonance-property CSV files land in the
-        correct run directory.
+        Reinitialises the internal TlvToSpectra instance
+        so that any resonance-property CSV files land in
+        the correct run directory.
 
         Args:
             run_dir: Absolute path to the current run dir.
@@ -136,7 +102,7 @@ class ReaderPipeline:
         self._sway_ok = None
 
     # ----------------------------------------------------------
-    # Lazy sway init
+    # Lazy init
     # ----------------------------------------------------------
 
     def _ensure_sway(self) -> bool:
@@ -154,9 +120,12 @@ class ReaderPipeline:
                 TlvToSpectra,
             )
         except ImportError:
-            LOG.warning(
-                'siphox.analysis_tools not installed '
-                '-- using fallback peak detection',
+            LOG.error(
+                'siphox.analysis_tools is NOT installed. '
+                'Peak detection disabled. Install with:\n'
+                '  pip install "analysis-tools @ '
+                'git+https://github.com/siphox-inc/'
+                'sway#subdirectory=analysis_tools"',
             )
             self._sway_ok = False
             return False
@@ -174,13 +143,13 @@ class ReaderPipeline:
             )
             self._sway_ok = True
             LOG.info(
-                'Sway analysis_tools pipeline initialised',
+                'analysis_tools pipeline initialised '
+                '(run_dir=%s)', run_dir,
             )
-        except Exception as err:
-            LOG.warning(
-                'Failed to init sway pipeline: %s '
-                '-- using fallback',
-                err,
+        except Exception:
+            LOG.exception(
+                'Failed to init TlvToSpectra -- '
+                'peak detection disabled',
             )
             self._sway_ok = False
 
@@ -195,12 +164,13 @@ class ReaderPipeline:
             path: str,
             timestamp_s: float = 0.0,
     ) -> list[dict] | None:
-        '''Process a raw TLV file through the analysis
+        '''Process a raw TLV file through the sway analysis
         pipeline.
 
-        Attempts the full sway analysis_tools pipeline
-        first. If that is unavailable or fails, falls back
-        to simple min-finding on raw spectral data.
+        Decodes TLV binary (demuxes PProc/SProc streams,
+        de-interleaves 15 optical channels), applies
+        wavelength calibration, runs peak detection per
+        channel, and emits ``peak_data`` events.
 
         Args:
             path: Path to raw .tlv file.
@@ -208,34 +178,20 @@ class ReaderPipeline:
 
         Returns:
             List of per-channel peak result dicts, or None
-            if the file yielded no usable data.
+            if the file yielded no peaks.
         '''
         self._timestamp_s = timestamp_s
         self._block_count += 1
 
-        if self._ensure_sway():
-            try:
-                result = self._process_with_sway(path)
-                if result:
-                    return result
-                LOG.debug(
-                    'Sway pipeline returned no peaks '
-                    'for %s -- trying fallback',
-                    path,
-                )
-            except Exception as err:
-                LOG.warning(
-                    'Sway pipeline error on %s: %s '
-                    '-- trying fallback',
-                    path, err,
-                )
+        if not self._ensure_sway():
+            return None
 
         try:
-            return self._process_fallback(path)
-        except Exception as err:
-            LOG.warning(
-                'Fallback pipeline error on %s: %s',
-                path, err,
+            return self._process_with_sway(path)
+        except Exception:
+            LOG.exception(
+                'Pipeline error processing block %d: %s',
+                self._block_count, path,
             )
             return None
 
@@ -243,10 +199,13 @@ class ReaderPipeline:
         '''Clear baselines and calibration for a new run.'''
         self._baseline.clear()
         self._block_count = 0
+        self._sweep_idx = 0
         self._wl_rth_fit = [None, None]
         self._pow_rth_fit = [None, None]
         self._tlvtospec = None
         self._sway_ok = None
+        self._peaks_nm_fp = None
+        self._resonance_props_fp = None
         LOG.debug('Pipeline baseline and calibration reset')
 
     # ----------------------------------------------------------
@@ -259,6 +218,9 @@ class ReaderPipeline:
         '''Run the full sway decode -> calibrate -> detect
         pipeline on a single TLV file.
 
+        Also writes peaks_nm.log rows and resonance_props.csv
+        rows for every sweep, matching sway's on-disk format.
+
         Args:
             path: Path to .tlv file on disk.
 
@@ -268,6 +230,9 @@ class ReaderPipeline:
         import numpy as np
         from siphox.analysis_tools.readertospectra import (
             process_tlv_file_to_sweeps,
+        )
+        from siphox.analysis_tools.utils import (
+            peaklogutils,
         )
         from siphox.analysis_tools.utils.\
             fitting_functions import peaks as span_peaks
@@ -285,6 +250,10 @@ class ReaderPipeline:
             )
 
         if not calibrated.wavelength_sweep_list:
+            LOG.debug(
+                'No sweeps in block %d (%s)',
+                self._block_count, path,
+            )
             return None
 
         results: list[dict] = []
@@ -329,182 +298,172 @@ class ReaderPipeline:
             )
 
             peak_cfg = dict(self._peak_config)
-            peak_cfg['t'] = round(self._timestamp_s, 2)
+            time_start_s = round(
+                float(t_data[0])
+                if len(t_data) > 0
+                else self._timestamp_s,
+                2,
+            )
+            peak_cfg['t'] = time_start_s
 
-            _, peaks_nm, _ = span_peaks.run_peak_detection(
-                channels=channels,
-                latest_sweep=sweep,
-                config_peak_detect=peak_cfg,
-                chip_mapping=chip_map,
+            res_props, peaks_nm, peaks_by_sensor = (
+                span_peaks.run_peak_detection(
+                    channels=channels,
+                    latest_sweep=sweep,
+                    config_peak_detect=peak_cfg,
+                    chip_mapping=chip_map,
+                )
             )
 
-            self._emit_peaks(
-                span_peaks.track_peaks(peaks_nm),
+            self._sweep_idx += 1
+
+            self._write_log_files(
+                peaklogutils, span_peaks,
+                chip_map, peak_cfg,
+                peaks_nm, peaks_by_sensor,
+                res_props, time_start_s,
             )
+
+            tracked = span_peaks.track_peaks(peaks_nm)
+            self._emit_peaks(tracked)
             results.extend(self._last_emitted)
 
-        return results or None
-
-    # ----------------------------------------------------------
-    # Internal: lightweight fallback pipeline
-    # ----------------------------------------------------------
-
-    def _process_fallback(
-            self, path: str,
-    ) -> list[dict] | None:
-        '''Lightweight peak detection without analysis_tools.
-
-        Reads the TLV file, extracts raw ADC spectra from
-        chunk payloads, finds the minimum (resonance dip)
-        in each channel's 16-bit sensor curve, and maps
-        it to a nominal wavelength.
-
-        Args:
-            path: Path to .tlv file on disk.
-
-        Returns:
-            List of peak result dicts or None.
-        '''
-        if not os.path.isfile(path):
-            return None
-
-        with open(path, 'rb') as fh:
-            data = fh.read()
-
-        if len(data) < TLV_HEADER_SIZE:
-            return None
-
-        chunks = self._parse_tlv_chunks(data)
-        if not chunks:
-            LOG.debug(
-                'Fallback: no TLV chunks in %s '
-                '(%d bytes)',
-                path, len(data),
-            )
-            return None
-
-        try:
-            import numpy as np
-        except ImportError:
-            LOG.warning(
-                'numpy not available for fallback '
-                'pipeline',
-            )
-            return None
-
-        seen_channels: dict[int, list[float]] = {}
-        for chunk in chunks:
-            payload = chunk['payload']
-            adc_id = chunk['adc_id']
-            if len(payload) < 20:
-                continue
-
-            samples = np.frombuffer(
-                payload, dtype=np.uint16,
-            )
-            if len(samples) < 10:
-                continue
-
-            n_pts = len(samples)
-            wl_axis = np.linspace(
-                NOMINAL_WL_START_NM,
-                NOMINAL_WL_START_NM + NOMINAL_WL_SPAN_NM,
-                n_pts,
-            )
-
-            min_idx = int(np.argmin(samples))
-            peak_wl = _parabolic_min(
-                wl_axis, samples, min_idx,
-            )
-
-            seen_channels.setdefault(
-                adc_id, [],
-            ).append(peak_wl)
-
-        results: list[dict] = []
-        for ch, wl_list in seen_channels.items():
-            avg_wl = sum(wl_list) / len(wl_list)
-
-            if ch not in self._baseline:
-                self._baseline[ch] = avg_wl
-
-            shift_pm = (
-                (avg_wl - self._baseline[ch]) * 1000
-            )
-
-            result = {
-                'channel': ch,
-                'wavelength_nm': round(avg_wl, 4),
-                'shift_pm': round(shift_pm, 2),
-                'timestamp_s': round(
-                    self._timestamp_s, 2,
-                ),
-            }
-            results.append(result)
-            self._event_bus.emit_sync(
-                'peak_data', result,
-            )
-
         if results:
-            LOG.debug(
-                'Fallback: %d peaks from %d chunks '
-                'in %s',
-                len(results), len(chunks), path,
+            LOG.info(
+                'Block %d: %d peaks from %d sweeps',
+                self._block_count,
+                len(results),
+                len(calibrated.wavelength_sweep_list),
             )
         return results or None
 
-    @staticmethod
-    def _parse_tlv_chunks(
-            data: bytes | bytearray,
-    ) -> list[dict]:
-        '''Extract chunk payloads from raw TLV binary.
+    # ----------------------------------------------------------
+    # Log file writers (peaks_nm.log, resonance_props.csv)
+    # ----------------------------------------------------------
+
+    def _write_log_files(
+            self,
+            peaklogutils: Any,
+            span_peaks: Any,
+            chip_map: dict[str, Any],
+            peak_cfg: dict[str, Any],
+            peaks_nm: list,
+            peaks_by_sensor: list,
+            res_props: list[dict[str, Any]],
+            time_start_s: float,
+    ) -> None:
+        '''Write peaks_nm.log row and resonance_props rows.
+
+        Initialises the log files lazily on the first sweep
+        that has a valid wavelength calibration, matching
+        sway's deferred-init pattern.
 
         Args:
-            data: Raw TLV byte data.
-
-        Returns:
-            List of dicts with chunk_id, adc_id, payload.
+            peaklogutils: Imported peaklogutils module.
+            span_peaks: Imported peaks module.
+            chip_map: Chip mapping dict.
+            peak_cfg: Peak detection config for this sweep.
+            peaks_nm: Per-channel peak wavelengths from
+                ``run_peak_detection``.
+            peaks_by_sensor: Per-sensor peak lists from
+                ``run_peak_detection``.
+            res_props: Resonance property dicts from
+                ``run_peak_detection``.
+            time_start_s: Sweep start time in seconds.
         '''
-        chunks: list[dict] = []
-        offset = 0
-        while offset + TLV_HEADER_SIZE <= len(data):
-            if offset + 4 > len(data):
-                break
-            tlv_type, tlv_len = struct.unpack_from(
-                '<HH', data, offset,
-            )
-            payload_start = offset + TLV_HEADER_SIZE
-            payload_end = payload_start + tlv_len
+        if not self._run_dir:
+            return
 
-            if payload_end > len(data):
-                break
-
-            if (
-                tlv_type == TLV_TYPE_CHUNK
-                and tlv_len >= 6
-            ):
-                chunk_id, adc_id, _ = struct.unpack_from(
-                    '<IBB', data, payload_start,
+        if (
+            self._peaks_nm_fp is None
+            and self._wl_rth_fit[0] is not None
+        ):
+            try:
+                self._peaks_nm_fp = (
+                    peaklogutils.init_peaks_nm_log(
+                        run_dir_path=self._run_dir,
+                        peak_config=peak_cfg,
+                        chip_mapping=chip_map,
+                        wl_rth_fit=self._wl_rth_fit[0],
+                        initial_cal_time_sweep_s=(
+                            time_start_s
+                        ),
+                    )
                 )
-                chunks.append({
-                    'chunk_id': chunk_id,
-                    'adc_id': adc_id,
-                    'payload': bytes(
-                        data[
-                            payload_start + 6:payload_end
-                        ],
+                LOG.info(
+                    'peaks_nm.log created: %s',
+                    self._peaks_nm_fp,
+                )
+            except Exception:
+                LOG.exception(
+                    'Failed to init peaks_nm.log',
+                )
+
+        if self._resonance_props_fp is None:
+            rp = op.join(
+                self._run_dir, 'resonance_props.csv',
+            )
+            try:
+                peaklogutils.init_resonance_props_log(
+                    run_dir_path=self._run_dir,
+                    resonance_props_fp=rp,
+                    peak_config=peak_cfg,
+                    logger=LOG,
+                )
+                self._resonance_props_fp = rp
+                LOG.info(
+                    'resonance_props.csv created: %s', rp,
+                )
+            except Exception:
+                LOG.exception(
+                    'Failed to init resonance_props.csv',
+                )
+
+        if self._peaks_nm_fp is not None and peaks_nm:
+            try:
+                sensor_names = (
+                    peaklogutils
+                    .sensor_column_names_from_chip_mapping(
+                        chip_map,
+                    )
+                )
+                peaklogutils.append_peaks_nm_row(
+                    peaks_nm_fp=self._peaks_nm_fp,
+                    time_logged=_time.time(),
+                    sweep_idx=self._sweep_idx,
+                    time_sweep_s=time_start_s,
+                    sensor_names=sensor_names,
+                    peaks_nm=peaks_by_sensor,
+                )
+            except Exception:
+                LOG.exception(
+                    'Failed to append peaks_nm row',
+                )
+
+        if self._resonance_props_fp is not None:
+            try:
+                peaklogutils.save_resonances_log(
+                    resonance_props_fp=(
+                        self._resonance_props_fp
                     ),
-                })
-
-            offset = payload_end
-
-        return chunks
+                    resonance_props=res_props,
+                    run_dir_path=self._run_dir,
+                    peak_config=peak_cfg,
+                )
+            except Exception:
+                LOG.exception(
+                    'Failed to save resonance props',
+                )
 
     def _emit_peaks(
             self,
             peaks_now: list[Any],
     ) -> None:
         '''Convert tracked peaks to dicts and emit events.
+
+        Emits one ``peak_data`` event per channel with
+        absolute wavelength (nm), shift from baseline (pm),
+        and timestamp. Channels are 1-based (1..15).
 
         Args:
             peaks_now: Per-channel list of PeakNm | None
@@ -515,16 +474,17 @@ class ReaderPipeline:
             if peak is None:
                 continue
             wl = peak[0]
+            ch = ch_idx + 1
 
-            if ch_idx not in self._baseline:
-                self._baseline[ch_idx] = wl
+            if ch not in self._baseline:
+                self._baseline[ch] = wl
 
             shift_pm = (
-                (wl - self._baseline[ch_idx]) * 1000
+                (wl - self._baseline[ch]) * 1000
             )
 
             result = {
-                'channel': ch_idx,
+                'channel': ch,
                 'wavelength_nm': round(wl, 4),
                 'shift_pm': round(shift_pm, 2),
                 'timestamp_s': round(

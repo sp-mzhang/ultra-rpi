@@ -243,11 +243,12 @@
   }
 
   /* ---- Chart ---- */
+  /* D3 category20 palette (matches sway) */
   const COLORS = [
-    '#4f7df9', '#2ea44f', '#d29922', '#da3633',
-    '#8b5cf6', '#06b6d4', '#f97316', '#ec4899',
-    '#14b8a6', '#eab308', '#6366f1', '#84cc16',
-    '#f43f5e', '#22d3ee', '#a855f7',
+    '#1F77B4', '#FF7F0E', '#2CA02C', '#D62728',
+    '#9467BD', '#8C564B', '#E377C2', '#7F7F7F',
+    '#BCBD22', '#17BECF', '#9EDAE5', '#FFBB78',
+    '#98DF8A', '#FF9896', '#C5B0D5',
   ];
 
   const rawData = {};
@@ -285,11 +286,14 @@
           yPeak: {
             position: 'left',
             title: {
-              display: true, text: 'Shift (pm)',
-              color: '#4f7df9',
+              display: true, text: 'nm',
+              color: '#1F77B4',
             },
             grid: { color: '#2a2d3a' },
-            ticks: { color: '#8b8fa3' },
+            ticks: {
+              color: '#8b8fa3',
+              callback: (v) => v.toFixed(4),
+            },
           },
           yPressure: {
             position: 'right',
@@ -419,15 +423,18 @@
       const axisID = o.axisID || 'yPeak';
       const hidden = o.hidden || false;
       rawData[key] = [];
-      const idx = peakChart.data.datasets.length;
-      const color = COLORS[idx % COLORS.length];
+      const cIdx = o.colorIdx != null
+        ? o.colorIdx
+        : peakChart.data.datasets.length;
+      const color = COLORS[cIdx % COLORS.length];
       peakChart.data.datasets.push({
         label: label,
         data: rawData[key],
         borderColor: color,
         borderWidth: axisID === 'yPeak' ? 1.5 : 1,
-        pointRadius: 0,
-        tension: axisID === 'yPeak' ? 0.2 : 0.1,
+        pointRadius: axisID === 'yPeak' ? 2 : 0,
+        pointBackgroundColor: color,
+        tension: 0,
         yAxisID: axisID,
         hidden: hidden,
         _rawKey: key,
@@ -477,19 +484,22 @@
 
   function addPeakPoint(d) {
     if (frozen) return;
-    const ch = 'Ch ' + (d.channel || 0);
-    ensureDataset(ch, ch);
+    const chNum = d.channel || 1;
+    const key = 'ch' + chNum;
+    const label = '' + chNum;
+    const colorIdx = (chNum - 1) % COLORS.length;
+    ensureDataset(key, label, { colorIdx: colorIdx });
     const pt = {
       x: d.timestamp_s || 0,
-      y: d.shift_pm || 0,
+      y: d.wavelength_nm || 0,
     };
-    rawData[ch].push(pt);
+    rawData[key].push(pt);
     const ds = peakChart.data.datasets.find(
-      (s) => s._rawKey === ch,
+      (s) => s._rawKey === key,
     );
     if (ds) {
       if (alignY) {
-        const ref = baselines[ch] ?? 0;
+        const ref = baselines[key] ?? 0;
         ds.data.push({ x: pt.x, y: pt.y - ref });
       } else {
         ds.data.push({ x: pt.x, y: pt.y });
