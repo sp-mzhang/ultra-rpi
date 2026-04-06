@@ -8,14 +8,14 @@ version = "0.1.0"
 description = "RPi controller for Ultra STM32 blood-analysis hardware"
 requires-python = ">=3.11"
 dependencies = [
-    "siphox-analysis-tools @ git+https://github.com/siphox-inc/sway.git@main#subdirectory=analysis_tools",
+    "siphox-analysis-tools @ git+ssh://git@github.com/siphox-inc/sway.git@main#subdirectory=analysis_tools",
     "pyserial>=3.5",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "pyyaml>=6.0",
     "numpy>=1.24",
     "boto3>=1.34",
-    "siphox-dollopclient @ git+https://github.com/siphox-inc/dollopclient.git@main",
+    "siphox-dollopclient @ git+ssh://git@github.com/siphox-inc/dollopclient.git@main",
 ]
 
 [project.optional-dependencies]
