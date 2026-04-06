@@ -238,8 +238,9 @@ class ProtocolRunner:
     ) -> None:
         '''Extract, store, and emit pressure samples.
 
-        Stores samples in the tracker and emits each as a
-        pressure_update event for real-time GUI display.
+        Stores samples in the tracker and emits a
+        pressure_update event so the GUI can optionally
+        display them.
 
         Args:
             resp: Command response dict that may contain

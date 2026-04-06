@@ -272,6 +272,7 @@
           },
           yPressure: {
             position: 'right',
+            display: false,
             title: {
               display: true, text: 'Pressure',
               color: '#2ea44f',
@@ -391,8 +392,11 @@
     }
   }
 
-  function ensureDataset(key, label, axisID) {
+  function ensureDataset(key, label, opts) {
     if (!rawData[key]) {
+      const o = opts || {};
+      const axisID = o.axisID || 'yPeak';
+      const hidden = o.hidden || false;
       rawData[key] = [];
       const idx = peakChart.data.datasets.length;
       const color = COLORS[idx % COLORS.length];
@@ -404,27 +408,47 @@
         pointRadius: 0,
         tension: axisID === 'yPeak' ? 0.2 : 0.1,
         yAxisID: axisID,
+        hidden: hidden,
         _rawKey: key,
       });
-      addChannelChip(key, label, color,
-        peakChart.data.datasets.length - 1);
+      const dsIdx = peakChart.data.datasets.length - 1;
+      if (hidden) {
+        peakChart.getDatasetMeta(dsIdx).hidden = true;
+      }
+      addChannelChip(
+        key, label, color, dsIdx, hidden,
+      );
     }
   }
 
-  function addChannelChip(key, label, color, dsIdx) {
+  function addChannelChip(
+      key, label, color, dsIdx, startHidden,
+  ) {
     const chip = document.createElement('span');
-    chip.className = 'ch-chip';
+    chip.className = 'ch-chip'
+      + (startHidden ? ' hidden' : '');
     chip.textContent = label;
     chip.style.background = color;
     chip.style.color = '#fff';
     chip.dataset.key = key;
     chip.dataset.idx = dsIdx;
     chip.onclick = () => {
-      const meta = peakChart.getDatasetMeta(
-        parseInt(chip.dataset.idx),
-      );
-      meta.hidden = !meta.hidden;
-      chip.classList.toggle('hidden', meta.hidden);
+      const idx = parseInt(chip.dataset.idx);
+      const meta = peakChart.getDatasetMeta(idx);
+      const ds = peakChart.data.datasets[idx];
+      const nowHidden = !meta.hidden;
+      meta.hidden = nowHidden;
+      ds.hidden = nowHidden;
+      chip.classList.toggle('hidden', nowHidden);
+      const axis = ds.yAxisID;
+      if (axis === 'yPressure') {
+        const anyVisible = peakChart.data.datasets.some(
+          (s, i) => s.yAxisID === 'yPressure'
+            && !peakChart.getDatasetMeta(i).hidden,
+        );
+        peakChart.options.scales.yPressure.display =
+          anyVisible;
+      }
       peakChart.update('none');
     };
     elChToggles.appendChild(chip);
@@ -433,7 +457,7 @@
   function addPeakPoint(d) {
     if (frozen) return;
     const ch = 'Ch ' + (d.channel || 0);
-    ensureDataset(ch, ch, 'yPeak');
+    ensureDataset(ch, ch);
     const pt = {
       x: d.timestamp_s || 0,
       y: d.shift_pm || 0,
@@ -457,7 +481,9 @@
     if (frozen) return;
     const label = d.label || 'Pressure';
     const key = 'P:' + label;
-    ensureDataset(key, label, 'yPressure');
+    ensureDataset(key, label, {
+      axisID: 'yPressure', hidden: true,
+    });
     const ts = d.timestamp_s || 0;
     const samples = d.samples || [];
     const count = samples.length;
