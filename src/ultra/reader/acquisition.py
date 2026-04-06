@@ -24,14 +24,14 @@ TLV_TYPE_CHUNK = 4
 TLV_TYPE_DATA_LOSS = 5
 
 CAPTURE_SLEEP_S = 0.003
-BONUS_TIME_S = 3.0
+BONUS_TIME_S = 1.2
 INTER_BLOCK_SLEEP_S = 0.001
 
 BYTES_PER_SEC_TABLE = {
-    1: 180_000, 2: 360_000, 3: 540_000,
-    4: 720_000, 5: 900_000, 6: 1_080_000,
-    7: 1_260_000, 8: 1_440_000, 9: 1_620_000,
-    10: 1_800_000, 11: 1_980_000, 12: 2_160_000,
+    1: 272_756, 2: 545_116, 3: 817_436,
+    4: 1_089_796, 5: 1_362_136, 6: 1_634_486,
+    7: 1_906_826, 8: 2_179_176, 9: 2_451_516,
+    10: 2_540_848, 11: 2_996_206, 12: 3_268_566,
 }
 
 
@@ -176,6 +176,7 @@ class AcquisitionService:
                 'duration_s': round(duration, 2),
             },
         )
+        await asyncio.sleep(INTER_BLOCK_SLEEP_S)
         return tlv_path
 
     def _write_time_log(

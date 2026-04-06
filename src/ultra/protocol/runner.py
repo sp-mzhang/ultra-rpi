@@ -235,17 +235,22 @@ class ProtocolRunner:
     ) -> None:
         '''Process a single TLV block through the pipeline.
 
-        Runs in a background task so the capture loop is not
-        blocked.
+        Runs ``process_tlv_file`` in a thread-pool executor
+        so the synchronous peak-detection work does not block
+        the asyncio event loop (and thus the capture loop).
 
         Args:
             path: Path to the TLV file.
             elapsed: Protocol elapsed time in seconds.
             block_count: Block sequence number for logging.
         '''
+        loop = asyncio.get_running_loop()
         try:
-            self._pipeline.process_tlv_file(
-                path, timestamp_s=elapsed,
+            await loop.run_in_executor(
+                None,
+                self._pipeline.process_tlv_file,
+                path,
+                elapsed,
             )
         except Exception as exc:
             LOG.warning(
