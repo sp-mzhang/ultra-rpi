@@ -16,6 +16,10 @@ from typing import TYPE_CHECKING, Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import (
+    BaseHTTPMiddleware,
+)
+from starlette.requests import Request
 
 if TYPE_CHECKING:
     from ultra.app import Application
@@ -104,6 +108,17 @@ def create_app(application: 'Application') -> FastAPI:
         Configured FastAPI app.
     '''
     app = FastAPI(title='Ultra RPi')
+
+    class NoCacheMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith('/static'):
+                response.headers['Cache-Control'] = (
+                    'no-cache, no-store, must-revalidate'
+                )
+            return response
+
+    app.add_middleware(NoCacheMiddleware)
     broadcaster = WebSocketBroadcaster()
 
     from ultra.gui.api import create_api_router
