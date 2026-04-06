@@ -24,6 +24,7 @@ from ultra.protocol.steps import STEP_REGISTRY
 LOG = logging.getLogger(__name__)
 
 DEFAULT_DATA_DIR = '~/sway_runs'
+_MAX_PIPELINE_Q = 3
 
 
 class ProtocolRunner:
@@ -147,10 +148,13 @@ class ProtocolRunner:
         detection until cancelled or ``acq_time_total_s``
         is exceeded.
 
-        Each iteration captures one block
-        (``acq_time_step_s`` seconds of data) and feeds
-        it through the ReaderPipeline. The loop runs as a
-        background asyncio task alongside protocol steps.
+        Capture and pipeline processing are decoupled:
+        capture starts immediately for the next block
+        while the previous block is processed in a
+        background task (bounded to ``_MAX_PIPELINE_Q``
+        concurrent tasks to prevent unbounded growth).
+        The reader stream is only stopped on exit, not
+        between blocks (matching sway's pattern).
         '''
         reader_cfg = self._config.get('reader', {})
         step_s = int(reader_cfg.get('acq_time_step_s', 3))
@@ -159,6 +163,7 @@ class ProtocolRunner:
         )
         acq_mode = reader_cfg.get('acq_mode', 'continuous')
         block_count = 0
+        pipeline_tasks: set[asyncio.Task] = set()
 
         LOG.info(
             'Reader loop started '
@@ -187,22 +192,66 @@ class ProtocolRunner:
                 elapsed = self.tracker.snapshot().elapsed_s
 
                 if self._pipeline is not None:
-                    try:
-                        self._pipeline.process_tlv_file(
-                            path,
-                            timestamp_s=elapsed,
+                    if len(pipeline_tasks) >= _MAX_PIPELINE_Q:
+                        done, pipeline_tasks = (
+                            await asyncio.wait(
+                                pipeline_tasks,
+                                return_when=(
+                                    asyncio.FIRST_COMPLETED
+                                ),
+                            )
                         )
-                    except Exception as exc:
-                        LOG.warning(
-                            'Pipeline error on block %d: %s',
-                            block_count, exc,
-                        )
+                    t = asyncio.create_task(
+                        self._run_pipeline(
+                            path, elapsed, block_count,
+                        ),
+                    )
+                    pipeline_tasks.add(t)
+                    t.add_done_callback(
+                        pipeline_tasks.discard,
+                    )
         except asyncio.CancelledError:
             LOG.info(
                 'Reader loop stopped after %d blocks',
                 block_count,
             )
             raise
+        finally:
+            if self._acquisition is not None:
+                self._acquisition.stop()
+            for t in pipeline_tasks:
+                t.cancel()
+            if pipeline_tasks:
+                await asyncio.gather(
+                    *pipeline_tasks,
+                    return_exceptions=True,
+                )
+
+    async def _run_pipeline(
+            self,
+            path: str,
+            elapsed: float,
+            block_count: int,
+    ) -> None:
+        '''Process a single TLV block through the pipeline.
+
+        Runs in a background task so the capture loop is not
+        blocked.
+
+        Args:
+            path: Path to the TLV file.
+            elapsed: Protocol elapsed time in seconds.
+            block_count: Block sequence number for logging.
+        '''
+        try:
+            self._pipeline.process_tlv_file(
+                path, timestamp_s=elapsed,
+            )
+        except Exception as exc:
+            LOG.warning(
+                'Pipeline error on block %d: %s',
+                block_count, exc,
+            )
 
     def _start_reader(self) -> None:
         '''Start the background reader task if available.'''

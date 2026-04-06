@@ -257,9 +257,10 @@ class ReaderInterface:
     ) -> bool:
         '''Start the TLV data stream.
 
-        Sends "start <seconds>" command. After ACK,
-        binary TLV data will begin arriving on the
-        serial port.
+        Sends "start <seconds>" command. Polls for ACK
+        with minimal delay (at 1Mbaud the 7-byte ACK
+        arrives in ~0.1ms). After ACK, binary TLV data
+        begins arriving on the serial port.
 
         Args:
             acq_seconds: Acquisition duration in seconds.
@@ -271,8 +272,7 @@ class ReaderInterface:
             return False
         self._ser.reset_input_buffer()
         self._send_cmd(f'start {acq_seconds}')
-        time.sleep(0.05)
-        return self._read_ack(CMD_START)
+        return self._poll_ack(CMD_START, timeout_s=0.2)
 
     def stop_stream(self) -> bool:
         '''Stop the TLV data stream.
@@ -282,12 +282,44 @@ class ReaderInterface:
         '''
         if not self._ser:
             return False
-        self._ser.reset_input_buffer()
         self._send_cmd('stop')
-        time.sleep(0.05)
-        return self._read_ack(
-            CMD_STOP, byte_count=8500,
+        time.sleep(0.02)
+        raw = self._ser.read(
+            min(self._ser.in_waiting, 8500),
         )
+        text = raw.decode('utf-8', errors='ignore')
+        match = ACK_REGEX.search(text)
+        if match:
+            return int(match.group()) == CMD_STOP
+        return False
+
+    def _poll_ack(
+            self,
+            expected_cmd: int,
+            timeout_s: float = 0.2,
+    ) -> bool:
+        '''Poll for an ACK with minimal latency.
+
+        Polls ``in_waiting`` in a tight loop instead of
+        a blind sleep. At 1Mbaud the ACK arrives quickly.
+
+        Args:
+            expected_cmd: Expected command ID integer.
+            timeout_s: Maximum time to wait for ACK.
+
+        Returns:
+            True if ACK matches expected command.
+        '''
+        if not self._ser:
+            return False
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if self._ser.in_waiting >= 7:
+                return self._read_ack(expected_cmd)
+            time.sleep(0.001)
+        if self._ser.in_waiting > 0:
+            return self._read_ack(expected_cmd)
+        return False
 
     def resume_stream(
             self, chunk_id: int,

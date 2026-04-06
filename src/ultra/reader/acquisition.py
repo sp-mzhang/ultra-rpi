@@ -25,6 +25,7 @@ TLV_TYPE_DATA_LOSS = 5
 
 CAPTURE_SLEEP_S = 0.003
 BONUS_TIME_S = 3.0
+INTER_BLOCK_SLEEP_S = 0.001
 
 BYTES_PER_SEC_TABLE = {
     1: 180_000, 2: 360_000, 3: 540_000,
@@ -65,6 +66,21 @@ class AcquisitionService:
         self._output_dir = output_dir
         self._block_counter = -1
         os.makedirs(output_dir, exist_ok=True)
+
+    def stop(self) -> None:
+        '''Stop the reader stream explicitly.
+
+        Call this when the acquisition loop is done (protocol
+        end or cancellation). Matches sway's pattern of only
+        stopping the stream on exit, not between blocks.
+        '''
+        try:
+            self._reader.stop_stream()
+            LOG.info('Reader stream stopped')
+        except Exception as exc:
+            LOG.warning(
+                'Error stopping reader stream: %s', exc,
+            )
 
     def set_output_dir(self, path: str) -> None:
         '''Change the TLV output directory and reset counter.
@@ -111,23 +127,20 @@ class AcquisitionService:
             start_time + acq_seconds + BONUS_TIME_S
         )
 
-        try:
-            while time.time() < deadline:
-                await asyncio.sleep(CAPTURE_SLEEP_S)
-                raw = self._reader.read_bytes()
-                if raw:
-                    end = total_bytes + len(raw)
-                    if end > len(buf):
-                        buf.extend(
-                            bytearray(end - len(buf)),
-                        )
-                    buf[total_bytes:end] = raw
-                    total_bytes = end
+        while time.time() < deadline:
+            await asyncio.sleep(CAPTURE_SLEEP_S)
+            raw = self._reader.read_bytes()
+            if raw:
+                end = total_bytes + len(raw)
+                if end > len(buf):
+                    buf.extend(
+                        bytearray(end - len(buf)),
+                    )
+                buf[total_bytes:end] = raw
+                total_bytes = end
 
-                if total_bytes >= est_bytes:
-                    break
-        finally:
-            self._reader.stop_stream()
+            if total_bytes >= est_bytes:
+                break
 
         if total_bytes == 0:
             LOG.warning('No TLV data captured')

@@ -73,7 +73,6 @@ class ReaderMock:
     ) -> bool:
         '''Start mock stream.'''
         self._streaming = True
-        self._chunk_id = 0
         return True
 
     def stop_stream(self) -> bool:
