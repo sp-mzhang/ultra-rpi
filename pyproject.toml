@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ultra-rpi"
 version = "0.1.0"
 description = "RPi controller for Ultra STM32 blood-analysis hardware"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "analysis-tools @ git+ssh://git@github.com/siphox-inc/sway.git@main#subdirectory=analysis_tools",
     "pyserial>=3.5",

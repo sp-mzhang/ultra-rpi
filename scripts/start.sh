@@ -64,14 +64,31 @@ VENV_DIR="$PROJECT_DIR/.venv"
 if [ ! -d "$VENV_DIR" ]; then
     echo "Creating virtual environment..."
     SYSPYTHON=""
-    if command -v python3 &>/dev/null; then
-        SYSPYTHON="python3"
-    elif command -v python &>/dev/null; then
-        SYSPYTHON="python"
-    else
-        echo "ERROR: python3 not found. Install Python >=3.11."
+    for candidate in python3.11 python3; do
+        if command -v "$candidate" &>/dev/null; then
+            ver=$("$candidate" -c \
+                "import sys; v=sys.version_info; print(f'{v.major}.{v.minor}')" \
+                2>/dev/null || true)
+            if [ "$ver" = "3.11" ]; then
+                SYSPYTHON="$candidate"
+                break
+            fi
+        fi
+    done
+    if [ -z "$SYSPYTHON" ]; then
+        echo "ERROR: Python 3.11 is required but not found."
+        echo ""
+        echo "  Install it on Raspberry Pi OS (bookworm):"
+        echo "    sudo apt update"
+        echo "    sudo apt install python3.11 python3.11-venv"
+        echo ""
+        echo "  Or via deadsnakes on Ubuntu:"
+        echo "    sudo add-apt-repository ppa:deadsnakes/ppa"
+        echo "    sudo apt update"
+        echo "    sudo apt install python3.11 python3.11-venv"
         exit 1
     fi
+    echo "Using $SYSPYTHON ($("$SYSPYTHON" --version))"
     "$SYSPYTHON" -m venv "$VENV_DIR"
     echo "Upgrading pip & setuptools..."
     "$VENV_DIR/bin/pip" install --quiet --upgrade pip setuptools wheel
