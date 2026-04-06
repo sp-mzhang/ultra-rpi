@@ -1,14 +1,10 @@
-[build-system]
-requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "ultra-rpi"
 version = "0.1.0"
 description = "RPi controller for Ultra STM32 blood-analysis hardware"
 requires-python = ">=3.11"
 dependencies = [
-    "analysis-tools @ git+ssh://git@github.com/siphox-inc/sway.git@main#subdirectory=analysis_tools",
+    "analysis-tools",
     "pyserial>=3.5",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
@@ -25,8 +21,22 @@ dev = [
     "mypy>=1.9",
 ]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ultra"]
+
+[tool.uv]
+managed = true
+
+[tool.uv.sources]
+analysis-tools = { git = "ssh://git@github.com/siphox-inc/sway.git", branch = "main", subdirectory = "analysis_tools" }
+
+[[tool.uv.index]]
+name = "siphox"
+url = "http://18.117.187.46:8082/"
 
 [tool.ruff]
 line-length = 99

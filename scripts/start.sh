@@ -39,47 +39,33 @@ for arg in "$@"; do
     esac
 done
 
-# --------------- ensure venv & deps ---------------
-setup_venv() {
-    if [ ! -d "$VENV_DIR" ]; then
-        echo "Creating virtual environment..."
-        SYSPYTHON=""
-        if command -v python3 &>/dev/null; then
-            SYSPYTHON="python3"
-        elif command -v python &>/dev/null; then
-            SYSPYTHON="python"
-        else
-            echo "ERROR: python3 not found."
-            exit 1
-        fi
-        echo "Using $SYSPYTHON ($("$SYSPYTHON" --version))"
-        "$SYSPYTHON" -m venv "$VENV_DIR"
-        echo "Upgrading pip & setuptools..."
-        PIP_CONFIG_FILE="$PROJECT_DIR/pip.conf" \
-            "$VENV_DIR/bin/pip" install --quiet \
-            --upgrade pip setuptools wheel
+# --------------- ensure uv ---------------
+ensure_uv() {
+    if command -v uv &>/dev/null; then
+        return
     fi
-
-    if ! "$VENV_DIR/bin/python" -c "import ultra" 2>/dev/null; then
-        echo "Installing ultra-rpi..."
-        PIP_CONFIG_FILE="$PROJECT_DIR/pip.conf" \
-            "$VENV_DIR/bin/pip" install --quiet \
-            --ignore-requires-python -e "$PROJECT_DIR"
+    echo "Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+    if ! command -v uv &>/dev/null; then
+        echo "ERROR: uv install failed."
+        exit 1
     fi
-
-    if ! "$VENV_DIR/bin/python" -c \
-        "import siphox.analysis_tools" 2>/dev/null; then
-        echo "Installing analysis-tools (reader pipeline)..."
-        PIP_CONFIG_FILE="$PROJECT_DIR/pip.conf" \
-            "$VENV_DIR/bin/pip" install --quiet \
-            --ignore-requires-python \
-            "analysis-tools @ git+ssh://git@github.com/siphox-inc/sway.git@main#subdirectory=analysis_tools" \
-            || echo "WARNING: analysis-tools install failed." \
-               " Peak detection will be disabled."
-    fi
+    echo "uv $(uv --version) installed"
 }
 
-setup_venv
+# --------------- sync environment ---------------
+setup_env() {
+    ensure_uv
+    echo "Syncing environment with uv..."
+    cd "$PROJECT_DIR"
+    UV_NO_PROGRESS=1 NO_COLOR=1 \
+        uv sync --frozen 2>&1 || \
+        UV_NO_PROGRESS=1 NO_COLOR=1 uv sync 2>&1
+    echo "Environment ready."
+}
+
+setup_env
 
 # --------------- service mode (default) ---------------
 if [ "$MODE" = "service" ]; then
