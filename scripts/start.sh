@@ -64,28 +64,12 @@ VENV_DIR="$PROJECT_DIR/.venv"
 if [ ! -d "$VENV_DIR" ]; then
     echo "Creating virtual environment..."
     SYSPYTHON=""
-    for candidate in python3.11 python3; do
-        if command -v "$candidate" &>/dev/null; then
-            ver=$("$candidate" -c \
-                "import sys; v=sys.version_info; print(f'{v.major}.{v.minor}')" \
-                2>/dev/null || true)
-            if [ "$ver" = "3.11" ]; then
-                SYSPYTHON="$candidate"
-                break
-            fi
-        fi
-    done
-    if [ -z "$SYSPYTHON" ]; then
-        echo "ERROR: Python 3.11 is required but not found."
-        echo ""
-        echo "  Install it on Raspberry Pi OS (bookworm):"
-        echo "    sudo apt update"
-        echo "    sudo apt install python3.11 python3.11-venv"
-        echo ""
-        echo "  Or via deadsnakes on Ubuntu:"
-        echo "    sudo add-apt-repository ppa:deadsnakes/ppa"
-        echo "    sudo apt update"
-        echo "    sudo apt install python3.11 python3.11-venv"
+    if command -v python3 &>/dev/null; then
+        SYSPYTHON="python3"
+    elif command -v python &>/dev/null; then
+        SYSPYTHON="python"
+    else
+        echo "ERROR: python3 not found. Install Python >=3.11."
         exit 1
     fi
     echo "Using $SYSPYTHON ($("$SYSPYTHON" --version))"
@@ -99,7 +83,8 @@ PYTHON="$VENV_DIR/bin/python"
 # Install / update the package
 if ! "$PYTHON" -c "import ultra" 2>/dev/null; then
     echo "Installing ultra-rpi in dev mode..."
-    "$VENV_DIR/bin/pip" install --quiet -e "$PROJECT_DIR"
+    "$VENV_DIR/bin/pip" install --quiet \
+        --ignore-requires-python -e "$PROJECT_DIR"
 fi
 
 if [ "${ULTRA_MOCK:-}" = "1" ]; then
