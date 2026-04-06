@@ -119,13 +119,11 @@ class ReaderPipeline:
             from siphox.analysis_tools.readertospectra import (
                 TlvToSpectra,
             )
-        except ImportError:
-            LOG.error(
-                'siphox.analysis_tools is NOT installed. '
-                'Peak detection disabled. Install with:\n'
-                '  pip install "analysis-tools @ '
-                'git+https://github.com/siphox-inc/'
-                'sway#subdirectory=analysis_tools"',
+        except Exception:
+            LOG.exception(
+                'Failed to import siphox.analysis_tools. '
+                'Peak detection disabled. If not installed '
+                'run: uv sync',
             )
             self._sway_ok = False
             return False
