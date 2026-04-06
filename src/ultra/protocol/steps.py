@@ -164,16 +164,21 @@ class LidStep(StepExecutor):
 
 @step_type('tip_pick')
 class TipPickStep(StepExecutor):
-    '''Pick up a tip from its holder well.'''
+    '''Pick up a tip via gantry_tip_swap from_id=0.
+
+    Sway uses gantry_tip_swap for all tip operations,
+    not the raw tip_pickup command.
+    '''
 
     async def execute(self, params, runner) -> bool:
         tip_id = params.get('tip_id', 4)
         r = runner.stm32.send_command_wait_done(
             cmd={
-                'cmd': 'tip_pickup',
-                'well': tip_id,
+                'cmd': 'gantry_tip_swap',
+                'from_id': 0,
+                'to_id': tip_id,
             },
-            timeout_s=60.0,
+            timeout_s=120.0,
         )
         if _ok(r):
             runner.tracker.update_tip(tip_id)
@@ -193,7 +198,7 @@ class TipSwapStep(StepExecutor):
                 'from_id': from_id,
                 'to_id': to_id,
             },
-            timeout_s=60.0,
+            timeout_s=120.0,
         )
         if _ok(r):
             runner.tracker.update_tip(to_id)
@@ -202,23 +207,17 @@ class TipSwapStep(StepExecutor):
 
 @step_type('tip_return')
 class TipReturnStep(StepExecutor):
-    '''Return tip to its holder and eject.'''
+    '''Return tip via gantry_tip_swap to_id=0.'''
 
     async def execute(self, params, runner) -> bool:
         tip_id = params.get('tip_id', 5)
         r = runner.stm32.send_command_wait_done(
             cmd={
-                'cmd': 'move_to_location',
-                'location_id': tip_id,
-                'speed_01mms': 250,
+                'cmd': 'gantry_tip_swap',
+                'from_id': tip_id,
+                'to_id': 0,
             },
-            timeout_s=60.0,
-        )
-        if not _ok(r):
-            return False
-        r = runner.stm32.send_command_wait_done(
-            cmd={'cmd': 'tip_eject'},
-            timeout_s=30.0,
+            timeout_s=120.0,
         )
         if _ok(r):
             runner.tracker.update_tip(0)
