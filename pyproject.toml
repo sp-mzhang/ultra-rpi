@@ -14,6 +14,8 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "pyyaml>=6.0",
     "numpy>=1.24",
+    "boto3>=1.34",
+    "siphox-dollopclient @ git+https://github.com/siphox-inc/dollopclient.git@main",
 ]
 
 [project.optional-dependencies]

@@ -20,12 +20,26 @@ Lean, headless Python service that:
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-
-# Run the application
-python -m ultra.app
-
-# Open browser to http://localhost:8080
 ```
+
+### Start / Stop
+
+```bash
+# --- Development (mock hardware, no STM32/reader needed) ---
+./scripts/start.sh --mock
+
+# --- Real hardware (on RPi) ---
+./scripts/start.sh
+
+# --- Production (systemd on RPi, after deploy/install.sh) ---
+./scripts/start.sh --systemd
+
+# --- Stop ---
+./scripts/stop.sh            # stop any running instance
+./scripts/stop.sh --systemd  # stop systemd service only
+```
+
+The GUI is served at `http://<rpi-ip>:8080`.
 
 ## Configuration
 

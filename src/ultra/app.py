@@ -43,6 +43,8 @@ class Application:
         self._monitor = None
         self._state_machine = None
         self._sm_task: asyncio.Task | None = None
+        self._egress_svc = None
+        self._egress_task: asyncio.Task | None = None
         self._runner = None
         self._stm32 = None
 
@@ -69,6 +71,10 @@ class Application:
 
         app = create_app(self)
         self._start_gui(app, host, port)
+
+        egress_cfg = self.config.get('egress', {})
+        if egress_cfg.get('enabled', False):
+            self._start_egress()
 
         startup_cfg = self.config.get('startup', {})
         if startup_cfg.get('auto_state_machine', False):
@@ -137,6 +143,18 @@ class Application:
             f'GUI server starting on {host}:{port}',
         )
 
+    def _start_egress(self) -> None:
+        '''Start the egress service as a background task.'''
+        from ultra.services.egress import EgressService
+        self._egress_svc = EgressService(
+            config=self.config,
+            event_bus=self.event_bus,
+        )
+        self._egress_task = asyncio.ensure_future(
+            self._egress_svc.start(),
+        )
+        LOG.info('EgressService started')
+
     def _start_state_machine(self) -> None:
         '''Start the state machine as a background task.'''
         from ultra.services.state_machine import (
@@ -184,6 +202,12 @@ class Application:
     async def shutdown(self) -> None:
         '''Clean shutdown of all services.'''
         LOG.info('Shutting down...')
+        if self._egress_task:
+            self._egress_task.cancel()
+            try:
+                await self._egress_task
+            except asyncio.CancelledError:
+                pass
         if self._state_machine:
             self._state_machine.stop()
         if self._sm_task:

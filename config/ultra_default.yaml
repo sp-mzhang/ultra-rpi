@@ -19,6 +19,18 @@ iot:
   endpoint: ""
   cert_dir: /etc/ultra/certs/
 
+egress:
+  enabled: false
+  device_sn: ultra-001
+  data_dir: /var/lib/ultra/data
+  db_path: ""
+  s3_bucket: siphox-home
+  s3_region: us-east-2
+  zip_temp_dir: /tmp/ultra-egress
+  dollop_host: ""
+  dollop_port: 8080
+  loop_sleep_s: 10.0
+
 startup:
   auto_state_machine: false
   skip_nfc: false
