@@ -75,7 +75,8 @@ if [ ! -d "$VENV_DIR" ]; then
     echo "Using $SYSPYTHON ($("$SYSPYTHON" --version))"
     "$SYSPYTHON" -m venv "$VENV_DIR"
     echo "Upgrading pip & setuptools..."
-    "$VENV_DIR/bin/pip" install --quiet --upgrade pip setuptools wheel
+    PIP_CONFIG_FILE="$PROJECT_DIR/pip.conf" \
+        "$VENV_DIR/bin/pip" install --quiet --upgrade pip setuptools wheel
 fi
 
 PYTHON="$VENV_DIR/bin/python"
@@ -83,7 +84,8 @@ PYTHON="$VENV_DIR/bin/python"
 # Install / update the package
 if ! "$PYTHON" -c "import ultra" 2>/dev/null; then
     echo "Installing ultra-rpi in dev mode..."
-    "$VENV_DIR/bin/pip" install --quiet \
+    PIP_CONFIG_FILE="$PROJECT_DIR/pip.conf" \
+        "$VENV_DIR/bin/pip" install --quiet \
         --ignore-requires-python -e "$PROJECT_DIR"
 fi
 
