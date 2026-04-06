@@ -5,7 +5,7 @@ stm32:
 
 reader:
   port: auto
-  acq_time_total_s: 10
+  acq_time_total_s: 3600
   acq_time_step_s: 3
 
 protocol:
@@ -22,7 +22,7 @@ iot:
 egress:
   enabled: false
   device_sn: ultra-001
-  data_dir: /var/lib/ultra/data
+  data_dir: /home/ultra3/sway_runs
   db_path: ""
   s3_bucket: siphox-home
   s3_region: us-east-2

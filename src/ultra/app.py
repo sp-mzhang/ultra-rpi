@@ -47,6 +47,7 @@ class Application:
         self._egress_task: asyncio.Task | None = None
         self._runner = None
         self._stm32 = None
+        self._reader = None
 
     async def start(self) -> None:
         '''Boot all services and run until shutdown.'''
@@ -171,6 +172,38 @@ class Application:
         )
         LOG.info('State machine started')
 
+    def _create_reader(self, use_mock: bool) -> Any:
+        '''Create the optical reader interface.
+
+        Args:
+            use_mock: True to use ReaderMock.
+
+        Returns:
+            ReaderInterface or ReaderMock instance, or None
+            if connection fails.
+        '''
+        reader_cfg = self.config.get('reader', {})
+        if use_mock:
+            from ultra.hw.reader_mock import ReaderMock
+            reader = ReaderMock()
+            reader.connect()
+            LOG.info('Using ReaderMock (no reader hw)')
+            return reader
+
+        from ultra.hw.reader_interface import (
+            ReaderInterface,
+        )
+        port = reader_cfg.get('port', 'auto')
+        try:
+            reader = ReaderInterface(port=port)
+            if reader.connect():
+                LOG.info('Reader connected: %s', port)
+                return reader
+            LOG.warning('Reader connect failed: %s', port)
+        except Exception as exc:
+            LOG.warning('Reader unavailable: %s', exc)
+        return None
+
     def get_runner(self):
         '''Get or create the protocol runner.
 
@@ -193,9 +226,33 @@ class Application:
                     ),
                     baud=stm32_cfg.get('baud', 921600),
                 )
+
+            use_mock = os.environ.get(
+                'ULTRA_MOCK', '',
+            ).lower() in ('1', 'true', 'yes')
+            self._reader = self._create_reader(use_mock)
+
+            acquisition = None
+            pipeline = None
+            if self._reader is not None:
+                from ultra.reader.acquisition import (
+                    AcquisitionService,
+                )
+                from ultra.reader.pipeline import (
+                    ReaderPipeline,
+                )
+                acquisition = AcquisitionService(
+                    reader=self._reader,
+                    event_bus=self.event_bus,
+                )
+                pipeline = ReaderPipeline(self.event_bus)
+
             self._runner = ProtocolRunner(
                 stm32=stm32,
                 event_bus=self.event_bus,
+                config=self.config,
+                acquisition=acquisition,
+                pipeline=pipeline,
             )
         return self._runner
 
@@ -218,6 +275,11 @@ class Application:
                 pass
         if self._monitor:
             self._monitor.stop()
+        if self._reader:
+            try:
+                self._reader.disconnect()
+            except Exception:
+                pass
         if self._stm32:
             self._stm32.disconnect()
         LOG.info('Shutdown complete')

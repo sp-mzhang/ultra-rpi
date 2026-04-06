@@ -1,14 +1,14 @@
 '''ultra.protocol.runner -- Protocol execution engine.
 
-Orchestrates recipe execution with pause/resume support
-and state tracking. The runner iterates through recipe
-phases and steps, delegating to registered StepExecutors.
+Orchestrates recipe execution with pause/resume support,
+state tracking, background reader acquisition, and
+sway-compatible run data persistence.
 '''
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
+import os.path as op
 from typing import Any
 
 from ultra.events import EventBus
@@ -21,14 +21,17 @@ from ultra.protocol.steps import STEP_REGISTRY
 
 LOG = logging.getLogger(__name__)
 
+DEFAULT_DATA_DIR = '/home/ultra3/sway_runs'
+
 
 class ProtocolRunner:
     '''Orchestrates protocol recipe execution.
 
     Iterates through recipe phases and steps, delegating to
     registered StepExecutor classes. Supports pause/resume
-    via asyncio.Event and tracks state via
-    ProtocolStateTracker.
+    via asyncio.Event, tracks state via ProtocolStateTracker,
+    runs a background reader acquisition loop, and persists
+    run data in sway-compatible format.
 
     Attributes:
         stm32: STM32 hardware interface (or mock).
@@ -41,6 +44,9 @@ class ProtocolRunner:
             self,
             stm32: Any,
             event_bus: EventBus,
+            config: dict[str, Any] | None = None,
+            acquisition: Any | None = None,
+            pipeline: Any | None = None,
     ) -> None:
         '''Initialize the protocol runner.
 
@@ -48,9 +54,18 @@ class ProtocolRunner:
             stm32: STM32Interface or STM32Mock instance.
             event_bus: Application event bus for emitting
                 protocol lifecycle events.
+            config: Full application config dict (used for
+                reader timing and egress.data_dir).
+            acquisition: Optional AcquisitionService for
+                background TLV capture.
+            pipeline: Optional ReaderPipeline for live
+                peak detection from TLV data.
         '''
         self.stm32 = stm32
         self._event_bus = event_bus
+        self._config = config or {}
+        self._acquisition = acquisition
+        self._pipeline = pipeline
         self.tracker = ProtocolStateTracker(event_bus)
         self.recipe: Recipe | None = None
         self.cartridge_z_mm: float = 0.0
@@ -59,6 +74,7 @@ class ProtocolRunner:
         self._pause_event.set()
         self._abort_event = asyncio.Event()
         self._running = False
+        self._reader_task: asyncio.Task | None = None
 
     @property
     def is_running(self) -> bool:
@@ -120,6 +136,120 @@ class ProtocolRunner:
                 )
                 LOG.info('Protocol RESUMED')
 
+    # ----------------------------------------------------------
+    # Background reader acquisition
+    # ----------------------------------------------------------
+
+    async def _reader_loop(self) -> None:
+        '''Continuously capture TLV blocks and run peak
+        detection until cancelled.
+
+        Each iteration captures one block
+        (``acq_time_step_s`` seconds of data) and feeds
+        it through the ReaderPipeline. The loop runs as a
+        background asyncio task alongside protocol steps.
+        '''
+        reader_cfg = self._config.get('reader', {})
+        step_s = int(reader_cfg.get('acq_time_step_s', 3))
+        block_count = 0
+
+        LOG.info(
+            'Reader loop started (step=%ds)', step_s,
+        )
+        try:
+            while True:
+                path = await self._acquisition.capture_block(
+                    acq_seconds=step_s,
+                )
+                if path is None:
+                    await asyncio.sleep(1.0)
+                    continue
+
+                block_count += 1
+                elapsed = self.tracker.snapshot().elapsed_s
+
+                if self._pipeline is not None:
+                    try:
+                        self._pipeline.process_tlv_file(
+                            path,
+                            timestamp_s=elapsed,
+                        )
+                    except Exception as exc:
+                        LOG.warning(
+                            'Pipeline error on block %d: %s',
+                            block_count, exc,
+                        )
+        except asyncio.CancelledError:
+            LOG.info(
+                'Reader loop stopped after %d blocks',
+                block_count,
+            )
+            raise
+
+    def _start_reader(self) -> None:
+        '''Start the background reader task if available.'''
+        if self._acquisition and self._pipeline:
+            if self._pipeline is not None:
+                self._pipeline.reset_baseline()
+            self._reader_task = asyncio.create_task(
+                self._reader_loop(),
+            )
+            LOG.info('Background reader task created')
+
+    async def _stop_reader(self) -> None:
+        '''Cancel and await the background reader task.'''
+        if self._reader_task is not None:
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except asyncio.CancelledError:
+                pass
+            self._reader_task = None
+
+    # ----------------------------------------------------------
+    # Run data persistence
+    # ----------------------------------------------------------
+
+    def _create_run_group(
+            self, chip_id: str,
+    ) -> tuple[Any, str]:
+        '''Create a RunGroupWriter and run directory.
+
+        Args:
+            chip_id: Chip ID for the run.
+
+        Returns:
+            (RunGroupWriter, run_dir_path) tuple.
+        '''
+        from ultra.services.run_data import RunGroupWriter
+
+        egress_cfg = self._config.get('egress', {})
+        data_dir = egress_cfg.get(
+            'data_dir', DEFAULT_DATA_DIR,
+        )
+        device_sn = egress_cfg.get(
+            'device_sn', 'ultra-001',
+        )
+
+        rg = RunGroupWriter(
+            data_dir=data_dir,
+            user='ultra',
+            name=self.recipe.name if self.recipe else 'run',
+            device_sn=device_sn,
+        )
+        rg.mark_started()
+
+        reader_sn = 'pproc-001'
+        run_dir, _ = rg.add_run(
+            reader_sn=reader_sn,
+            chip_id=chip_id or 'unknown',
+        )
+        return rg, run_dir
+
+    # ----------------------------------------------------------
+    # Main run
+    # ----------------------------------------------------------
+
     async def run(
             self,
             recipe_name: str,
@@ -127,9 +257,10 @@ class ProtocolRunner:
     ) -> list[dict]:
         '''Execute a complete protocol recipe.
 
-        Loads the recipe, initializes wells, and iterates
-        through all phases and steps. Emits lifecycle events
-        on the event bus.
+        Loads the recipe, creates a sway-compatible run
+        directory, starts background reader acquisition,
+        iterates through all phases and steps, then
+        persists results.
 
         Args:
             recipe_name: Recipe name or path to YAML file.
@@ -148,11 +279,33 @@ class ProtocolRunner:
         self._pause_event.set()
         self._running = True
 
+        rg_writer = None
+        run_dir = None
+        try:
+            rg_writer, run_dir = self._create_run_group(
+                chip_id,
+            )
+            LOG.info('Run data dir: %s', run_dir)
+        except Exception as exc:
+            LOG.warning(
+                'Failed to create run dir: %s', exc,
+            )
+
+        if (
+            run_dir
+            and self._acquisition is not None
+        ):
+            tlv_dir = op.join(run_dir, 'tlv')
+            self._acquisition.set_output_dir(tlv_dir)
+
+        self._start_reader()
+
         await self._event_bus.emit(
             'protocol_started', {
                 'recipe': self.recipe.name,
                 'chip_id': chip_id,
                 'total_steps': self.recipe.total_steps,
+                'run_dir': run_dir or '',
             },
         )
         LOG.info(
@@ -217,7 +370,19 @@ class ProtocolRunner:
                         )
                         return self.tracker.results
         finally:
+            await self._stop_reader()
             self._running = False
+            if rg_writer is not None:
+                try:
+                    rg_writer.mark_completed()
+                    if run_dir:
+                        rg_writer.copy_rg_files_to_run(
+                            run_dir,
+                        )
+                except Exception as exc:
+                    LOG.warning(
+                        'RunGroup finalize error: %s', exc,
+                    )
 
         LOG.info(
             f'Protocol completed: '

@@ -64,6 +64,19 @@ class AcquisitionService:
         self._block_counter = 0
         os.makedirs(output_dir, exist_ok=True)
 
+    def set_output_dir(self, path: str) -> None:
+        '''Change the TLV output directory and reset counter.
+
+        Called before each protocol run to direct TLV files
+        into the run's ``tlv/`` subdirectory.
+
+        Args:
+            path: New output directory path.
+        '''
+        self._output_dir = path
+        self._block_counter = 0
+        os.makedirs(path, exist_ok=True)
+
     async def capture_block(
             self,
             acq_seconds: int = 3,
