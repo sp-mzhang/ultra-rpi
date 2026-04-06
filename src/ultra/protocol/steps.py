@@ -232,9 +232,19 @@ class TipReturnStep(StepExecutor):
 
 @step_type('lld')
 class LLDStep(StepExecutor):
-    '''Perform liquid level detection at current position.'''
+    '''Detect cartridge Z via liquid level detection.
+
+    Sends lld_perform to the STM32. On success, converts
+    the returned z_position (µsteps) to mm and stores it
+    in ``runner.cartridge_z_mm`` for subsequent
+    ``cart_dispense_at`` calls.  Homes Z after detection,
+    matching sway's sequence.
+    '''
 
     def execute(self, params, runner) -> bool:
+        from ultra.hw.stm32_interface import (
+            Z_USTEPS_PER_MM,
+        )
         threshold = params.get(
             'threshold',
             runner.recipe.constants.get(
@@ -245,11 +255,20 @@ class LLDStep(StepExecutor):
             threshold=threshold,
         )
         if r and r.get('detected'):
+            z_usteps = r.get('z_position', 0)
             runner.cartridge_z_mm = (
-                r.get('z_position', 0)
+                z_usteps / Z_USTEPS_PER_MM
+            )
+            LOG.info(
+                'LLD detected: z=%d usteps = %.2f mm',
+                z_usteps, runner.cartridge_z_mm,
+            )
+            runner.stm32.send_command_wait_done(
+                cmd={'cmd': 'home_z_axis'},
+                timeout_s=30.0,
             )
             return True
-        LOG.warning(f'LLD failed: {r}')
+        LOG.warning('LLD failed: %s', r)
         return r is not None
 
 

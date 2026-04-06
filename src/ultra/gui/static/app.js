@@ -116,6 +116,9 @@
       case 'well_updated':
         updateWell(data);
         break;
+      case 'wells_initialized':
+        renderWells(data);
+        break;
       case 'tip_changed':
         updateTip(data);
         break;
@@ -134,6 +137,7 @@
         updateButtons(true, false);
         break;
       case 'protocol_started':
+        completedSteps = 0;
         updateButtons(true, false);
         break;
       case 'protocol_done':
@@ -149,15 +153,25 @@
   }
 
   /* ---- UI Updates ---- */
+  let completedSteps = 0;
+
   function updateProgress(d) {
     const step = d.step || d.step_index || 0;
     const total = d.total || d.step_total || 0;
-    const pct = total ? (step / total * 100) : 0;
-    elPhase.textContent = d.phase || '--';
-    elLabel.textContent = d.label
-      || d.step_label || 'Idle';
+
+    if (d.completed) {
+      completedSteps = step;
+    } else {
+      elPhase.textContent = d.phase || '--';
+      elLabel.textContent = d.label
+        || d.step_label || 'Idle';
+    }
+
+    const pct = total
+      ? (completedSteps / total * 100) : 0;
     elBar.style.width = pct + '%';
-    elBar.textContent = `${step} / ${total}`;
+    elBar.textContent =
+      `${completedSteps} / ${total}`;
     if (d.elapsed_s !== undefined) {
       elElapsed.textContent =
         `Elapsed: ${d.elapsed_s.toFixed(1)}s`;

@@ -92,6 +92,12 @@ class ProtocolStateTracker:
             f'{len(wells)} wells, '
             f'recipe={recipe_name}',
         )
+        self._event_bus.emit_sync(
+            'wells_initialized', {
+                name: ws.to_dict()
+                for name, ws in wells.items()
+            },
+        )
 
     def begin_step(
             self,
@@ -136,7 +142,9 @@ class ProtocolStateTracker:
     ) -> None:
         '''Mark a step as completed.
 
-        Records the result and updates elapsed time.
+        Records the result, updates elapsed time, and emits
+        a ``step_changed`` event so the GUI can advance the
+        progress bar immediately on completion.
 
         Args:
             index: 1-based step index.
@@ -152,6 +160,19 @@ class ProtocolStateTracker:
                 self._snapshot.elapsed_s, 1,
             ),
         })
+        self._event_bus.emit_sync(
+            'step_changed', {
+                'step': index,
+                'total': self._snapshot.step_total,
+                'label': self._snapshot.step_label,
+                'phase': self._snapshot.phase,
+                'elapsed_s': round(
+                    self._snapshot.elapsed_s, 1,
+                ),
+                'completed': True,
+                'ok': ok,
+            },
+        )
 
     def update_tip(self, tip_id: int) -> None:
         '''Update the current tip.
