@@ -1,0 +1,224 @@
+'''ultra.app -- Main entry point for Ultra RPi controller.
+
+Boots the application:
+  1. Load configuration
+  2. Start STM32StatusMonitor (door/sensor listening)
+  3. Start FastAPI GUI server on :8080
+  4. Optionally start the StateMachine task
+  5. Run asyncio event loop forever
+
+Usage::
+
+    python -m ultra.app
+'''
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import signal
+import sys
+from typing import Any
+
+from ultra.config import load_config
+from ultra.events import EventBus
+from ultra.utils.logging import setup_logging
+
+LOG = logging.getLogger(__name__)
+
+
+class Application:
+    '''Top-level application orchestrator.
+
+    Owns the event bus and coordinates all services.
+
+    Attributes:
+        config: Loaded configuration dict.
+        event_bus: Shared async event bus.
+    '''
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.config = config
+        self.event_bus = EventBus()
+        self._monitor = None
+        self._state_machine = None
+        self._sm_task: asyncio.Task | None = None
+        self._runner = None
+        self._stm32 = None
+
+    async def start(self) -> None:
+        '''Boot all services and run until shutdown.'''
+        loop = asyncio.get_event_loop()
+
+        use_mock = os.environ.get(
+            'ULTRA_MOCK', '',
+        ).lower() in ('1', 'true', 'yes')
+
+        if use_mock:
+            from ultra.hw.stm32_mock import STM32Mock
+            self._stm32 = STM32Mock()
+            self._stm32.connect()
+            LOG.info('Using STM32Mock (no hardware)')
+        else:
+            self._start_monitor(loop)
+
+        from ultra.gui.server import create_app
+        gui_cfg = self.config.get('gui', {})
+        host = gui_cfg.get('host', '0.0.0.0')
+        port = gui_cfg.get('port', 8080)
+
+        app = create_app(self)
+        self._start_gui(app, host, port)
+
+        startup_cfg = self.config.get('startup', {})
+        if startup_cfg.get('auto_state_machine', False):
+            self._start_state_machine()
+
+        LOG.info(
+            f'Ultra RPi ready -- '
+            f'GUI at http://{host}:{port}',
+        )
+
+        stop_event = asyncio.Event()
+
+        def _signal_handler():
+            LOG.info('Shutdown signal received')
+            stop_event.set()
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, _signal_handler)
+
+        await stop_event.wait()
+        await self.shutdown()
+
+    def _start_monitor(
+            self,
+            loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        '''Start the STM32StatusMonitor.'''
+        from ultra.hw.stm32_monitor import (
+            STM32StatusMonitor,
+        )
+
+        stm32_cfg = self.config.get('stm32', {})
+        self._monitor = STM32StatusMonitor(
+            loop=loop,
+            event_bus=self.event_bus,
+            port=stm32_cfg.get(
+                'port', '/dev/ttyAMA3',
+            ),
+            baud=stm32_cfg.get('baud', 921600),
+        )
+        if not self._monitor.start():
+            LOG.warning(
+                'STM32StatusMonitor failed to start '
+                '-- running without hardware status',
+            )
+            self._monitor = None
+
+    def _start_gui(
+            self,
+            app: Any,
+            host: str,
+            port: int,
+    ) -> None:
+        '''Start the FastAPI GUI server as a background task.'''
+        import uvicorn
+
+        uvi_config = uvicorn.Config(
+            app=app,
+            host=host,
+            port=port,
+            log_level='warning',
+        )
+        server = uvicorn.Server(uvi_config)
+        asyncio.ensure_future(server.serve())
+        LOG.info(
+            f'GUI server starting on {host}:{port}',
+        )
+
+    def _start_state_machine(self) -> None:
+        '''Start the state machine as a background task.'''
+        from ultra.services.state_machine import (
+            UltraStateMachine,
+        )
+        self._state_machine = UltraStateMachine(
+            config=self.config,
+            event_bus=self.event_bus,
+            monitor=self._monitor,
+            iot_client=None,
+        )
+        self._sm_task = asyncio.ensure_future(
+            self._state_machine.run(),
+        )
+        LOG.info('State machine started')
+
+    def get_runner(self):
+        '''Get or create the protocol runner.
+
+        Returns:
+            ProtocolRunner instance.
+        '''
+        if self._runner is None:
+            from ultra.protocol.runner import (
+                ProtocolRunner,
+            )
+            stm32 = self._stm32
+            if stm32 is None:
+                from ultra.hw.stm32_interface import (
+                    STM32Interface,
+                )
+                stm32_cfg = self.config.get('stm32', {})
+                stm32 = STM32Interface(
+                    port=stm32_cfg.get(
+                        'port', '/dev/ttyAMA3',
+                    ),
+                    baud=stm32_cfg.get('baud', 921600),
+                )
+            self._runner = ProtocolRunner(
+                stm32=stm32,
+                event_bus=self.event_bus,
+            )
+        return self._runner
+
+    async def shutdown(self) -> None:
+        '''Clean shutdown of all services.'''
+        LOG.info('Shutting down...')
+        if self._state_machine:
+            self._state_machine.stop()
+        if self._sm_task:
+            self._sm_task.cancel()
+            try:
+                await self._sm_task
+            except asyncio.CancelledError:
+                pass
+        if self._monitor:
+            self._monitor.stop()
+        if self._stm32:
+            self._stm32.disconnect()
+        LOG.info('Shutdown complete')
+
+
+def main() -> None:
+    '''Application entry point.'''
+    setup_logging()
+    config = load_config()
+    LOG.info('Ultra RPi starting...')
+
+    app = Application(config)
+    try:
+        asyncio.run(app.start())
+    except KeyboardInterrupt:
+        LOG.info('Interrupted')
+
+
+if __name__ == '__main__':
+    main()
+
+
+def __getattr__(name: str) -> Any:
+    if name == '__path__':
+        raise AttributeError(name)
+    raise AttributeError(
+        f'module {__name__!r} has no attribute {name!r}',
+    )

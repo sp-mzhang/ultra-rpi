@@ -1,0 +1,31 @@
+centrifuge_phase:
+  steps:
+    - type: centrifuge_unlock
+      label: Unlock cartridge
+
+    - type: centrifuge_spin
+      label: Spin 500 RPM x 5s
+      rpm: 500
+      duration_s: 5
+
+    - type: centrifuge_rotate
+      label: Rotate 290 deg
+      angle_001deg: 29000
+      move_rpm: 1
+
+    - type: lift_move
+      label: Lower lift to 18mm
+      target_mm: 18.0
+
+    - type: centrifuge_rotate
+      label: Rotate 200 deg
+      angle_001deg: 20000
+      move_rpm: 1
+
+lock_phase:
+  steps:
+    - type: centrifuge_lock
+      label: Lock cartridge
+
+    - type: home_all
+      label: Home all (final)

@@ -1,0 +1,27 @@
+stm32:
+  port: /dev/ttyAMA3
+  baud: 921600
+  timeout_s: 5.0
+
+reader:
+  port: auto
+  acq_time_total_s: 10
+  acq_time_step_s: 3
+
+protocol:
+  default_recipe: tsh_ultra
+
+gui:
+  host: 0.0.0.0
+  port: 8080
+
+iot:
+  endpoint: ""
+  cert_dir: /etc/ultra/certs/
+
+startup:
+  auto_state_machine: false
+  skip_nfc: false
+  skip_qr: true
+  default_chip_id: ULTRA-TEST-001
+  self_check_stub_s: 5.0

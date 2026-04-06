@@ -1,0 +1,78 @@
+name: Quick Demo
+description: >
+  Hardware validation protocol exercising every major
+  subsystem in ~3-5 minutes. Uses demo reagent wells
+  for basic pipetting, transfers, and tip handling.
+
+constants:
+  aspirate_speed: 40.0
+  well_disp_speed: 100.0
+  lld_threshold: 20
+  air_slug_ul: 40
+  reasp_ul: 12
+  cart_disp_vel: 1.5
+
+wells:
+  S1:   {loc: 21, reagent: DemoReagent1, volume_ul: 80}
+  M1:   {loc: 33, reagent: DemoReagent2, volume_ul: 100}
+  M3:   {loc: 35, reagent: DemoTransferSrc, volume_ul: 80}
+  M5:   {loc: 37, reagent: DemoTransferDst, volume_ul: 0}
+  PP4:  {loc: 11, reagent: Cartridge, volume_ul: 0}
+
+phases:
+  - name: A
+    label: Centrifuge
+    include: _common.yaml#centrifuge_phase
+
+  - name: B
+    label: Quick Pipetting
+    steps:
+      - type: lid
+        label: Open lid
+        open: true
+
+      - type: tip_pick
+        label: Pick Tip 4
+        tip_id: 4
+
+      - type: lld
+        label: Pre-flight LLD
+        threshold: 20
+
+      - type: reagent_transfer
+        label: DemoReagent1
+        source: S1
+        target: PP4
+        asp_vol: 80
+        cart_vol: 50
+        cart_vel: 1.5
+
+      - type: tip_swap
+        label: Swap 4 -> 5
+        from_id: 4
+        to_id: 5
+
+      - type: reagent_transfer
+        label: DemoReagent2
+        source: M1
+        target: PP4
+        asp_vol: 100
+        cart_vol: 60
+        cart_vel: 1.5
+
+      - type: well_transfer
+        label: DemoTransfer
+        source: M3
+        dest: M5
+        volume: 80
+
+      - type: tip_return
+        label: Return Tip 5
+        tip_id: 5
+
+      - type: home_close
+        label: Home all + close lid
+
+  - name: C
+    label: Lock cartridge
+    include: _common.yaml#lock_phase

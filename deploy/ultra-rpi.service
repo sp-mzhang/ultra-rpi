@@ -1,0 +1,20 @@
+[Unit]
+Description=Ultra RPi Controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/ultra-rpi
+ExecStartPre=/opt/ultra-rpi/.venv/bin/pip install \
+    --quiet --upgrade \
+    "siphox-analysis-tools @ git+https://github.com/siphox-inc/sway.git@main#subdirectory=analysis_tools"
+ExecStart=/opt/ultra-rpi/.venv/bin/python -m ultra.app
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

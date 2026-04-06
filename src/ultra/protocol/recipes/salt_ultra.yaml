@@ -1,0 +1,352 @@
+name: Salt Step Dilution
+description: >
+  Ultra salt step-dilution protocol. No centrifuge phase.
+  DIW transfers, serial salt dilutions with tip-mixing,
+  and chip transfers through PP4. Adapted from
+  salt_protocol_steps.py (Salt_Step_Dilution_Test2).
+
+constants:
+  aspirate_speed: 40.0
+  well_disp_speed: 100.0
+  lld_threshold: 20
+  air_slug_ul: 50
+  reasp_ul: 15
+  chip_disp_vel: 1.0
+  mix_cycles: 4
+  mix_vol: 100
+
+wells:
+  # Source wells (DI water / reagent reservoirs)
+  L1:   {loc: 33, reagent: DIW_A, volume_ul: 250}
+  N1:   {loc: 35, reagent: DIW_B, volume_ul: 320}
+  O1:   {loc: 37, reagent: DIW_C, volume_ul: 320}
+  J2:   {loc: 39, reagent: DIW_D, volume_ul: 270}
+  I2:   {loc: 41, reagent: DIW_E, volume_ul: 270}
+  H2:   {loc: 43, reagent: DIW_F, volume_ul: 150}
+  G2:   {loc: 45, reagent: SaltStock, volume_ul: 194}
+  E2:   {loc: 47, reagent: SaltConc, volume_ul: 70}
+
+  # Destination / mixing wells (start empty or receive)
+  A1:   {loc: 21, reagent: Mix_A1, volume_ul: 0}
+  B1:   {loc: 22, reagent: Mix_B1, volume_ul: 0}
+  C1:   {loc: 23, reagent: Mix_C1, volume_ul: 0}
+  D1:   {loc: 24, reagent: Mix_D1, volume_ul: 0}
+  E1:   {loc: 25, reagent: Mix_E1, volume_ul: 0}
+  F1:   {loc: 26, reagent: Mix_F1, volume_ul: 0}
+  G1:   {loc: 34, reagent: Mix_G1, volume_ul: 0}
+  H1:   {loc: 36, reagent: Mix_H1, volume_ul: 0}
+  I1:   {loc: 38, reagent: Mix_I1, volume_ul: 0}
+  J1:   {loc: 40, reagent: Mix_J1, volume_ul: 0}
+  K1:   {loc: 42, reagent: Mix_K1, volume_ul: 0}
+
+  # Chip-coating water
+  F2:   {loc: 44, reagent: ChipWater, volume_ul: 120}
+
+  # Cartridge / chip target
+  PP4:  {loc: 11, reagent: Cartridge, volume_ul: 0}
+
+phases:
+  # ======================================================
+  # Phase A -- Setup (no centrifuge for salt protocol)
+  # ======================================================
+  - name: A
+    label: Setup
+    steps:
+      - type: lid
+        label: Open lid
+        open: true
+
+      - type: tip_pick
+        label: Pick Tip 1
+        tip_id: 1
+
+      - type: lld
+        label: Pre-flight LLD
+        threshold: 20
+
+  # ======================================================
+  # Phase B -- DIW Transfers (12 well-to-well)
+  # ======================================================
+  - name: B
+    label: DIW Transfers
+    steps:
+      - type: well_transfer_return
+        label: L1 -> A1
+        source: L1
+        dest: A1
+        asp_vol: 160
+        disp_vol: 150
+        vel: 20
+
+      - type: well_transfer_return
+        label: L1 -> B1
+        source: L1
+        dest: B1
+        asp_vol: 90
+        disp_vol: 80
+        vel: 20
+
+      - type: well_transfer_return
+        label: N1 -> C1
+        source: N1
+        dest: C1
+        asp_vol: 160
+        disp_vol: 150
+        vel: 20
+
+      - type: well_transfer_return
+        label: N1 -> E1
+        source: N1
+        dest: E1
+        asp_vol: 160
+        disp_vol: 150
+        vel: 20
+
+      - type: well_transfer_return
+        label: O1 -> F1
+        source: O1
+        dest: F1
+        asp_vol: 160
+        disp_vol: 150
+        vel: 20
+
+      - type: well_transfer_return
+        label: O1 -> G1
+        source: O1
+        dest: G1
+        asp_vol: 160
+        disp_vol: 150
+        vel: 20
+
+      - type: well_transfer_return
+        label: J2 -> H1
+        source: J2
+        dest: H1
+        asp_vol: 160
+        disp_vol: 150
+        vel: 20
+
+      - type: well_transfer_return
+        label: J2 -> I1
+        source: J2
+        dest: I1
+        asp_vol: 160
+        disp_vol: 150
+        vel: 20
+
+      - type: well_transfer_return
+        label: I2 -> K1
+        source: I2
+        dest: K1
+        asp_vol: 160
+        disp_vol: 150
+        vel: 20
+
+      - type: well_transfer_return
+        label: I2 -> J1
+        source: I2
+        dest: J1
+        asp_vol: 110
+        disp_vol: 100
+        vel: 20
+
+      - type: well_transfer_return
+        label: H2 -> J1
+        source: H2
+        dest: J1
+        asp_vol: 150
+        disp_vol: 140
+        vel: 20
+
+      - type: well_transfer_return
+        label: G2 -> D1
+        source: G2
+        dest: D1
+        asp_vol: 194
+        disp_vol: 184
+        vel: 20
+
+  # ======================================================
+  # Phase C -- Salt Dilution (5 serial + tip-mix)
+  # ======================================================
+  - name: C
+    label: Salt Dilution
+    steps:
+      - type: well_transfer_return
+        label: E2 -> J1
+        source: E2
+        dest: J1
+        asp_vol: 70
+        disp_vol: 60
+        vel: 20
+
+      - type: tip_mix
+        label: Mix J1
+        well: J1
+        mix_vol: 100
+        cycles: 4
+        speed: 100.0
+
+      - type: well_transfer_return
+        label: J1 -> H1
+        source: J1
+        dest: H1
+        asp_vol: 160
+        disp_vol: 150
+        vel: 20
+
+      - type: tip_mix
+        label: Mix H1
+        well: H1
+        mix_vol: 100
+        cycles: 4
+        speed: 100.0
+
+      - type: well_transfer_return
+        label: H1 -> F1
+        source: H1
+        dest: F1
+        asp_vol: 160
+        disp_vol: 150
+        vel: 20
+
+      - type: tip_mix
+        label: Mix F1
+        well: F1
+        mix_vol: 100
+        cycles: 4
+        speed: 100.0
+
+      - type: well_transfer_return
+        label: F1 -> D1
+        source: F1
+        dest: D1
+        asp_vol: 56
+        disp_vol: 46
+        vel: 20
+
+      - type: tip_mix
+        label: Mix D1
+        well: D1
+        mix_vol: 100
+        cycles: 4
+        speed: 100.0
+
+      - type: well_transfer_return
+        label: D1 -> B1
+        source: D1
+        dest: B1
+        asp_vol: 90
+        disp_vol: 80
+        vel: 20
+
+      - type: tip_mix
+        label: Mix B1
+        well: B1
+        mix_vol: 100
+        cycles: 4
+        speed: 100.0
+
+  # ======================================================
+  # Phase D -- Chip Transfers
+  # ======================================================
+  - name: D
+    label: Chip Transfers
+    steps:
+      - type: tip_swap
+        label: Swap Tip 1 -> 2
+        from_id: 1
+        to_id: 2
+
+      - type: well_to_chip
+        label: water_1
+        source: F2
+        target: PP4
+        chip_vol: 120
+        chip_vel: 1.0
+        stream: true
+
+      - type: well_to_chip
+        label: water_2
+        source: A1
+        target: PP4
+        chip_vol: 90
+        chip_vel: 1.0
+        stream: true
+
+      - type: well_to_chip
+        label: salt_1
+        source: B1
+        target: PP4
+        chip_vol: 90
+        chip_vel: 1.0
+        stream: true
+
+      - type: well_to_chip
+        label: water_3
+        source: C1
+        target: PP4
+        chip_vol: 90
+        chip_vel: 1.0
+        stream: true
+
+      - type: well_to_chip
+        label: salt_2
+        source: D1
+        target: PP4
+        chip_vol: 90
+        chip_vel: 1.0
+        stream: true
+
+      - type: well_to_chip
+        label: water_4
+        source: E1
+        target: PP4
+        chip_vol: 90
+        chip_vel: 1.0
+        stream: true
+
+      - type: well_to_chip
+        label: salt_3
+        source: F1
+        target: PP4
+        chip_vol: 90
+        chip_vel: 1.0
+        stream: true
+
+      - type: well_to_chip
+        label: water_5
+        source: G1
+        target: PP4
+        chip_vol: 90
+        chip_vel: 1.0
+        stream: true
+
+      - type: well_to_chip
+        label: salt_4
+        source: H1
+        target: PP4
+        chip_vol: 80
+        chip_vel: 1.0
+        stream: true
+
+      - type: well_to_chip
+        label: water_6
+        source: I1
+        target: PP4
+        chip_vol: 90
+        chip_vel: 1.0
+        stream: true
+
+      - type: tip_return
+        label: Return Tip 2
+        tip_id: 2
+
+  # ======================================================
+  # Phase E -- Cleanup
+  # ======================================================
+  - name: E
+    label: Cleanup
+    steps:
+      - type: home_close
+        label: Home all + close lid

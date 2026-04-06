@@ -1,0 +1,197 @@
+name: TSH Ultra
+description: >
+  Full TSH blood-analysis protocol. 26 steps across 3 phases:
+  centrifuge, pipetting (14 reagent transfers including 2
+  back-and-forth), and final lock.
+
+constants:
+  aspirate_speed: 40.0
+  well_disp_speed: 100.0
+  lld_threshold: 20
+  air_slug_ul: 40
+  air_slug_hydro: 50
+  reasp_ul: 12
+  cart_disp_vel: 1.5
+
+wells:
+  S1:   {loc: 21, reagent: Hydrophilic, volume_ul: 110}
+  S2:   {loc: 22, reagent: PBS, volume_ul: 45}
+  M1:   {loc: 33, reagent: DI Water, volume_ul: 210}
+  M3:   {loc: 35, reagent: PBST, volume_ul: 190}
+  M5:   {loc: 37, reagent: Sample Buffer, volume_ul: 270}
+  M7:   {loc: 39, reagent: Sample Buffer, volume_ul: 240}
+  M9:   {loc: 41, reagent: Sample Dilution, volume_ul: 190}
+  M11:  {loc: 43, reagent: TSH Antibody, volume_ul: 180}
+  M13:  {loc: 45, reagent: Detection Buffer, volume_ul: 270}
+  M15:  {loc: 47, reagent: SA-GNP, volume_ul: 200}
+  PP4:  {loc: 11, reagent: Cartridge, volume_ul: 0}
+
+phases:
+  - name: A
+    label: Centrifuge
+    include: _common.yaml#centrifuge_phase
+
+  - name: B
+    label: Pipetting
+    steps:
+      - type: lid
+        label: Open lid
+        open: true
+
+      - type: tip_pick
+        label: Pick Tip 4
+        tip_id: 4
+
+      - type: lld
+        label: Pre-flight LLD
+        threshold: 20
+
+      # Step 9: Hydrophilic
+      - type: reagent_transfer
+        label: Hydrophilic
+        source: S1
+        target: PP4
+        asp_vol: 110
+        cart_vol: 70
+        cart_vel: 0.5
+
+      # Tip swap 4 -> 5
+      - type: tip_swap
+        label: Tip swap 4 -> 5
+        from_id: 4
+        to_id: 5
+
+      # Step 11: DI Water
+      - type: reagent_transfer
+        label: DI Water
+        source: M1
+        target: PP4
+        asp_vol: 210
+        cart_vol: 160
+        cart_vel: 1.5
+
+      # Step 12: PBST
+      - type: reagent_transfer
+        label: PBST
+        source: M3
+        target: PP4
+        asp_vol: 190
+        cart_vol: 160
+        cart_vel: 1.0
+
+      # Step 13: SampleBuf1
+      - type: reagent_transfer
+        label: SampleBuf1
+        source: M5
+        target: PP4
+        asp_vol: 180
+        cart_vol: 150
+        cart_vel: 0.5
+
+      # Step 14: SampleBuf2
+      - type: reagent_transfer
+        label: SampleBuf2
+        source: M7
+        target: PP4
+        asp_vol: 180
+        cart_vol: 150
+        cart_vel: 0.5
+
+      # Step 15: SampleDil1A (back-and-forth)
+      - type: reagent_transfer_bf
+        label: SampleDil1A
+        source: M9
+        target: PP4
+        asp_vol: 190
+        cart_vol: 160
+        cart_vel: 0.25
+        for_vol: 40
+        back_vol: 20
+        sleep_s: 30
+
+      # Step 16: SampleBuf3
+      - type: reagent_transfer
+        label: SampleBuf3
+        source: M5
+        target: PP4
+        asp_vol: 90
+        cart_vol: 60
+        cart_vel: 0.5
+
+      # Step 17: TSH Antibody
+      - type: reagent_transfer
+        label: TSH Antibody
+        source: M11
+        target: PP4
+        asp_vol: 180
+        cart_vol: 150
+        cart_vel: 0.5
+
+      # Step 18: SampleBuf4
+      - type: reagent_transfer
+        label: SampleBuf4
+        source: M7
+        target: PP4
+        asp_vol: 60
+        cart_vol: 30
+        cart_vel: 0.5
+
+      # Step 19: PBS
+      - type: reagent_transfer
+        label: PBS
+        source: S2
+        target: PP4
+        asp_vol: 45
+        cart_vol: 15
+        cart_vel: 0.5
+
+      # Step 20: DetBuf1
+      - type: reagent_transfer
+        label: DetBuf1
+        source: M13
+        target: PP4
+        asp_vol: 180
+        cart_vol: 150
+        cart_vel: 0.5
+
+      # Step 21: SA-GNP (tip mix + back-and-forth)
+      - type: tip_mix
+        label: SA-GNP mix
+        well: M15
+        mix_vol: 100
+        speed: 100.0
+        cycles: 5
+        pull_vol: 200
+
+      - type: reagent_transfer_bf
+        label: SA-GNP dispense
+        source: M15
+        target: PP4
+        asp_vol: 200
+        cart_vol: 165
+        cart_vel: 1.5
+        for_vol: 45
+        back_vol: 30
+        sleep_s: 30
+
+      # Step 22: DetBuf3
+      - type: reagent_transfer
+        label: DetBuf3
+        source: M13
+        target: PP4
+        asp_vol: 90
+        cart_vol: 60
+        cart_vel: 0.5
+
+      # Return tip
+      - type: tip_return
+        label: Return Tip 5
+        tip_id: 5
+
+      # Home + close lid
+      - type: home_close
+        label: Home all + close lid
+
+  - name: C
+    label: Lock
+    include: _common.yaml#lock_phase

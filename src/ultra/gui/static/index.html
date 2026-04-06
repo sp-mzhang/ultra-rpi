@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0">
+  <title>Ultra RPi</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js">
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Ultra RPi</h1>
+    <div id="mode-indicator" class="badge badge-blue">
+      Manual Mode
+    </div>
+  </header>
+
+  <main>
+    <section id="controls" class="panel">
+      <h2>Protocol Control</h2>
+      <div class="control-row">
+        <label for="recipe-select">Recipe:</label>
+        <select id="recipe-select"></select>
+      </div>
+      <div class="control-row">
+        <label for="chip-id">Chip ID:</label>
+        <input type="text" id="chip-id"
+               placeholder="ULTRA-TEST-001">
+      </div>
+      <div class="btn-row">
+        <button id="btn-run" class="btn btn-green">
+          Run
+        </button>
+        <button id="btn-pause" class="btn btn-yellow"
+                disabled>
+          Pause
+        </button>
+        <button id="btn-resume" class="btn btn-blue"
+                disabled>
+          Resume
+        </button>
+        <button id="btn-abort" class="btn btn-red"
+                disabled>
+          Abort
+        </button>
+      </div>
+      <div class="control-row">
+        <button id="btn-sm-start" class="btn btn-sm">
+          Start State Machine
+        </button>
+        <button id="btn-sm-stop" class="btn btn-sm"
+                disabled>
+          Stop State Machine
+        </button>
+      </div>
+    </section>
+
+    <section id="progress" class="panel">
+      <h2>Step Progress</h2>
+      <div id="step-info">
+        <span id="step-phase" class="phase-badge">--</span>
+        <span id="step-label">Idle</span>
+        <span id="tip-badge" class="tip-badge">
+          Tip: none
+        </span>
+      </div>
+      <div class="progress-bar-outer">
+        <div id="progress-bar" class="progress-bar-inner"
+             style="width: 0%">
+          0 / 0
+        </div>
+      </div>
+      <div id="elapsed">Elapsed: 0.0s</div>
+    </section>
+
+    <section id="cartridge-map" class="panel">
+      <h2>Cartridge Map</h2>
+      <div id="wells-grid"></div>
+    </section>
+
+    <section id="peak-chart" class="panel">
+      <h2>Peak Shift</h2>
+      <canvas id="peak-canvas" height="200"></canvas>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
