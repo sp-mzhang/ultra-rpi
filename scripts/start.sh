@@ -58,19 +58,31 @@ fi
 
 # --------------- foreground mode ---------------
 
-# Detect or create venv
-if [ -d "$PROJECT_DIR/.venv" ]; then
-    PYTHON="$PROJECT_DIR/.venv/bin/python"
-elif command -v python3 &>/dev/null; then
-    PYTHON="python3"
-else
-    PYTHON="python"
+VENV_DIR="$PROJECT_DIR/.venv"
+
+# Create venv if it doesn't exist
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment..."
+    SYSPYTHON=""
+    if command -v python3 &>/dev/null; then
+        SYSPYTHON="python3"
+    elif command -v python &>/dev/null; then
+        SYSPYTHON="python"
+    else
+        echo "ERROR: python3 not found. Install Python >=3.11."
+        exit 1
+    fi
+    "$SYSPYTHON" -m venv "$VENV_DIR"
+    echo "Upgrading pip..."
+    "$VENV_DIR/bin/pip" install --quiet --upgrade pip
 fi
 
-# Ensure the package is importable
+PYTHON="$VENV_DIR/bin/python"
+
+# Install / update the package
 if ! "$PYTHON" -c "import ultra" 2>/dev/null; then
-    echo "Package 'ultra' not found. Installing in dev mode..."
-    "$PYTHON" -m pip install --quiet -e "$PROJECT_DIR"
+    echo "Installing ultra-rpi in dev mode..."
+    "$VENV_DIR/bin/pip" install --quiet -e "$PROJECT_DIR"
 fi
 
 if [ "${ULTRA_MOCK:-}" = "1" ]; then
