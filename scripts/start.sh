@@ -73,8 +73,8 @@ if [ ! -d "$VENV_DIR" ]; then
         exit 1
     fi
     "$SYSPYTHON" -m venv "$VENV_DIR"
-    echo "Upgrading pip..."
-    "$VENV_DIR/bin/pip" install --quiet --upgrade pip
+    echo "Upgrading pip & setuptools..."
+    "$VENV_DIR/bin/pip" install --quiet --upgrade pip setuptools wheel
 fi
 
 PYTHON="$VENV_DIR/bin/python"
