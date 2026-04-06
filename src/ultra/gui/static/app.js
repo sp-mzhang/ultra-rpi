@@ -30,6 +30,7 @@
   /* ---- Init ---- */
   async function init() {
     await loadRecipes();
+    await loadQuickRunDefaults();
     await loadStatus();
     connectWS();
     initChart();
@@ -48,6 +49,26 @@
       });
     } catch (e) {
       console.warn('Failed to load recipes', e);
+    }
+  }
+
+  async function loadQuickRunDefaults() {
+    try {
+      const res = await fetch('/api/quick_run');
+      const qr = await res.json();
+      if (!qr.enabled) return;
+      if (qr.protocol && elRecipe.options.length) {
+        for (const opt of elRecipe.options) {
+          if (opt.textContent === qr.protocol
+              || opt.value === qr.protocol) {
+            opt.selected = true;
+            break;
+          }
+        }
+      }
+      if (qr.chip_id) elChipId.value = qr.chip_id;
+    } catch (e) {
+      console.warn('Failed to load quick_run defaults', e);
     }
   }
 

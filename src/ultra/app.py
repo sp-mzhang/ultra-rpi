@@ -245,7 +245,10 @@ class Application:
                     reader=self._reader,
                     event_bus=self.event_bus,
                 )
-                pipeline = ReaderPipeline(self.event_bus)
+                pipeline = ReaderPipeline(
+                    self.event_bus,
+                    config=self.config,
+                )
 
             self._runner = ProtocolRunner(
                 stm32=stm32,

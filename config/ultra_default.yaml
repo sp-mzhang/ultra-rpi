@@ -1,3 +1,7 @@
+device_sn: DEV-1e10e696-cfec-4e5c-ac06-b2951a20aa8a
+station_id: 100
+protocol_mode: ultra
+
 stm32:
   port: /dev/ttyAMA3
   baud: 921600
@@ -5,8 +9,18 @@ stm32:
 
 reader:
   port: auto
-  acq_time_total_s: 3600
-  acq_time_step_s: 3
+  acq_mode: continuous
+  acq_time_total_s: 20000
+  acq_time_step_s: 4
+
+peak_detect:
+  fit_type: detect_peaks
+  stitch_th: 1.15
+  config_fit:
+    dist: 100
+    ignore_start: 400
+    min_power: -45
+    prom: 1.5
 
 protocol:
   default_recipe: tsh_ultra
@@ -20,14 +34,13 @@ iot:
   cert_dir: /etc/ultra/certs/
 
 egress:
-  enabled: false
-  device_sn: ultra-001
-  data_dir: /home/ultra3/sway_runs
-  db_path: ""
+  enabled: true
+  data_dir: ~/sway_runs
+  db_path: ~/sway_runs/ultra-egress.db
   s3_bucket: siphox-home
   s3_region: us-east-2
   zip_temp_dir: /tmp/ultra-egress
-  dollop_host: ""
+  dollop_host: 18.117.187.46
   dollop_port: 8080
   loop_sleep_s: 10.0
 
@@ -35,5 +48,12 @@ startup:
   auto_state_machine: false
   skip_nfc: false
   skip_qr: true
-  default_chip_id: ULTRA-TEST-001
+  default_chip_id: L007W01R01C01
+  restart_delay_s: 5
   self_check_stub_s: 5.0
+
+quick_run:
+  enabled: true
+  operator: ultra_rpi
+  protocol: ultra
+  chip_id: L007W01R01C01

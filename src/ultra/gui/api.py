@@ -72,6 +72,22 @@ def create_api_router(
         )
         return _list()
 
+    @router.get('/quick_run')
+    async def get_quick_run():
+        '''Get quick_run config defaults for the GUI.
+
+        Returns the pre-fill values so the frontend can
+        populate recipe, chip_id, and operator fields
+        without the user typing them.
+        '''
+        qr = app.config.get('quick_run', {})
+        return {
+            'enabled': qr.get('enabled', False),
+            'protocol': qr.get('protocol', ''),
+            'chip_id': qr.get('chip_id', ''),
+            'operator': qr.get('operator', ''),
+        }
+
     @router.post('/run')
     async def run_protocol(req: RunRequest):
         '''Start a protocol run.

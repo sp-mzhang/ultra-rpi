@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import os.path as op
+import time
 from typing import Any
 
 from ultra.events import EventBus
@@ -21,7 +23,7 @@ from ultra.protocol.steps import STEP_REGISTRY
 
 LOG = logging.getLogger(__name__)
 
-DEFAULT_DATA_DIR = '/home/ultra3/sway_runs'
+DEFAULT_DATA_DIR = '~/sway_runs'
 
 
 class ProtocolRunner:
@@ -142,7 +144,8 @@ class ProtocolRunner:
 
     async def _reader_loop(self) -> None:
         '''Continuously capture TLV blocks and run peak
-        detection until cancelled.
+        detection until cancelled or ``acq_time_total_s``
+        is exceeded.
 
         Each iteration captures one block
         (``acq_time_step_s`` seconds of data) and feeds
@@ -151,13 +154,28 @@ class ProtocolRunner:
         '''
         reader_cfg = self._config.get('reader', {})
         step_s = int(reader_cfg.get('acq_time_step_s', 3))
+        total_s = int(
+            reader_cfg.get('acq_time_total_s', 20000),
+        )
+        acq_mode = reader_cfg.get('acq_mode', 'continuous')
         block_count = 0
 
         LOG.info(
-            'Reader loop started (step=%ds)', step_s,
+            'Reader loop started '
+            '(mode=%s, step=%ds, cap=%ds)',
+            acq_mode, step_s, total_s,
         )
+        t0 = time.monotonic()
         try:
             while True:
+                if time.monotonic() - t0 > total_s:
+                    LOG.info(
+                        'Reader acq_time_total_s (%ds) '
+                        'exceeded -- stopping',
+                        total_s,
+                    )
+                    break
+
                 path = await self._acquisition.capture_block(
                     acq_seconds=step_s,
                 )
@@ -224,18 +242,30 @@ class ProtocolRunner:
         from ultra.services.run_data import RunGroupWriter
 
         egress_cfg = self._config.get('egress', {})
-        data_dir = egress_cfg.get(
-            'data_dir', DEFAULT_DATA_DIR,
+        data_dir = os.path.expanduser(
+            egress_cfg.get(
+                'data_dir', DEFAULT_DATA_DIR,
+            ),
         )
-        device_sn = egress_cfg.get(
-            'device_sn', 'ultra-001',
+        device_sn = self._config.get(
+            'device_sn',
+            egress_cfg.get('device_sn', 'ultra-001'),
         )
+
+        station_id = self._config.get('station_id', 100)
+        protocol_mode = self._config.get(
+            'protocol_mode', 'ultra',
+        )
+        qr_cfg = self._config.get('quick_run', {})
+        operator = qr_cfg.get('operator', 'ultra_rpi')
 
         rg = RunGroupWriter(
             data_dir=data_dir,
-            user='ultra',
+            user=operator,
             name=self.recipe.name if self.recipe else 'run',
             device_sn=device_sn,
+            station_id=station_id,
+            protocol_mode=protocol_mode,
         )
         rg.mark_started()
 
@@ -291,12 +321,12 @@ class ProtocolRunner:
                 'Failed to create run dir: %s', exc,
             )
 
-        if (
-            run_dir
-            and self._acquisition is not None
-        ):
-            tlv_dir = op.join(run_dir, 'tlv')
-            self._acquisition.set_output_dir(tlv_dir)
+        if run_dir:
+            if self._acquisition is not None:
+                tlv_dir = op.join(run_dir, 'tlv')
+                self._acquisition.set_output_dir(tlv_dir)
+            if self._pipeline is not None:
+                self._pipeline.set_run_dir(run_dir)
 
         self._start_reader()
 

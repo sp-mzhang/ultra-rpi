@@ -461,6 +461,7 @@ def create_db(db_path: str = '') -> EgressDB:
             'ULTRA_DATA_DIR', '/var/lib/ultra',
         )
         db_path = op.join(db_dir, DB_FILENAME)
+    db_path = op.expanduser(db_path)
     db = EgressDB(db_path)
     db.init_db()
     return db

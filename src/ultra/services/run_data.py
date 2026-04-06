@@ -120,6 +120,7 @@ class RunGroupWriter:
             config: dict[str, Any] | None = None,
             device_sn: str = 'ultra-001',
             station_id: int = 1,
+            protocol_mode: str = 'ultra',
     ) -> None:
         '''Create a new RunGroup directory.
 
@@ -132,6 +133,8 @@ class RunGroupWriter:
                 written into rungroup.json.
             device_sn: Device serial number.
             station_id: Station ID for Dollop.
+            protocol_mode: Protocol mode identifier
+                stored in rungroup.json metadata.
         '''
         self.rg_uuid = _get_uuid()
         dt = _ts_now()
@@ -156,6 +159,7 @@ class RunGroupWriter:
             'rungroup_uuid': self.rg_uuid,
             'rungroup_id': -1,
             'station_id': station_id,
+            'protocol_mode': protocol_mode,
             'run_uuid_dir_list': [],
             'chip_pos_id_note_rsn_list': [],
             'local_directory_path': self.rg_dir,
