@@ -20,9 +20,37 @@ from __future__ import annotations
 
 import logging
 import os.path as op
+import sys
 import tempfile
 import time as _time
+import types
 from typing import Any
+
+# analysis_tools has unguarded module-level imports from
+# sway.utils.dollop_helpers (in tlv_proc.py / tlv_utils.py).
+# Inject empty stub modules so the import chain succeeds
+# without installing the full sway desktop application.
+if 'sway' not in sys.modules:
+    _sway = types.ModuleType('sway')
+    _sway_utils = types.ModuleType('sway.utils')
+    _sway_dh = types.ModuleType('sway.utils.dollop_helpers')
+    _sway.utils = _sway_utils  # type: ignore[attr-defined]
+    _sway_utils.dollop_helpers = _sway_dh  # type: ignore[attr-defined]
+
+    def _not_available(*a, **kw):
+        raise NotImplementedError(
+            'sway.utils.dollop_helpers stub'
+        )
+
+    _sway_dh.fetch_run_info = _not_available
+    _sway_dh.db_api_fetch_device_by_id_or_serial_number = (
+        _not_available
+    )
+    _sway_dh.db_api_device_get_config = _not_available
+
+    sys.modules['sway'] = _sway
+    sys.modules['sway.utils'] = _sway_utils
+    sys.modules['sway.utils.dollop_helpers'] = _sway_dh
 
 from ultra.events import EventBus
 
