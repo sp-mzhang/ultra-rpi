@@ -61,9 +61,9 @@ class CentrifugeUnlockStep(StepExecutor):
     '''Unlock the cartridge holder.'''
 
     async def execute(self, params, runner) -> bool:
-        r = runner.stm32.send_command_wait_done(
+        r = runner.stm32.send_command(
             cmd={'cmd': 'centrifuge_unlock'},
-            timeout_s=30.0,
+            timeout_s=600.0,
         )
         return _ok(r)
 
@@ -73,9 +73,9 @@ class CentrifugeLockStep(StepExecutor):
     '''Lock the cartridge holder.'''
 
     async def execute(self, params, runner) -> bool:
-        r = runner.stm32.send_command_wait_done(
+        r = runner.stm32.send_command(
             cmd={'cmd': 'centrifuge_lock'},
-            timeout_s=30.0,
+            timeout_s=600.0,
         )
         return _ok(r)
 
@@ -87,7 +87,7 @@ class CentrifugeSpinStep(StepExecutor):
     async def execute(self, params, runner) -> bool:
         rpm = params.get('rpm', 500)
         duration_s = params.get('duration_s', 5)
-        r = runner.stm32.send_command_wait_done(
+        r = runner.stm32.send_command(
             cmd={
                 'cmd': 'centrifuge_start',
                 'rpm': rpm,
@@ -110,7 +110,7 @@ class CentrifugeRotateStep(StepExecutor):
     async def execute(self, params, runner) -> bool:
         angle = params.get('angle_001deg', 0)
         move_rpm = params.get('move_rpm', 1)
-        r = runner.stm32.send_command_wait_done(
+        r = runner.stm32.send_command(
             cmd={
                 'cmd': 'centrifuge_move_angle',
                 'angle_001deg': angle,
