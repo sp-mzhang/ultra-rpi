@@ -5,12 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/opt/ultra-rpi
-ExecStartPre=/opt/ultra-rpi/.venv/bin/pip install \
-    --quiet --upgrade \
-    "siphox-analysis-tools @ git+https://github.com/siphox-inc/sway.git@main#subdirectory=analysis_tools"
-ExecStart=/opt/ultra-rpi/.venv/bin/python -m ultra.app
+User=ultra3
+WorkingDirectory=/home/ultra3/ultra-rpi
+Environment=PIP_CONFIG_FILE=/home/ultra3/ultra-rpi/pip.conf
+ExecStart=/home/ultra3/ultra-rpi/.venv/bin/python -m ultra.app
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

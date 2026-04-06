@@ -1,48 +1,50 @@
 #!/usr/bin/env bash
 # Ultra RPi deployment script for Raspberry Pi.
-# Installs the application to /opt/ultra-rpi with a
-# virtual environment and enables the systemd service.
+# Sets up the venv, installs dependencies, and enables the
+# systemd service so ultra-rpi starts automatically on boot.
 set -euo pipefail
 
-INSTALL_DIR="/opt/ultra-rpi"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 SERVICE_FILE="ultra-rpi.service"
+VENV_DIR="$PROJECT_DIR/.venv"
 
 echo "=== Ultra RPi Install ==="
 
-# Create install directory
-sudo mkdir -p "$INSTALL_DIR"
-sudo chown pi:pi "$INSTALL_DIR"
-
-# Copy source
-rsync -a --exclude='.git' --exclude='__pycache__' \
-    --exclude='.venv' --exclude='*.pyc' \
-    "$(dirname "$0")/../" "$INSTALL_DIR/"
-
-# Create virtual environment
-if [ ! -d "$INSTALL_DIR/.venv" ]; then
+# Create virtual environment if needed
+if [ ! -d "$VENV_DIR" ]; then
     echo "Creating virtual environment..."
-    python3 -m venv "$INSTALL_DIR/.venv"
+    python3 -m venv "$VENV_DIR"
+    echo "Upgrading pip & setuptools..."
+    PIP_CONFIG_FILE="$PROJECT_DIR/pip.conf" \
+        "$VENV_DIR/bin/pip" install --quiet \
+        --upgrade pip setuptools wheel
 fi
 
 # Install package
 echo "Installing ultra-rpi..."
-"$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip
-"$INSTALL_DIR/.venv/bin/pip" install --quiet -e "$INSTALL_DIR"
+PIP_CONFIG_FILE="$PROJECT_DIR/pip.conf" \
+    "$VENV_DIR/bin/pip" install --quiet \
+    --ignore-requires-python -e "$PROJECT_DIR"
 
 # Install systemd service
 echo "Installing systemd service..."
-sudo cp "$INSTALL_DIR/deploy/$SERVICE_FILE" \
+sudo cp "$PROJECT_DIR/deploy/$SERVICE_FILE" \
     "/etc/systemd/system/$SERVICE_FILE"
 sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_FILE"
 
+echo ""
 echo "=== Installation complete ==="
 echo ""
-echo "Start the service:"
+echo "The service will start automatically on next boot."
+echo ""
+echo "Start now:"
 echo "  sudo systemctl start ultra-rpi"
 echo ""
 echo "View logs:"
 echo "  journalctl -u ultra-rpi -f"
 echo ""
+HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo "Access GUI:"
-echo "  http://$(hostname -I | awk '{print $1}'):8080"
+echo "  http://${HOST_IP:-localhost}:8080"
