@@ -42,13 +42,20 @@ def find_pproc_port() -> str | None:
     '''Auto-detect PProc reader USB serial port.
 
     Opens each available serial port and sends an "id"
-    command. If the response starts with "siphox-pproc",
-    returns that port name.
+    command. The PProc responds with a 7-byte ACK
+    ("ACK_01") followed by the board ID string
+    ("siphox-pproc-X.Y.Z"). We read and discard the
+    ACK, then check the board ID.
 
     Returns:
         Port device path (e.g. /dev/ttyACM0) or None.
     '''
     ports = serial.tools.list_ports.comports()
+    LOG.info(
+        'Scanning %d serial ports for PProc reader: %s',
+        len(ports),
+        [p.device for p in ports],
+    )
     for p in ports:
         try:
             with serial.Serial(
@@ -62,19 +69,31 @@ def find_pproc_port() -> str | None:
                 ser.reset_input_buffer()
                 ser.write(b'id\r')
                 time.sleep(0.2)
-                resp = ser.read(32).decode(
+                raw = ser.read(64)
+                text = raw.decode(
                     'utf-8', errors='ignore',
-                ).strip()
-                if resp.startswith('siphox-pproc'):
+                )
+                if 'siphox-pproc' in text:
+                    idx = text.index('siphox-pproc')
+                    board_id = text[idx:].strip()
                     LOG.info(
-                        f'Found PProc on {p.device}: '
-                        f'{resp}',
+                        'Found PProc on %s: %s',
+                        p.device, board_id,
                     )
                     return p.device
+                LOG.debug(
+                    'Port %s not PProc (got %r)',
+                    p.device,
+                    text[:40],
+                )
         except (
             serial.SerialException,
             OSError,
-        ):
+        ) as exc:
+            LOG.debug(
+                'Port %s probe failed: %s',
+                p.device, exc,
+            )
             continue
     return None
 
@@ -212,6 +231,10 @@ class ReaderInterface:
     def get_id(self) -> str:
         '''Query the reader board ID.
 
+        The PProc responds with a 7-byte ACK ("ACK_01")
+        followed by the board ID string. We read both,
+        skip past the ACK, and extract the ID.
+
         Returns:
             Board ID string or empty on failure.
         '''
@@ -220,10 +243,14 @@ class ReaderInterface:
         self._ser.reset_input_buffer()
         self._send_cmd('id')
         time.sleep(0.2)
-        raw = self._ser.read(32)
-        return raw.decode(
+        raw = self._ser.read(64)
+        text = raw.decode(
             'utf-8', errors='ignore',
-        ).strip()
+        )
+        if 'siphox-pproc' in text:
+            idx = text.index('siphox-pproc')
+            return text[idx:].strip()
+        return text.strip()
 
     def start_stream(
             self, acq_seconds: int = 3,

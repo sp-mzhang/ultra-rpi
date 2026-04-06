@@ -249,6 +249,17 @@ class Application:
                     self.event_bus,
                     config=self.config,
                 )
+                LOG.info(
+                    'Reader pipeline ready '
+                    '(acquisition + peak detection)',
+                )
+            else:
+                LOG.warning(
+                    'No optical reader detected -- '
+                    'peak shift chart will be empty. '
+                    'Set ULTRA_MOCK=1 for simulated '
+                    'reader data.',
+                )
 
             self._runner = ProtocolRunner(
                 stm32=stm32,

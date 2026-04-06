@@ -207,12 +207,18 @@ class ProtocolRunner:
     def _start_reader(self) -> None:
         '''Start the background reader task if available.'''
         if self._acquisition and self._pipeline:
-            if self._pipeline is not None:
-                self._pipeline.reset_baseline()
+            self._pipeline.reset_baseline()
             self._reader_task = asyncio.create_task(
                 self._reader_loop(),
             )
             LOG.info('Background reader task created')
+        else:
+            LOG.warning(
+                'Reader loop NOT started '
+                '(acquisition=%s, pipeline=%s)',
+                'ok' if self._acquisition else 'NONE',
+                'ok' if self._pipeline else 'NONE',
+            )
 
     async def _stop_reader(self) -> None:
         '''Cancel and await the background reader task.'''
