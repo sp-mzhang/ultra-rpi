@@ -124,9 +124,6 @@
       case 'peak_data':
         addPeakPoint(data);
         break;
-      case 'pressure_update':
-        addPressurePoints(data);
-        break;
       case 'protocol_paused':
         updateButtons(true, true);
         elLabel.textContent = 'PAUSED: '
@@ -295,16 +292,6 @@
               callback: (v) => v.toFixed(4),
             },
           },
-          yPressure: {
-            position: 'right',
-            display: false,
-            title: {
-              display: true, text: 'Pressure',
-              color: '#2ea44f',
-            },
-            grid: { drawOnChartArea: false },
-            ticks: { color: '#8b8fa3' },
-          },
         },
         plugins: {
           legend: { display: false },
@@ -468,15 +455,6 @@
       meta.hidden = nowHidden;
       ds.hidden = nowHidden;
       chip.classList.toggle('hidden', nowHidden);
-      const axis = ds.yAxisID;
-      if (axis === 'yPressure') {
-        const anyVisible = peakChart.data.datasets.some(
-          (s, i) => s.yAxisID === 'yPressure'
-            && !peakChart.getDatasetMeta(i).hidden,
-        );
-        peakChart.options.scales.yPressure.display =
-          anyVisible;
-      }
       peakChart.update('none');
     };
     elChToggles.appendChild(chip);
@@ -508,34 +486,7 @@
     chartDirty = true;
   }
 
-  function addPressurePoints(d) {
-    if (frozen) return;
-    const label = d.label || 'Pressure';
-    const key = 'P:' + label;
-    ensureDataset(key, label, {
-      axisID: 'yPressure', hidden: true,
-    });
-    const ts = d.timestamp_s || 0;
-    const samples = d.samples || [];
-    const count = samples.length;
-    const ds = peakChart.data.datasets.find(
-      (s) => s._rawKey === key,
-    );
-    samples.forEach((s, i) => {
-      const pt = {
-        x: ts + (count > 1 ? i / count : 0),
-        y: s.pressure || 0,
-      };
-      rawData[key].push(pt);
-      if (ds) {
-        if (alignY) {
-          const ref = baselines[key] ?? 0;
-          ds.data.push({ x: pt.x, y: pt.y - ref });
-        } else {
-          ds.data.push({ x: pt.x, y: pt.y });
-        }
-      }
-    });
+
     chartDirty = true;
   }
 

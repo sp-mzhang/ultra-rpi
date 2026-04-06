@@ -1163,8 +1163,16 @@ class STM32Interface:
             timeout_s=timeout_s,
             collect_pressure=stream,
         )
+        _summary = (
+            {
+                k: v for k, v in resp.items()
+                if k != '_pressure_samples'
+            }
+            if resp else resp
+        )
         LOG.info(
-            f'smart_aspirate {volume_ul=} uL: {resp}',
+            'smart_aspirate %d uL: %s',
+            volume_ul, _summary,
         )
         return resp
 

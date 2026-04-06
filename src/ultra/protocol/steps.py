@@ -287,7 +287,7 @@ class ReagentTransferStep(StepExecutor):
             ),
             piston_reset=True,
             air_slug_ul=consts.get('air_slug_ul', 40),
-            stream=True,
+            stream=False,
         )
         if sa is None:
             return False
@@ -306,7 +306,7 @@ class ReagentTransferStep(StepExecutor):
             ),
             reasp_ul=reasp,
             cartridge_z=runner.cartridge_z_mm,
-            stream=True,
+            stream=False,
         )
         if not cd_r:
             return False
@@ -372,7 +372,7 @@ class ReagentTransferBFStep(StepExecutor):
             ),
             piston_reset=True,
             air_slug_ul=consts.get('air_slug_ul', 40),
-            stream=True,
+            stream=False,
         )
         if sa is None:
             return False
@@ -394,7 +394,7 @@ class ReagentTransferBFStep(StepExecutor):
             reasp_ul=reasp,
             sleep_s=params.get('sleep_s', 30),
             cartridge_z=runner.cartridge_z_mm,
-            stream=True,
+            stream=False,
         )
         if not cd_r:
             return False

@@ -98,7 +98,7 @@ graph TD
 
     subgraph guiLayer [Optional Web GUI]
         API["FastAPI + WebSocket"]
-        FE["Browser: status, plots, controls"]
+        FE["Browser: status, sensorgram, controls"]
     end
 
     subgraph services [Services Layer]
@@ -107,23 +107,23 @@ graph TD
         WiFi["WiFiProvisioner -- BLE"]
     end
 
-    subgraph protocol [Protocol Layer]
+    subgraph mainThread ["Main Thread (asyncio event loop)"]
         Runner["ProtocolRunner -- pause/resume"]
         Tracker["ProtocolStateTracker"]
-        Recipe["Recipe Scripts -- tsh_ultra etc"]
-    end
-
-    subgraph hw [Hardware Abstraction]
-        STM["STM32Interface -- UART"]
-        Mon["STM32StatusMonitor -- async listener"]
+        Recipe["Step Executors -- tsh_ultra etc"]
+        STM["STM32Interface -- UART (blocking)"]
         FP["frame_protocol -- SOH frames"]
-        Reader["ReaderInterface -- PProc TLV"]
     end
 
-    subgraph analysis [Analysis Layer]
-        Acq["Acquisition -- TLV capture"]
-        Pipe["Pipeline -- spectra + peaks"]
+    subgraph readerThread ["Reader Thread (dedicated OS thread)"]
+        Acq["AcquisitionService -- TLV capture"]
+        Reader["ReaderInterface -- PProc USB serial"]
+        Pipe["ReaderPipeline -- spectra + peaks"]
         AT["siphox.analysis_tools -- external pkg"]
+    end
+
+    subgraph monitor [Status Monitor Thread]
+        Mon["STM32StatusMonitor -- async listener"]
     end
 
     App --> SM
@@ -139,11 +139,11 @@ graph TD
     STM --> FP
     Mon --> FP
     SM --> Mon
-    Runner --> Acq
+    Runner -.->|"thread.start()"| Acq
     Acq --> Reader
     Acq --> Pipe
     Pipe --> AT
-    Pipe -->|"results"| IoT
+    Pipe -->|"emit_sync (thread-safe)"| API
     Tracker -->|"status events"| API
     Tracker -->|"status snapshots"| IoT
 ```
@@ -152,9 +152,95 @@ graph TD
 
 ## Key Design Decisions
 
-### 1. Async-first, single-process
+### 1. Concurrency: asyncio + dedicated reader thread
 
-Unlike sway's multiprocess architecture (needed for GUI + multiple readers), ultra-rpi runs **one reader** and is **headless**. Use `asyncio` throughout with a single event loop. Background I/O (serial reads) uses `asyncio.to_thread()` or dedicated reader threads that post to the event loop via `call_soon_threadsafe`.
+ultra-rpi uses a **hybrid concurrency model**: an asyncio event loop for
+protocol orchestration, GUI, and cloud, plus a **dedicated OS thread** for
+reader data acquisition.
+
+#### Why sway uses multiprocessing
+
+sway supports up to 8 readers simultaneously and runs a Qt GUI that must
+stay responsive during long hardware operations. It achieves this with
+`multiprocessing`:
+
+- **Separate reader processes** (`readeracquire.py`) -- one per reader,
+  each with its own serial port. A `multiprocessing.Barrier` synchronises
+  startup across all reader processes, the spectrify process, and the
+  main process.
+- **Spectrify process** -- decodes TLV, runs peak detection, writes log
+  files. Communicates results back to the main process via ZeroMQ
+  PUB/SUB.
+- **Main process** -- runs Qt GUI, protocol execution, cloud upload.
+
+The multi-process design ensures no single blocking call can starve the
+readers or freeze the GUI. But it comes with significant complexity:
+`multiprocessing.Barrier`, ZeroMQ sockets, shared-memory coordination,
+process lifecycle management, and platform-specific forking behaviour.
+
+#### Why ultra-rpi uses a thread instead
+
+ultra-rpi runs **one reader** and has a lightweight web GUI (FastAPI +
+WebSocket) instead of Qt. The architectural constraints are different:
+
+| Concern | sway (multiprocessing) | ultra-rpi (thread) |
+|---------|------------------------|---------------------|
+| Reader count | 1--8 | 1 |
+| GUI framework | Qt (needs own process) | FastAPI (same event loop) |
+| IPC overhead | ZeroMQ, Barriers, pipes | direct function calls |
+| Startup complexity | fork + barrier sync | `thread.start()` |
+| Memory | N copies of Python interpreter | shared address space |
+| Debugging | multi-process tracing | single-process, `gdb`/`pdb` |
+| Serial port isolation | guaranteed (separate PIDs) | guaranteed (different ports) |
+
+The STM32 (UART `/dev/ttyAMA3`) and PProc reader (USB serial) use
+**different physical serial ports**. There is zero contention between the
+protocol thread (STM32) and the reader thread (PProc), so OS-level
+process isolation is unnecessary.
+
+#### How it works
+
+```
+Main thread (asyncio event loop)          Reader thread ("reader-acq")
+─────────────────────────────────         ──────────────────────────────
+ProtocolRunner.run()                      _reader_loop()
+  │                                         │
+  ├─ _start_reader()  ──────────────────►  threading.Thread.start()
+  │                                         │
+  ├─ _wait_for_reader_data()                ├─ capture_block()  [time.sleep]
+  │   (polls block counter via              │   └─ serial.read() on PProc USB
+  │    asyncio.sleep)                       │
+  │                                         ├─ process_tlv_file()  [CPU-bound]
+  ├─ for step in recipe:                    │   └─ siphox.analysis_tools
+  │     await executor.execute()            │
+  │       └─ stm32.send_command_wait_done() ├─ capture_block()   ← runs freely
+  │           └─ BLOCKS event loop          │     while STM32 cmd blocks the
+  │              for 1--60+ seconds         │     event loop
+  │                                         │
+  ├─ _stop_reader()                         ├─ _reader_stop.wait() → exits
+  │   └─ _reader_stop.set()                 │
+  │   └─ thread.join()                      └─ acquisition.stop()
+```
+
+Key properties:
+
+- **`capture_block()`** is fully synchronous: `time.sleep(0.003)` +
+  `serial.read()`. It never touches the asyncio event loop, so it
+  cannot be starved by protocol steps that block the loop.
+- **`process_tlv_file()`** (peak detection) runs in the same reader
+  thread, immediately after each block capture. Results are pushed to
+  the GUI via `event_bus.emit_sync()` which uses
+  `loop.call_soon_threadsafe` to schedule the async broadcast.
+- **Stop signal** uses `threading.Event` (`_reader_stop`). The reader
+  loop checks it between blocks. `_stop_reader()` sets the event and
+  joins the thread (via `run_in_executor` to avoid blocking the event
+  loop during join).
+- **Thread safety**: the only shared mutable state is the acquisition
+  `_block_counter` (an integer, atomic under CPython's GIL) and
+  `ProtocolStateTracker.snapshot()` (read-only snapshots).
+
+This gives the same **continuous, uninterrupted reader coverage** as
+sway's separate process, with far less complexity.
 
 ### 2. Event bus replaces GUI callbacks
 
@@ -197,7 +283,6 @@ class ProtocolSnapshot:
     wells: dict[int, WellState]  # loc_id -> WellState
     is_paused: bool
     elapsed_s: float
-    pressure_data: list[dict]
     results: list[dict]       # per-step ok/fail
 ```
 
@@ -281,7 +366,7 @@ async def run_protocol(runner: ProtocolRunner) -> dict:
 
 Both `tsh_ultra.py` (1202 lines) and `quick_demo_ultra.py` (561 lines) are **imperative Python scripts** with massive duplication:
 - Identical Phase A (centrifuge 5 steps) and Phase C (lock 2 steps)
-- Identical helpers: `_cmd_ok`, `_record`, `_abort`, `_collect_pressure`, `_save_pressure_csv`
+- Identical helpers: `_cmd_ok`, `_record`, `_abort`
 - Identical location constants (`LOC_*`)
 - Each reagent transfer is ~30 lines of copy-paste differing only in well, volumes, speed
 - Adding a recipe means duplicating 500+ lines and tweaking numbers
@@ -431,9 +516,9 @@ class ReagentTransferStep(StepExecutor):
     '''asp from source -> cart_dispense to target
     -> well_dispense remainder back to source.
 
-    Handles: piston reset, air slug, LLF aspiration,
-    cartridge dispense with reasp, blowout, pressure
-    collection, timing markers, well state updates.
+    Handles: piston reset, air slug, LLD aspiration,
+    cartridge dispense with reasp, blowout, timing
+    markers, well state updates.
     '''
     async def execute(self, params, runner) -> bool:
         source = runner.tracker.get_well(params['source'])
@@ -457,7 +542,6 @@ class ReagentTransferStep(StepExecutor):
             air_slug_ul=runner.recipe.constants[
                 'air_slug_ul'
             ],
-            stream=True,
         )
         if sa is None:
             return False
@@ -465,7 +549,6 @@ class ReagentTransferStep(StepExecutor):
             source.name, delta_ul=-asp_vol,
             operation='aspirate',
         )
-        runner.collect_pressure(sa, params['label'])
 
         # 2. cart dispense to target
         cd_r = await runner.stm32.cart_dispense_at(
@@ -477,7 +560,6 @@ class ReagentTransferStep(StepExecutor):
             ),
             reasp_ul=reasp,
             cartridge_z=runner.cartridge_z_mm,
-            stream=True,
         )
         if not cd_r:
             return False
@@ -485,7 +567,6 @@ class ReagentTransferStep(StepExecutor):
             target.name, delta_ul=cart_vol,
             operation='dispense',
         )
-        runner.collect_pressure(cd_r, params['label'])
 
         # 3. return remainder to source well
         ok = await runner.stm32.well_dispense_at(
@@ -580,7 +661,7 @@ class ProtocolRunner:
         return self.tracker.results
 ```
 
-All boilerplate (pause checks, state tracking, event emission, error handling, pressure CSV) lives in the **runner and step executors** -- not duplicated per recipe.
+All boilerplate (pause checks, state tracking, event emission, error handling) lives in the **runner and step executors** -- not duplicated per recipe.
 
 #### Recipe loader + validator (`protocol/recipe_loader.py`)
 
@@ -707,7 +788,6 @@ class STM32StatusMonitor:
 **Built-in handlers** (registered at init, can be disabled via config):
 - **`door_handler`** -- detects door_open / door_closed rising edges, sets asyncio Events (same as old DoorMonitor)
 - **`motion_handler`** -- emits `gantry_position`, `lift_position` events for GUI cartridge visualization
-- **`pressure_handler`** -- emits `pressure_update` events (14-bit ADC) for real-time pressure plot
 - **`temperature_handler`** -- emits `temperature_update` events (temp_c_x10 / 10)
 - **`centrifuge_handler`** -- emits `centrifuge_rpm` events
 - **`error_handler`** -- detects `last_error` / `error_count` changes, emits `stm32_error` events
@@ -721,7 +801,6 @@ class STM32StatusMonitor:
 The event bus bridges the gap: handlers run on the reader thread and call `event_bus.emit_sync(event, data)` which uses `loop.call_soon_threadsafe` to schedule the async emit on the main event loop. GUI and IoT subscribe to the events they care about.
 
 **Also handles other async messages** (not just MSG_STATUS):
-- `MSG_PRESSURE` (0xA004) -- real-time pump pressure streaming
 - `MSG_ERROR` (0xA006) -- firmware error notifications
 - `MSG_TELEMETRY` (0xA003) -- if firmware adds telemetry later
 
@@ -782,8 +861,10 @@ WS   /ws                      # real-time event stream
  "slots": {"4": "in_use", "5": "available"}}}
 
 {"type": "peak_data", "data": {"channel": 3,
- "wavelength_nm": 1550.23, "shift_pm": -12.4,
+ "wavelength_nm": 1550.2345, "shift_pm": -12.4,
  "timestamp_s": 42.5}}
+// channel: 1-based (1..15), wavelength_nm: absolute
+// resonance position, shift_pm: delta from baseline
 
 {"type": "protocol_paused", "data": {"step": 14, ...}}
 {"type": "protocol_resumed", "data": {"step": 14, ...}}
@@ -793,57 +874,131 @@ WS   /ws                      # real-time event stream
 **Frontend** (`gui/static/index.html` + `app.js`):
 
 Single-page app with four panels:
-1. **Protocol Control** -- recipe dropdown, chip ID text input, Run / Pause / Resume / Abort buttons
-2. **Step Progress** -- step N/26 progress bar, phase indicator (A/B/C), current step label
-3. **Cartridge Map** -- visual grid of wells (S1, S2, M1-M15, PP4) showing fill level and reagent name; color-coded by volume remaining. Active well highlighted
-4. **Peak Shift Plot** -- real-time line chart (15 channels) of resonance wavelength shift vs time using Chart.js or lightweight canvas lib. Updated every acquisition step
+1. **Protocol Control** -- recipe dropdown, chip ID text input,
+   Run / Pause / Resume / Abort buttons
+2. **Step Progress** -- step N/26 progress bar, phase indicator
+   (A/B/C), current step label
+3. **Cartridge Map** -- visual grid of wells (S1, S2, M1-M15,
+   PP4) showing fill level and reagent name; color-coded by
+   volume remaining. Active well highlighted
+4. **Sensorgram** -- real-time line chart (15 channels) of
+   absolute resonance wavelength (nm) vs time using Chart.js.
+   Updated every TLV block (~4 s). Channel colours match
+   sway's D3 `category20` palette. Controls: start time,
+   channel toggles, Y-align, freeze, pan/zoom
 
 **Tip status** shown as an icon/badge in the Step Progress panel.
 
 **Tech choice:** FastAPI + vanilla JS (no build step, no npm -- keeps it simple for RPi deployment). Chart.js loaded from CDN or bundled.
 
-### 11. Reader acquisition simplified
+### 11. Reader acquisition -- dedicated thread, sway-compatible output
 
-Sway's `readeracquire.py` supports 8 readers in parallel with multiprocessing barriers. Ultra has **one** reader. Simplify to a single-reader acquisition service.
+Sway's `readeracquire.py` supports 8 readers in parallel with
+multiprocessing barriers. Ultra has **one** reader. The acquisition
+is simplified to a single-reader service that runs in a dedicated
+OS thread (see Section 1 for rationale).
 
-**What lives in ultra-rpi** (ported from sway, hardware I/O):
-- `hw/reader_interface.py` -- cleaned `PProcInterface` (USB serial to PProc MCU: commands, config, TLV stream start/stop)
-- `analysis/acquisition.py` -- simplified single-reader TLV byte capture (from `readeracquire.py` + `tlv_acquire.py`)
-- Writes raw TLV to disk for archival
+#### Components
 
-**What comes from sway** (installed as pip dependency, pure computation):
-- `siphox.analysis_tools.utils.tlv_proc` -- decode TLV binary -> numpy arrays
-- `siphox.analysis_tools.readertospectra` -- raw ADC -> wavelength spectra
-- `siphox.analysis_tools.utils.fitting_functions.peaks` -- peak detection, sweep data, tracking
-- `siphox.analysis_tools.main_analysis.MeasurementAnalysis` -- full biomarker analysis
+**In ultra-rpi (hardware I/O + glue):**
 
-**Data flow:**
+- `hw/reader_interface.py` -- cleaned `PProcInterface` (USB serial to
+  PProc MCU: `start <N>`, `stop`, `id` commands; TLV stream
+  start/stop with ACK polling)
+- `reader/acquisition.py` -- synchronous single-reader TLV byte
+  capture. Runs in the reader thread. Each call to `capture_block(N)`
+  sends `start N`, reads serial data in a tight `time.sleep(3ms)`
+  loop until the expected byte count or deadline, writes the raw
+  `.tlv` file and per-block `time_N.log` to disk.
+- `reader/pipeline.py` -- glue layer: calls `siphox.analysis_tools`
+  for TLV decode, wavelength calibration, peak detection, and peak
+  tracking. Writes sway-compatible log files (`peaks_nm.log`,
+  `resonance_props.csv`). Emits `peak_data` events for the GUI.
+
+**From sway (installed via pip, pure computation):**
+
+- `siphox.analysis_tools.utils.tlv_proc` -- TLV binary parsing
+- `siphox.analysis_tools.readertospectra` -- raw ADC → calibrated
+  wavelength spectra (`TlvToSpectra`, `SweepData`)
+- `siphox.analysis_tools.utils.fitting_functions.peaks` --
+  `run_peak_detection()`, `track_peaks()`
+- `siphox.analysis_tools.utils.peaklogutils` -- log file I/O helpers
+
+#### Thread execution model
 
 ```
-PProc MCU --USB serial--> reader_interface.py (in ultra-rpi)
-                              |
-                              | raw TLV bytes
-                              v
-                          acquisition.py (in ultra-rpi)
-                              |
-                              | bytes
-                              v
-                    tlv_proc.decode()  (from sway analysis_tools)
-                              |
-                              | numpy arrays
-                              v
-                    peaks.run_peak_detection() (from sway)
-                    peaks.track_peaks()        (from sway)
-                              |
-                              | per-channel peak wavelengths
-                              v
-                          event_bus.emit('peak_data', ...)
-                              |
-                              v
-                    WebSocket -> browser chart
+Reader thread ("reader-acq")
+────────────────────────────
+_reader_loop():
+  while not _reader_stop:
+    │
+    ├─ capture_block(step_s)          # synchronous, ~4-5s
+    │    ├─ start_stream(step_s)      # send "start N", poll ACK
+    │    ├─ while deadline:
+    │    │    time.sleep(0.003)
+    │    │    serial.read()           # accumulate TLV bytes
+    │    ├─ write data_{N}.tlv
+    │    └─ write time_{N}.log
+    │
+    ├─ pipeline.process_tlv_file()    # synchronous, ~0.5-2s
+    │    ├─ TlvToSpectra.decode()
+    │    ├─ run_peak_detection()
+    │    ├─ track_peaks()
+    │    ├─ write peaks_nm.log (append)
+    │    ├─ write resonance_props.csv (append)
+    │    └─ event_bus.emit_sync('peak_data', ...)
+    │         └─ call_soon_threadsafe → WebSocket broadcast
+    │
+    └─ (next block immediately)
 ```
 
-Peak shift data emitted as `peak_data` events for GUI consumption.
+Blocks are captured back-to-back with only a 1 ms inter-block sleep.
+The stream is **not** stopped between blocks (matching sway's
+continuous-acquisition mode). `acquisition.stop()` is called once
+when the reader loop exits.
+
+#### Data flow (single block)
+
+```
+PProc MCU ──USB serial──► reader_interface.read_bytes()
+                               │  raw TLV bytes
+                               ▼
+                          acquisition.capture_block()
+                               │  data_{N}.tlv on disk
+                               ▼
+                          pipeline.process_tlv_file()
+                               │
+                    ┌──────────┴──────────┐
+                    ▼                     ▼
+          TlvToSpectra.decode()    peaks_nm.log (append)
+           (calibrated spectra)    resonance_props.csv
+                    │
+                    ▼
+          run_peak_detection()
+          track_peaks()
+                    │
+                    ▼
+          event_bus.emit_sync('peak_data', {
+              channel: 1..15,
+              wavelength_nm: 1550.1234,
+              shift_pm: -12.4,
+          })
+                    │
+                    ▼
+          WebSocket ──► browser sensorgram chart
+```
+
+#### Warm-up: reader data before hardware movement
+
+Before executing any protocol steps, the runner waits for
+`_READER_WARMUP_BLOCKS` (default 2) to be captured and processed.
+This ensures baseline peak data is visible on the sensorgram before
+the protocol moves any hardware. If the warm-up times out (30 s),
+the protocol proceeds with a warning.
+
+This is stricter than sway, which uses a fixed
+`asyncio.sleep(acq_time_step_s + 0.5)` delay after a
+`multiprocessing.Barrier` -- not data-driven.
 
 ### 12. Web GUI is always up -- state machine is optional
 
@@ -1026,10 +1181,10 @@ sequenceDiagram
     participant Door as DoorMonitor
     participant STM as STM32Interface
     participant PR as ProtocolRunner
-    participant Recipe as tsh_ultra
+    participant RT as Reader Thread
     participant Acq as Acquisition
-    participant Reader as ReaderInterface
     participant Pipe as Pipeline
+    participant GUI as WebSocket/GUI
     participant IoT as IoTClient
 
     SM->>Door: start listening
@@ -1042,18 +1197,32 @@ sequenceDiagram
     Door-->>SM: door_closed event (2nd)
     SM->>Door: stop_active()
     SM->>PR: run_protocol(tsh_ultra)
-    PR->>STM: connect()
-    PR->>STM: ping()
-    PR->>STM: pump_init, home_all
-    PR->>Recipe: run_protocol(runner)
-    Recipe->>STM: centrifuge_unlock, spin, rotate
-    Recipe->>STM: aspirate_at, dispense_at (x N)
-    Recipe->>STM: centrifuge_lock, home_all
-    Recipe-->>PR: results
-    PR->>Acq: start capture
-    Acq->>Reader: stream TLV data
-    Acq->>Pipe: process spectra
-    Pipe-->>PR: analysis results
+    PR->>STM: connect(), ping(), pump_init, home_all
+
+    Note over PR,RT: Reader thread starts BEFORE protocol steps
+    PR->>RT: threading.Thread.start()
+    RT->>Acq: capture_block() [warm-up block 1]
+    Acq->>Pipe: process_tlv_file()
+    Pipe-->>GUI: emit_sync('peak_data')
+    RT->>Acq: capture_block() [warm-up block 2]
+    PR-->>PR: _wait_for_reader_data() ✓
+
+    Note over PR,RT: Protocol steps and reader run IN PARALLEL
+    par Main thread: protocol steps
+        PR->>STM: centrifuge_unlock, spin, rotate
+        PR->>STM: aspirate_at, cart_dispense_at (×N)
+        PR->>STM: centrifuge_lock, home_all
+    and Reader thread: continuous capture
+        loop Every ~4s until protocol ends
+            RT->>Acq: capture_block()
+            Acq->>Pipe: process_tlv_file()
+            Pipe-->>GUI: emit_sync('peak_data')
+        end
+    end
+
+    PR->>RT: _reader_stop.set()
+    RT->>Acq: stop() (stop_stream)
+    RT-->>PR: thread.join()
     PR->>STM: disconnect()
     PR-->>SM: protocol_done
     SM->>Door: restart
@@ -1068,7 +1237,7 @@ sequenceDiagram
 - Create package structure with `pyproject.toml`
 - Copy `frame_protocol.py` verbatim
 - Port `STM32Interface` (clean `ultra_interface.py`)
-- Build `STM32StatusMonitor` (generalized from `door_monitor.py` -- decodes full 36-byte `MSG_STATUS`, dispatches to pluggable handlers for door, motion, pressure, temperature, centrifuge, tip, errors)
+- Build `STM32StatusMonitor` (generalized from `door_monitor.py` -- decodes full 36-byte `MSG_STATUS`, dispatches to pluggable handlers for door, motion, temperature, centrifuge, tip, errors)
 - Add `STM32Mock` for testing without hardware
 - Basic config loader and logging
 

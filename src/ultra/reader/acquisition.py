@@ -6,7 +6,6 @@ blocks to disk, and emits events for the pipeline.
 '''
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import os.path as op
@@ -95,11 +94,16 @@ class AcquisitionService:
         self._block_counter = -1
         os.makedirs(path, exist_ok=True)
 
-    async def capture_block(
+    def capture_block(
             self,
             acq_seconds: int = 3,
     ) -> str | None:
         '''Capture one acquisition block of TLV data.
+
+        Synchronous -- runs in a dedicated thread via
+        ``run_in_executor`` so it is never starved by
+        protocol steps on the asyncio event loop (matching
+        sway's separate-process model).
 
         Starts the reader stream, accumulates bytes until
         the expected block size is reached, writes to disk,
@@ -128,7 +132,7 @@ class AcquisitionService:
         )
 
         while time.time() < deadline:
-            await asyncio.sleep(CAPTURE_SLEEP_S)
+            time.sleep(CAPTURE_SLEEP_S)
             raw = self._reader.read_bytes()
             if raw:
                 end = total_bytes + len(raw)
@@ -176,7 +180,7 @@ class AcquisitionService:
                 'duration_s': round(duration, 2),
             },
         )
-        await asyncio.sleep(INTER_BLOCK_SLEEP_S)
+        time.sleep(INTER_BLOCK_SLEEP_S)
         return tlv_path
 
     def _write_time_log(

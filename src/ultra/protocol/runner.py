@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import os.path as op
+import threading
 import time
 from typing import Any
 
@@ -24,7 +25,6 @@ from ultra.protocol.steps import STEP_REGISTRY
 LOG = logging.getLogger(__name__)
 
 DEFAULT_DATA_DIR = '~/sway_runs'
-_MAX_PIPELINE_Q = 3
 _READER_WARMUP_BLOCKS = 2
 _READER_WARMUP_TIMEOUT_S = 30
 
@@ -79,7 +79,8 @@ class ProtocolRunner:
         self._pause_event.set()
         self._abort_event = asyncio.Event()
         self._running = False
-        self._reader_task: asyncio.Task | None = None
+        self._reader_thread: threading.Thread | None = None
+        self._reader_stop = threading.Event()
 
     @property
     def is_running(self) -> bool:
@@ -145,18 +146,19 @@ class ProtocolRunner:
     # Background reader acquisition
     # ----------------------------------------------------------
 
-    async def _reader_loop(self) -> None:
-        '''Continuously capture TLV blocks and run peak
-        detection until cancelled or ``acq_time_total_s``
-        is exceeded.
+    def _reader_loop(self) -> None:
+        '''Continuously capture TLV blocks in a dedicated
+        OS thread.
 
-        Capture and pipeline processing are decoupled:
-        capture starts immediately for the next block
-        while the previous block is processed in a
-        background task (bounded to ``_MAX_PIPELINE_Q``
-        concurrent tasks to prevent unbounded growth).
-        The reader stream is only stopped on exit, not
-        between blocks (matching sway's pattern).
+        Runs entirely outside the asyncio event loop so
+        protocol steps (which block the loop via synchronous
+        STM32 serial calls) can never starve the serial
+        reader. This mirrors sway's separate-process reader.
+
+        ``capture_block()`` and ``process_tlv_file()`` are
+        both synchronous and run back-to-back in this thread.
+        Events are pushed to the GUI via ``emit_sync``
+        (thread-safe).
         '''
         reader_cfg = self._config.get('reader', {})
         step_s = int(reader_cfg.get('acq_time_step_s', 3))
@@ -165,16 +167,15 @@ class ProtocolRunner:
         )
         acq_mode = reader_cfg.get('acq_mode', 'continuous')
         block_count = 0
-        pipeline_tasks: set[asyncio.Task] = set()
 
         LOG.info(
-            'Reader loop started '
+            'Reader thread started '
             '(mode=%s, step=%ds, cap=%ds)',
             acq_mode, step_s, total_s,
         )
         t0 = time.monotonic()
         try:
-            while True:
+            while not self._reader_stop.is_set():
                 if time.monotonic() - t0 > total_s:
                     LOG.info(
                         'Reader acq_time_total_s (%ds) '
@@ -183,91 +184,50 @@ class ProtocolRunner:
                     )
                     break
 
-                path = await self._acquisition.capture_block(
+                path = self._acquisition.capture_block(
                     acq_seconds=step_s,
                 )
                 if path is None:
-                    await asyncio.sleep(1.0)
+                    if self._reader_stop.wait(1.0):
+                        break
                     continue
 
                 block_count += 1
                 elapsed = self.tracker.snapshot().elapsed_s
 
                 if self._pipeline is not None:
-                    if len(pipeline_tasks) >= _MAX_PIPELINE_Q:
-                        done, pipeline_tasks = (
-                            await asyncio.wait(
-                                pipeline_tasks,
-                                return_when=(
-                                    asyncio.FIRST_COMPLETED
-                                ),
-                            )
+                    try:
+                        self._pipeline.process_tlv_file(
+                            path, elapsed,
                         )
-                    t = asyncio.create_task(
-                        self._run_pipeline(
-                            path, elapsed, block_count,
-                        ),
-                    )
-                    pipeline_tasks.add(t)
-                    t.add_done_callback(
-                        pipeline_tasks.discard,
-                    )
-        except asyncio.CancelledError:
-            LOG.info(
-                'Reader loop stopped after %d blocks',
-                block_count,
-            )
-            raise
+                    except Exception as exc:
+                        LOG.warning(
+                            'Pipeline error on block %d: '
+                            '%s', block_count, exc,
+                        )
+        except Exception:
+            LOG.exception('Reader thread crashed')
         finally:
             if self._acquisition is not None:
                 self._acquisition.stop()
-            for t in pipeline_tasks:
-                t.cancel()
-            if pipeline_tasks:
-                await asyncio.gather(
-                    *pipeline_tasks,
-                    return_exceptions=True,
-                )
-
-    async def _run_pipeline(
-            self,
-            path: str,
-            elapsed: float,
-            block_count: int,
-    ) -> None:
-        '''Process a single TLV block through the pipeline.
-
-        Runs ``process_tlv_file`` in a thread-pool executor
-        so the synchronous peak-detection work does not block
-        the asyncio event loop (and thus the capture loop).
-
-        Args:
-            path: Path to the TLV file.
-            elapsed: Protocol elapsed time in seconds.
-            block_count: Block sequence number for logging.
-        '''
-        loop = asyncio.get_running_loop()
-        try:
-            await loop.run_in_executor(
-                None,
-                self._pipeline.process_tlv_file,
-                path,
-                elapsed,
-            )
-        except Exception as exc:
-            LOG.warning(
-                'Pipeline error on block %d: %s',
-                block_count, exc,
+            LOG.info(
+                'Reader thread exiting '
+                '(%d blocks captured)',
+                block_count,
             )
 
     def _start_reader(self) -> None:
-        '''Start the background reader task if available.'''
+        '''Start the background reader thread.'''
         if self._acquisition and self._pipeline:
             self._pipeline.reset_baseline()
-            self._reader_task = asyncio.create_task(
-                self._reader_loop(),
+            self._reader_stop.clear()
+            self._reader_thread = threading.Thread(
+                target=self._reader_loop,
+                name='reader-acq',
+                daemon=True,
             )
-            LOG.info('Background reader task created')
+            self._reader_thread.start()
+            LOG.info('Background reader thread started')
         else:
             LOG.warning(
                 'Reader loop NOT started '
@@ -280,11 +240,10 @@ class ProtocolRunner:
         '''Wait for initial reader blocks before protocol
         steps begin.
 
-        Blocks until ``_READER_WARMUP_BLOCKS`` TLV blocks
-        have been captured (checked via the acquisition
-        service block counter) or a timeout is reached.
-        This ensures baseline peak data is available and
-        plotted before any hardware movement.
+        Polls the acquisition block counter until
+        ``_READER_WARMUP_BLOCKS`` have been captured or a
+        timeout is reached. Uses ``asyncio.sleep`` so the
+        event loop stays responsive for other tasks.
         '''
         if self._acquisition is None:
             return
@@ -317,14 +276,26 @@ class ProtocolRunner:
         )
 
     async def _stop_reader(self) -> None:
-        '''Cancel and await the background reader task.'''
-        if self._reader_task is not None:
-            self._reader_task.cancel()
-            try:
-                await self._reader_task
-            except asyncio.CancelledError:
-                pass
-            self._reader_task = None
+        '''Signal the reader thread to stop and wait for it.
+
+        Uses a threading.Event for the stop signal and joins
+        in a thread-pool executor so we don't block the
+        event loop while waiting for the thread to finish.
+        '''
+        if self._reader_thread is not None:
+            self._reader_stop.set()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                self._reader_thread.join,
+                10.0,
+            )
+            if self._reader_thread.is_alive():
+                LOG.warning(
+                    'Reader thread did not exit within '
+                    '10s timeout',
+                )
+            self._reader_thread = None
 
     # ----------------------------------------------------------
     # Run data persistence
