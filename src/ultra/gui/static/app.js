@@ -31,6 +31,8 @@
     await loadQuickRunDefaults();
     await loadStatus();
     connectWS();
+    initTabs();
+    initSidebar();
     initCharts();
   }
 
@@ -258,21 +260,131 @@
     });
   }
 
-  /* ==========================================================
+  /* ========================================================
    * Charts
-   * ==========================================================
+   * ========================================================
    * Sensorgram: peak wavelength (nm) vs time (s)
-   *   -- accumulates points over time
-   * Spectrum: power (dB) vs wavelength (nm)
-   *   -- replaces data each sweep (latest snapshot)
-   * ======================================================== */
+   * Spectrum:   power (dB) vs wavelength (nm)
+   * Both share a single tabbed container and a shared
+   * channel sidebar with 15 pre-built buttons.
+   * ====================================================== */
 
+  const NUM_CHANNELS = 15;
   const COLORS = [
     '#1F77B4', '#FF7F0E', '#2CA02C', '#D62728',
     '#9467BD', '#8C564B', '#E377C2', '#7F7F7F',
     '#BCBD22', '#17BECF', '#9EDAE5', '#FFBB78',
     '#98DF8A', '#FF9896', '#C5B0D5',
   ];
+
+  let activeTab = 'spectrum';
+  const channelVisible = new Array(NUM_CHANNELS)
+    .fill(true);
+  const chButtons = [];
+
+  /* ---------- Tabs ---------- */
+
+  function initTabs() {
+    document.querySelectorAll('.tab-btn')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          switchTab(btn.dataset.tab);
+        });
+      });
+  }
+
+  function switchTab(tab) {
+    activeTab = tab;
+    document.querySelectorAll('.tab-btn')
+      .forEach((b) => {
+        b.classList.toggle(
+          'active', b.dataset.tab === tab,
+        );
+      });
+
+    const spCanvas = $('#spectrum-canvas');
+    const sgCanvas = $('#sensorgram-canvas');
+    const tbSp = $('#toolbar-spectrum');
+    const tbSg = $('#toolbar-sensorgram');
+
+    if (tab === 'spectrum') {
+      spCanvas.style.display = '';
+      sgCanvas.style.display = 'none';
+      tbSp.hidden = false;
+      tbSg.hidden = true;
+    } else {
+      spCanvas.style.display = 'none';
+      sgCanvas.style.display = '';
+      tbSp.hidden = true;
+      tbSg.hidden = false;
+    }
+  }
+
+  /* ---------- Channel sidebar ---------- */
+
+  function initSidebar() {
+    const grid = $('#ch-grid');
+    for (let i = 0; i < NUM_CHANNELS; i++) {
+      const btn = document.createElement('button');
+      btn.className = 'ch-btn';
+      btn.textContent = '' + (i + 1);
+      btn.style.background =
+        COLORS[i % COLORS.length];
+      btn.addEventListener('click', () => {
+        toggleChannel(i);
+      });
+      grid.appendChild(btn);
+      chButtons.push(btn);
+    }
+
+    $('#ch-all').addEventListener('click', () => {
+      setAllChannels(true);
+    });
+    $('#ch-none').addEventListener('click', () => {
+      setAllChannels(false);
+    });
+  }
+
+  function toggleChannel(idx) {
+    channelVisible[idx] = !channelVisible[idx];
+    syncChannelVisibility(idx);
+  }
+
+  function setAllChannels(visible) {
+    for (let i = 0; i < NUM_CHANNELS; i++) {
+      channelVisible[i] = visible;
+    }
+    syncAllChannelVisibility();
+  }
+
+  function syncChannelVisibility(idx) {
+    const show = channelVisible[idx];
+    chButtons[idx].classList.toggle('off', !show);
+    applyVisibility(sgChart, idx, show);
+    applyVisibility(spChart, idx, show);
+    sgDirty = true;
+    spDirty = true;
+  }
+
+  function syncAllChannelVisibility() {
+    for (let i = 0; i < NUM_CHANNELS; i++) {
+      const show = channelVisible[i];
+      chButtons[i].classList.toggle('off', !show);
+      applyVisibility(sgChart, i, show);
+      applyVisibility(spChart, i, show);
+    }
+    sgDirty = true;
+    spDirty = true;
+  }
+
+  function applyVisibility(chart, chIdx, show) {
+    if (!chart) return;
+    const ds = chart.data.datasets[chIdx];
+    if (!ds) return;
+    const meta = chart.getDatasetMeta(chIdx);
+    meta.hidden = !show;
+    ds.hidden = !show;
+  }
 
   /* ---------- Sensorgram (time-series) ---------- */
   let sgChart = null;
@@ -330,6 +442,23 @@
         },
       },
     });
+
+    for (let i = 0; i < NUM_CHANNELS; i++) {
+      const color = COLORS[i % COLORS.length];
+      sgChart.data.datasets.push({
+        label: '' + (i + 1),
+        data: [],
+        borderColor: color,
+        borderWidth: 1.5,
+        pointRadius: 2,
+        pointBackgroundColor: color,
+        tension: 0,
+        yAxisID: 'yPeak',
+        hidden: false,
+        _rawKey: 'ch' + (i + 1),
+      });
+      sgRaw['ch' + (i + 1)] = [];
+    }
     bindSgControls();
   }
 
@@ -369,15 +498,13 @@
     elReset.onclick = () => sgChart.resetZoom();
 
     elClear.onclick = () => {
-      Object.keys(sgRaw).forEach(
-        (k) => delete sgRaw[k],
-      );
-      Object.keys(sgBaselines).forEach(
-        (k) => delete sgBaselines[k],
-      );
-      sgChart.data.datasets = [];
+      for (let i = 0; i < NUM_CHANNELS; i++) {
+        const key = 'ch' + (i + 1);
+        sgRaw[key] = [];
+        delete sgBaselines[key];
+        sgChart.data.datasets[i].data = [];
+      }
       sgChart.update('none');
-      $('#sg-channel-toggles').innerHTML = '';
     };
   }
 
@@ -418,61 +545,36 @@
     return best.y;
   }
 
-  function sgEnsureDataset(key, label, colorIdx) {
-    if (sgRaw[key]) return;
-    sgRaw[key] = [];
-    const color = COLORS[colorIdx % COLORS.length];
-    sgChart.data.datasets.push({
-      label: label,
-      data: sgRaw[key],
-      borderColor: color,
-      borderWidth: 1.5,
-      pointRadius: 2,
-      pointBackgroundColor: color,
-      tension: 0,
-      yAxisID: 'yPeak',
-      hidden: false,
-      _rawKey: key,
-    });
-    const dsIdx = sgChart.data.datasets.length - 1;
-    addChip(
-      '#sg-channel-toggles', sgChart,
-      key, label, color, dsIdx,
-    );
-  }
-
   function addPeakPoint(d) {
     if (sgFrozen) return;
     const chNum = d.channel || 1;
     const key = 'ch' + chNum;
-    const label = '' + chNum;
-    const colorIdx = (chNum - 1) % COLORS.length;
     const t = d.timestamp_s || 0;
     const wl = d.wavelength_nm;
     if (wl == null) return;
 
-    sgEnsureDataset(key, label, colorIdx);
     const pt = { x: t, y: wl };
+    if (!sgRaw[key]) sgRaw[key] = [];
     sgRaw[key].push(pt);
-    const ds = sgChart.data.datasets.find(
-      (s) => s._rawKey === key,
-    );
-    if (ds) {
-      if (sgAlignY) {
-        const ref = sgBaselines[key] ?? 0;
-        ds.data.push({ x: pt.x, y: pt.y - ref });
-      } else {
-        ds.data.push(pt);
-      }
+
+    const dsIdx = chNum - 1;
+    if (dsIdx < 0 || dsIdx >= NUM_CHANNELS) return;
+    const ds = sgChart.data.datasets[dsIdx];
+    if (!ds) return;
+
+    if (sgAlignY) {
+      const ref = sgBaselines[key] ?? 0;
+      ds.data.push({ x: pt.x, y: pt.y - ref });
+    } else {
+      ds.data.push(pt);
     }
     sgDirty = true;
   }
 
-  /* ---------- Spectrum (live sweep snapshot) ---------- */
+  /* ---------- Spectrum (live sweep) ---------- */
   let spChart = null;
   let spFrozen = false;
   let spDirty = false;
-  const spTogglesEl = () => $('#sp-channel-toggles');
 
   function initSpectrum() {
     const ctx = $('#spectrum-canvas')
@@ -524,6 +626,21 @@
         },
       },
     });
+
+    for (let i = 0; i < NUM_CHANNELS; i++) {
+      const color = COLORS[i % COLORS.length];
+      spChart.data.datasets.push({
+        label: '' + (i + 1),
+        data: [],
+        borderColor: color,
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0,
+        yAxisID: 'yDb',
+        hidden: false,
+        _rawKey: 'sp-ch' + (i + 1),
+      });
+    }
     bindSpControls();
   }
 
@@ -541,87 +658,27 @@
     elReset.onclick = () => spChart.resetZoom();
   }
 
-  let spChipsBuilt = false;
-
   function updateSpectrum(d) {
     if (spFrozen || !spChart) return;
     const wls = d.wavelengths;
     const curves = d.curves;
     if (!wls || !curves) return;
 
-    const chNums = Object.keys(curves)
-      .map(Number).sort((a, b) => a - b);
-
-    if (!spChipsBuilt && chNums.length) {
-      spChipsBuilt = true;
-      chNums.forEach((ch, idx) => {
-        const color =
-          COLORS[(ch - 1) % COLORS.length];
-        addChip(
-          '#sp-channel-toggles', spChart,
-          'sp-ch' + ch, '' + ch, color, idx,
-        );
-      });
-    }
-
-    while (
-      spChart.data.datasets.length < chNums.length
-    ) {
-      const idx = spChart.data.datasets.length;
-      const ch = chNums[idx];
-      const color =
-        COLORS[(ch - 1) % COLORS.length];
-      spChart.data.datasets.push({
-        label: '' + ch,
-        data: [],
-        borderColor: color,
-        borderWidth: 1,
-        pointRadius: 0,
-        tension: 0,
-        yAxisID: 'yDb',
-        hidden: false,
-        _rawKey: 'sp-ch' + ch,
-      });
-    }
-
-    chNums.forEach((ch, idx) => {
-      const ds = spChart.data.datasets[idx];
+    for (let i = 0; i < NUM_CHANNELS; i++) {
+      const ch = i + 1;
       const vals = curves[ch];
-      if (!vals) return;
+      const ds = spChart.data.datasets[i];
+      if (!ds) continue;
+      if (!vals) {
+        ds.data = [];
+        continue;
+      }
       ds.data = wls.map((w, j) => ({
         x: w,
         y: vals[j] != null ? vals[j] : NaN,
       }));
-    });
+    }
     spDirty = true;
-  }
-
-  /* ---------- Shared helpers ---------- */
-
-  function addChip(
-      containerSel, chart,
-      key, label, color, dsIdx,
-  ) {
-    const container = $(containerSel);
-    if (!container) return;
-    const chip = document.createElement('span');
-    chip.className = 'ch-chip';
-    chip.textContent = label;
-    chip.style.background = color;
-    chip.style.color = '#fff';
-    chip.dataset.key = key;
-    chip.dataset.idx = dsIdx;
-    chip.onclick = () => {
-      const idx = parseInt(chip.dataset.idx);
-      const meta = chart.getDatasetMeta(idx);
-      const ds = chart.data.datasets[idx];
-      const nowHidden = !meta.hidden;
-      meta.hidden = nowHidden;
-      ds.hidden = nowHidden;
-      chip.classList.toggle('hidden', nowHidden);
-      chart.update('none');
-    };
-    container.appendChild(chip);
   }
 
   /* ---------- Chart init + flush ---------- */
@@ -629,6 +686,7 @@
   function initCharts() {
     initSensorgram();
     initSpectrum();
+    syncAllChannelVisibility();
     setInterval(flushCharts, 500);
   }
 

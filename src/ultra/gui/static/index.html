@@ -84,53 +84,73 @@
       <div id="wells-grid"></div>
     </section>
 
-    <!-- Bottom area: full-width charts, 2/3 screen height -->
-    <section id="sensorgram-panel" class="panel chart-panel">
-      <h2>Sensorgram</h2>
-      <div class="chart-toolbar">
-        <label for="sg-start-x">Start X:</label>
-        <input type="number" id="sg-start-x" value="0"
-               step="1" min="0" title="X-axis start (s)">
-        <button id="sg-align-y" class="chart-btn"
-                title="Align Y: subtract baseline">
-          Align Y
-        </button>
-        <button id="sg-freeze" class="chart-btn"
-                title="Freeze: pause live updates">
-          Freeze
-        </button>
-        <button id="sg-reset-zoom" class="chart-btn"
-                title="Reset zoom / pan">
-          Reset
-        </button>
-        <button id="sg-clear" class="chart-btn"
-                title="Clear all chart data">
-          Clear
-        </button>
-      </div>
-      <div id="sg-channel-toggles" class="channel-toggles">
-      </div>
-      <div class="canvas-wrap">
-        <canvas id="sensorgram-canvas"></canvas>
-      </div>
-    </section>
-
-    <section id="spectrum-panel" class="panel chart-panel">
-      <h2>Spectrum</h2>
-      <div class="chart-toolbar">
-        <button id="sp-freeze" class="chart-btn"
-                title="Freeze: pause live updates">
-          Freeze
-        </button>
-        <button id="sp-reset-zoom" class="chart-btn"
-                title="Reset zoom / pan">
-          Reset
-        </button>
-      </div>
-      <div id="sp-channel-toggles" class="channel-toggles">
-      </div>
-      <div class="canvas-wrap">
-        <canvas id="spectrum-canvas"></canvas>
+    <!-- Bottom area: tabbed chart card, 2/3 height -->
+    <section id="chart-card" class="panel">
+      <div id="chart-body">
+        <div id="chart-main">
+          <div id="chart-header">
+            <div class="chart-tabs">
+              <button class="tab-btn active"
+                      data-tab="spectrum">
+                Spectrum
+              </button>
+              <button class="tab-btn"
+                      data-tab="sensorgram">
+                Sensorgram
+              </button>
+            </div>
+            <div id="toolbar-spectrum" class="chart-toolbar">
+              <button id="sp-freeze" class="chart-btn"
+                      title="Freeze: pause live updates">
+                Freeze
+              </button>
+              <button id="sp-reset-zoom" class="chart-btn"
+                      title="Reset zoom / pan">
+                Reset
+              </button>
+            </div>
+            <div id="toolbar-sensorgram"
+                 class="chart-toolbar" hidden>
+              <label for="sg-start-x">Start X:</label>
+              <input type="number" id="sg-start-x"
+                     value="0" step="1" min="0"
+                     title="X-axis start (s)">
+              <button id="sg-align-y" class="chart-btn"
+                      title="Align Y: subtract baseline">
+                Align Y
+              </button>
+              <button id="sg-freeze" class="chart-btn"
+                      title="Freeze: pause live updates">
+                Freeze
+              </button>
+              <button id="sg-reset-zoom" class="chart-btn"
+                      title="Reset zoom / pan">
+                Reset
+              </button>
+              <button id="sg-clear" class="chart-btn"
+                      title="Clear all chart data">
+                Clear
+              </button>
+            </div>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="spectrum-canvas"></canvas>
+            <canvas id="sensorgram-canvas"
+                    style="display:none"></canvas>
+          </div>
+        </div>
+        <aside id="channel-sidebar">
+          <h3>Toggle Curves</h3>
+          <div id="ch-grid"></div>
+          <div id="ch-actions">
+            <button id="ch-all" class="ch-action-btn">
+              All
+            </button>
+            <button id="ch-none" class="ch-action-btn">
+              None
+            </button>
+          </div>
+        </aside>
       </div>
     </section>
   </main>
