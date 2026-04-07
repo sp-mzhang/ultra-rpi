@@ -131,12 +131,72 @@ class CentrifugeRotateStep(StepExecutor):
 
     def execute(self, params, runner) -> bool:
         angle = params.get('angle_001deg', 0)
-        move_rpm = params.get('move_rpm', 1)
         r = runner.stm32.send_command(
             cmd={
                 'cmd': 'centrifuge_move_angle',
                 'angle_001deg': angle,
-                'move_rpm': move_rpm,
+                'move_rpm': runner.recipe.constants.get(
+                    'move_rpm', 1,
+                ),
+            },
+            timeout_s=120.0,
+        )
+        if not _ok(r):
+            return False
+        time.sleep(1.0)
+        return True
+
+
+@step_type('centrifuge_goto_serum')
+class CentrifugeGotoSerumStep(StepExecutor):
+    '''Rotate centrifuge to serum-access position.
+
+    Reads ``angle_open_initial_deg`` from recipe constants
+    (default 290).  Firmware derives the target angle as
+    open_init - 180 (i.e. 110 deg with the default).
+    '''
+
+    def execute(self, params, runner) -> bool:
+        consts = runner.recipe.constants
+        r = runner.stm32.send_command(
+            cmd={
+                'cmd': 'centrifuge_goto_serum',
+                'angle_open_initial_deg': consts.get(
+                    'angle_open_initial_deg', 290,
+                ),
+                'move_rpm': consts.get(
+                    'move_rpm', 1,
+                ),
+            },
+            timeout_s=120.0,
+        )
+        if not _ok(r):
+            return False
+        time.sleep(1.0)
+        return True
+
+
+@step_type('centrifuge_goto_pipette')
+class CentrifugeGotoPipetteStep(StepExecutor):
+    '''Rotate centrifuge to pipette-access position.
+
+    Reads ``angle_open_initial_deg`` and ``move_rpm``
+    from recipe constants.  Firmware derives the target
+    angle as open_init - 90 (i.e. 200 deg with default
+    290).
+    '''
+
+    def execute(self, params, runner) -> bool:
+        consts = runner.recipe.constants
+        r = runner.stm32.send_command(
+            cmd={
+                'cmd': 'centrifuge_goto_pipette',
+                'angle_open_initial_deg': consts.get(
+                    'angle_open_initial_deg', 290,
+                ),
+                'move_rpm': consts.get(
+                    'move_rpm', 1,
+                ),
             },
             timeout_s=120.0,
         )
@@ -185,6 +245,36 @@ class LidStep(StepExecutor):
             timeout_s=30.0,
         )
         return _ok(r)
+
+
+@step_type('move_to_location')
+class MoveToLocationStep(StepExecutor):
+    '''Move gantry XY to a well/port location.
+
+    Pure positioning command -- moves the gantry above
+    the target location without any pump operation.
+    Used to pre-position the tip before centrifuge
+    rotation (e.g. serum port access).
+    '''
+
+    def execute(self, params, runner) -> bool:
+        well = runner.tracker.get_well(params['well'])
+        if well is None:
+            LOG.error(
+                'move_to_location: unknown well ref',
+            )
+            return False
+        r = runner.stm32.send_command(
+            cmd={
+                'cmd': 'move_to_location',
+                'location_id': well.loc_id,
+            },
+            timeout_s=120.0,
+        )
+        if not _ok(r):
+            return False
+        time.sleep(0.5)
+        return True
 
 
 @step_type('tip_pick')
@@ -703,6 +793,161 @@ class TipMixStep(StepExecutor):
             cycles=params.get('cycles', 4),
             pull_vol_ul=params.get('pull_vol', 0),
         )
+
+
+@step_type('home_z')
+class HomeZStep(StepExecutor):
+    '''Home Z axis only (retract tip before rotation).'''
+
+    def execute(self, params, runner) -> bool:
+        r = runner.stm32.send_command_wait_done(
+            cmd={'cmd': 'home_z_axis'},
+            timeout_s=120.0,
+        )
+        return _ok(r)
+
+
+@step_type('well_dispense')
+class WellDispenseStep(StepExecutor):
+    '''Dispense into a well at the given location.
+
+    Used for targeted dispenses (e.g. serum to dilution
+    well, waste) where volume, speed, and blowout are
+    specified per-step rather than derived from a
+    reagent_transfer flow.
+    '''
+
+    def execute(self, params, runner) -> bool:
+        well = runner.tracker.get_well(params['well'])
+        if well is None:
+            LOG.error('well_dispense: unknown well ref')
+            return False
+        volume = params['volume']
+        speed = params.get('speed', 100.0)
+        blowout = params.get('blowout', True)
+        ok = runner.stm32.well_dispense_at(
+            loc_id=well.loc_id,
+            volume_ul=volume,
+            speed_ul_s=speed,
+            blowout=blowout,
+        )
+        if ok:
+            runner.tracker.update_well(
+                well.name, delta_ul=volume,
+                operation=f'disp {volume}uL',
+            )
+        return ok
+
+
+@step_type('smart_aspirate')
+class SmartAspirateStep(StepExecutor):
+    '''Smart-aspirate from a well with per-step overrides.
+
+    Uses LLD + air slug like reagent_transfer but only
+    performs the aspiration (no cart dispense). Used for
+    serum aspiration where dispensing is a separate step.
+    '''
+
+    def execute(self, params, runner) -> bool:
+        well = runner.tracker.get_well(params['well'])
+        if well is None:
+            LOG.error(
+                'smart_aspirate: unknown well ref',
+            )
+            return False
+        consts = runner.recipe.constants
+        volume = params['volume']
+        sa = runner.stm32.smart_aspirate_at(
+            loc_id=well.loc_id,
+            volume_ul=volume,
+            speed_ul_s=params.get(
+                'speed',
+                consts.get('aspirate_speed', 40.0),
+            ),
+            lld_threshold=params.get(
+                'lld_threshold',
+                consts.get('lld_threshold', 20),
+            ),
+            piston_reset=params.get(
+                'piston_reset', True,
+            ),
+            air_slug_ul=params.get(
+                'air_slug',
+                consts.get('air_slug_ul', 40),
+            ),
+            stream=params.get('stream', False),
+        )
+        if sa is None:
+            return False
+        runner.tracker.update_well(
+            well.name, delta_ul=-volume,
+            operation=f'asp {volume}uL',
+        )
+        return True
+
+
+@step_type('dilution_transfer')
+class DilutionTransferStep(StepExecutor):
+    '''Smart-aspirate from source, dispense to dest.
+
+    Combines smart_aspirate_at + well_dispense_at for
+    dilution steps (e.g. buffer to serum well). Differs
+    from reagent_transfer in that there is no cartridge
+    dispense -- liquid goes directly well-to-well.
+    '''
+
+    def execute(self, params, runner) -> bool:
+        source = runner.tracker.get_well(
+            params['source'],
+        )
+        dest = runner.tracker.get_well(params['dest'])
+        if source is None or dest is None:
+            LOG.error(
+                'dilution_transfer: unknown well ref',
+            )
+            return False
+
+        consts = runner.recipe.constants
+        volume = params['volume']
+
+        sa = runner.stm32.smart_aspirate_at(
+            loc_id=source.loc_id,
+            volume_ul=volume,
+            speed_ul_s=params.get(
+                'asp_speed',
+                consts.get('aspirate_speed', 40.0),
+            ),
+            lld_threshold=consts.get(
+                'lld_threshold', 20,
+            ),
+            piston_reset=True,
+            air_slug_ul=consts.get(
+                'air_slug_ul', 40,
+            ),
+            stream=params.get('stream', True),
+        )
+        if sa is None:
+            return False
+        runner.tracker.update_well(
+            source.name, delta_ul=-volume,
+            operation=f'asp {volume}uL',
+        )
+
+        ok = runner.stm32.well_dispense_at(
+            loc_id=dest.loc_id,
+            volume_ul=volume,
+            speed_ul_s=params.get(
+                'disp_speed',
+                consts.get('well_disp_speed', 100.0),
+            ),
+            blowout=params.get('blowout', True),
+        )
+        if ok:
+            runner.tracker.update_well(
+                dest.name, delta_ul=volume,
+                operation=f'disp {volume}uL',
+            )
+        return ok
 
 
 @step_type('home_all')

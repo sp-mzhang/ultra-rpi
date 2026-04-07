@@ -137,11 +137,20 @@ class STM32Mock:
             result['z_position'] = -8000
             result['time_ms'] = 500
             result['pressure_delta'] = 25
+        elif cmd_name == 'fan_get_status':
+            result['duty_pct'] = 50
+            result['rpm'] = 2400
+        elif cmd_name == 'temp_get_status':
+            result['board_temp_c'] = 35.0
+            result['ambient_temp_c'] = 25.0
+        elif cmd_name == 'read_z_drv':
+            result['z_position_usteps'] = 0
+            result['z_current_ma'] = 120
 
         if collect_pressure:
             result['_pressure_samples'] = [
                 {
-                    'timestamp_raw': i * 10,
+                    'timestamp_ms': i * 10,
                     'pressure': 500 + random.randint(
                         -5, 5,
                     ),

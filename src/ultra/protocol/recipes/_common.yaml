@@ -1,3 +1,11 @@
+defaults:
+  angle_open_initial_deg: 290
+  move_rpm: 1
+  aspirate_speed: 40.0
+  well_disp_speed: 100.0
+  lld_threshold: 20
+  default_cartridge_z_mm: -12.0
+
 centrifuge_phase:
   steps:
     - type: centrifuge_unlock
@@ -11,16 +19,13 @@ centrifuge_phase:
     - type: centrifuge_rotate
       label: Rotate 290 deg
       angle_001deg: 29000
-      move_rpm: 1
 
     - type: lift_move
-      label: Lower lift to 18mm
-      target_mm: 18.0
+      label: Lower lift to 15mm
+      target_mm: 15.0
 
-    - type: centrifuge_rotate
-      label: Rotate 200 deg
-      angle_001deg: 20000
-      move_rpm: 1
+    - type: centrifuge_goto_pipette
+      label: Rotate to pipette position
 
 lock_phase:
   steps:

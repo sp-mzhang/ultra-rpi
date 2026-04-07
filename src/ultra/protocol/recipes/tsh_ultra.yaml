@@ -1,31 +1,31 @@
 name: TSH Ultra
 description: >
-  Full TSH blood-analysis protocol. 26 steps across 3 phases:
-  centrifuge, pipetting (14 reagent transfers including 2
-  back-and-forth), and final lock.
+  Full TSH blood-analysis protocol across 3 phases:
+  centrifuge separation, serum-prep dilution + 14 reagent
+  transfers (including 2 back-and-forth), and final lock.
 
 constants:
-  aspirate_speed: 40.0
-  well_disp_speed: 100.0
-  lld_threshold: 20
   air_slug_ul: 40
-  air_slug_hydro: 50
   reasp_ul: 12
   cart_disp_vel: 1.5
-  default_cartridge_z_mm: -12.0
 
 wells:
-  S1:   {loc: 21, reagent: Hydrophilic, volume_ul: 110}
-  S2:   {loc: 22, reagent: PBS, volume_ul: 45}
-  M1:   {loc: 33, reagent: DI Water, volume_ul: 210}
-  M3:   {loc: 35, reagent: PBST, volume_ul: 190}
-  M5:   {loc: 37, reagent: Sample Buffer, volume_ul: 270}
-  M7:   {loc: 39, reagent: Sample Buffer, volume_ul: 240}
-  M9:   {loc: 41, reagent: Sample Dilution, volume_ul: 190}
-  M11:  {loc: 43, reagent: TSH Antibody, volume_ul: 180}
-  M13:  {loc: 45, reagent: Detection Buffer, volume_ul: 270}
-  M15:  {loc: 47, reagent: SA-GNP, volume_ul: 200}
-  PP4:  {loc: 11, reagent: Cartridge, volume_ul: 0}
+  S1:    {loc: 21, reagent: Hydrophilic, volume_ul: 110}
+  S2:    {loc: 22, reagent: PBS, volume_ul: 45}
+  S3:    {loc: 23, reagent: DilutionBuf1, volume_ul: 180}
+  S4:    {loc: 24, reagent: DilutionBuf2, volume_ul: 180}
+  M1:    {loc: 33, reagent: DI Water, volume_ul: 210}
+  M2:    {loc: 34, reagent: Waste, volume_ul: 0}
+  M3:    {loc: 35, reagent: PBST, volume_ul: 190}
+  M4:    {loc: 36, reagent: SerumDilution, volume_ul: 0}
+  M5:    {loc: 37, reagent: Sample Buffer, volume_ul: 270}
+  M7:    {loc: 39, reagent: Sample Buffer, volume_ul: 240}
+  M9:    {loc: 41, reagent: Sample Dilution, volume_ul: 190}
+  M11:   {loc: 43, reagent: TSH Antibody, volume_ul: 180}
+  M13:   {loc: 45, reagent: Detection Buffer, volume_ul: 270}
+  M15:   {loc: 47, reagent: SA-GNP, volume_ul: 200}
+  SERUM: {loc: 18, reagent: Serum, volume_ul: 50}
+  PP4:   {loc: 11, reagent: Cartridge, volume_ul: 0}
 
 phases:
   - name: A
@@ -38,6 +38,90 @@ phases:
       - type: lid
         label: Open lid
         open: true
+
+      # --- Serum preparation (Tips 1-3) ---
+
+      - type: tip_pick
+        label: Pick Tip 1
+        tip_id: 1
+
+      # Dilution 1: S3 -> M4, 180 uL
+      - type: dilution_transfer
+        label: Dilution 1 (S3 -> M4)
+        source: S3
+        dest: M4
+        volume: 180
+        asp_speed: 80.0
+
+      # Dilution 2: S4 -> M4, 180 uL
+      - type: dilution_transfer
+        label: Dilution 2 (S4 -> M4)
+        source: S4
+        dest: M4
+        volume: 180
+        asp_speed: 80.0
+
+      - type: tip_swap
+        label: Tip swap 1 -> 2
+        from_id: 1
+        to_id: 2
+
+      # Move gantry to serum port before rotation
+      - type: move_to_location
+        label: Move to serum port
+        well: SERUM
+
+      - type: centrifuge_goto_serum
+        label: Rotate to serum position
+
+      # Aspirate 50 uL serum from serum port
+      - type: smart_aspirate
+        label: Aspirate serum
+        well: SERUM
+        volume: 50
+        speed: 75.0
+        air_slug: 50
+        piston_reset: true
+
+      - type: home_z
+        label: Home Z after serum aspirate
+
+      - type: centrifuge_goto_pipette
+        label: Rotate to pipette position
+
+      # Dispense 40 uL serum to M4 (no blowout)
+      - type: well_dispense
+        label: Dispense serum to M4
+        well: M4
+        volume: 40
+        speed: 20.0
+        blowout: false
+
+      # Dispense 10 uL waste to M2
+      - type: well_dispense
+        label: Waste to M2
+        well: M2
+        volume: 10
+        speed: 100.0
+        blowout: true
+
+      - type: tip_swap
+        label: Tip swap 2 -> 3
+        from_id: 2
+        to_id: 3
+
+      - type: tip_mix
+        label: Mix M4 (serum dilution)
+        well: M4
+        mix_vol: 150
+        speed: 100.0
+        cycles: 6
+
+      - type: tip_return
+        label: Return Tip 3
+        tip_id: 3
+
+      # --- Main reagent transfers (Tips 4-5) ---
 
       - type: tip_pick
         label: Pick Tip 4

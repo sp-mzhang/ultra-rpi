@@ -6,15 +6,11 @@ description: >
   salt_protocol_steps.py (Salt_Step_Dilution_Test2).
 
 constants:
-  aspirate_speed: 40.0
-  well_disp_speed: 100.0
-  lld_threshold: 20
   air_slug_ul: 50
   reasp_ul: 15
   chip_disp_vel: 1.0
   mix_cycles: 4
   mix_vol: 100
-  default_cartridge_z_mm: -12.0
 
 wells:
   # Source wells (DI water / reagent reservoirs)

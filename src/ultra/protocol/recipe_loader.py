@@ -60,11 +60,13 @@ def load_recipe(name: str) -> Recipe:
 
     recipe_name = raw.get('name', name)
     description = raw.get('description', '')
-    constants = raw.get('constants', {})
     wells_raw = raw.get('wells', {})
     phases_raw = raw.get('phases', [])
 
     common = _load_common()
+
+    defaults = common.get('defaults', {})
+    constants = {**defaults, **raw.get('constants', {})}
 
     phases: list[PhaseDef] = []
     total_steps = 0

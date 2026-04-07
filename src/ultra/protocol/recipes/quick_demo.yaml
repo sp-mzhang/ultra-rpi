@@ -1,24 +1,25 @@
 name: Quick Demo
 description: >
   Hardware validation protocol exercising every major
-  subsystem in ~3-5 minutes. Uses demo reagent wells
-  for basic pipetting, transfers, and tip handling.
+  subsystem in ~5 minutes. Includes centrifuge, serum
+  pickup with dilution, reagent transfers to chip, and
+  well-to-well transfer.
 
 constants:
-  aspirate_speed: 40.0
-  well_disp_speed: 100.0
-  lld_threshold: 20
   air_slug_ul: 40
   reasp_ul: 12
   cart_disp_vel: 1.5
-  default_cartridge_z_mm: -12.0
 
 wells:
-  S1:   {loc: 21, reagent: DemoReagent1, volume_ul: 80}
-  M1:   {loc: 33, reagent: DemoReagent2, volume_ul: 100}
-  M3:   {loc: 35, reagent: DemoTransferSrc, volume_ul: 80}
-  M5:   {loc: 37, reagent: DemoTransferDst, volume_ul: 0}
-  PP4:  {loc: 11, reagent: Cartridge, volume_ul: 0}
+  S1:    {loc: 21, reagent: DemoReagent1, volume_ul: 80}
+  S3:    {loc: 23, reagent: DilutionBuf, volume_ul: 180}
+  M1:    {loc: 33, reagent: DemoReagent2, volume_ul: 100}
+  M2:    {loc: 34, reagent: Waste, volume_ul: 0}
+  M3:    {loc: 35, reagent: DemoTransferSrc, volume_ul: 80}
+  M4:    {loc: 36, reagent: SerumDilution, volume_ul: 0}
+  M5:    {loc: 37, reagent: DemoTransferDst, volume_ul: 0}
+  SERUM: {loc: 18, reagent: Serum, volume_ul: 50}
+  PP4:   {loc: 11, reagent: Cartridge, volume_ul: 0}
 
 phases:
   - name: A
@@ -32,6 +33,82 @@ phases:
         label: Open lid
         open: true
 
+      # --- Serum preparation (Tips 1-3) ---
+
+      - type: tip_pick
+        label: Pick Tip 1
+        tip_id: 1
+
+      # Dilution: S3 -> M4, 180 uL
+      - type: dilution_transfer
+        label: Dilution (S3 -> M4)
+        source: S3
+        dest: M4
+        volume: 180
+        asp_speed: 80.0
+
+      - type: tip_swap
+        label: Tip swap 1 -> 2
+        from_id: 1
+        to_id: 2
+
+      # Move gantry to serum port before rotation
+      - type: move_to_location
+        label: Move to serum port
+        well: SERUM
+
+      - type: centrifuge_goto_serum
+        label: Rotate to serum position
+
+      # Aspirate 50 uL serum from serum port
+      - type: smart_aspirate
+        label: Aspirate serum
+        well: SERUM
+        volume: 50
+        speed: 75.0
+        air_slug: 50
+        piston_reset: true
+
+      - type: home_z
+        label: Home Z after serum aspirate
+
+      - type: centrifuge_goto_pipette
+        label: Rotate to pipette position
+
+      # Dispense 40 uL serum to M4 (no blowout)
+      - type: well_dispense
+        label: Dispense serum to M4
+        well: M4
+        volume: 40
+        speed: 20.0
+        blowout: false
+
+      # Dispense 10 uL waste to M2
+      - type: well_dispense
+        label: Waste to M2
+        well: M2
+        volume: 10
+        speed: 100.0
+        blowout: true
+
+      - type: tip_swap
+        label: Tip swap 2 -> 3
+        from_id: 2
+        to_id: 3
+
+      - type: tip_mix
+        label: Mix M4 (serum dilution)
+        well: M4
+        mix_vol: 150
+        speed: 100.0
+        cycles: 6
+
+      - type: tip_return
+        label: Return Tip 3
+        tip_id: 3
+
+      # --- Main reagent transfers (Tips 4-5) ---
+
       - type: tip_pick
         label: Pick Tip 4
         tip_id: 4
@@ -39,6 +116,15 @@ phases:
       - type: lld
         label: Pre-flight LLD
         threshold: 20
+
+      # Cart dispense serum dilution from M4
+      - type: reagent_transfer
+        label: SerumDilution
+        source: M4
+        target: PP4
+        asp_vol: 180
+        cart_vol: 150
+        cart_vel: 0.5
 
       - type: reagent_transfer
         label: DemoReagent1

@@ -25,149 +25,152 @@ MAX_DATA_LEN = 255
 # =============================================================================
 
 # System (0x80xx)
-CMD_PING = 0x8001
-CMD_GET_STATUS = 0x8002
-CMD_GET_VERSION = 0x8003
-CMD_GET_FLAGS = 0x8004
-CMD_GET_POSITION = 0x8005
-CMD_GET_SENSORS = 0x8006
-CMD_RESET = 0x8007
-CMD_SET_LOG_LEVEL = 0x8008
+CMD_PING            = 0x8001
+CMD_GET_STATUS      = 0x8002
+CMD_GET_VERSION     = 0x8003
+CMD_GET_FLAGS       = 0x8004
+CMD_GET_POSITION    = 0x8005
+CMD_GET_SENSORS     = 0x8006
+CMD_RESET           = 0x8007
+CMD_SET_LOG_LEVEL   = 0x8008
 
 # State control (0x81xx)
-CMD_SET_STATE = 0x8101
-CMD_SET_CTRL_MODE = 0x8102
-CMD_START_PROTOCOL = 0x8103
-CMD_ABORT = 0x8104
-CMD_PAUSE = 0x8105
-CMD_RESUME = 0x8106
+CMD_SET_STATE       = 0x8101
+CMD_SET_CTRL_MODE   = 0x8102
+CMD_START_PROTOCOL  = 0x8103
+CMD_ABORT           = 0x8104
+CMD_PAUSE           = 0x8105
+CMD_RESUME          = 0x8106
 
 # Motion (0x82xx)
-CMD_HOME_ALL = 0x8201
-CMD_HOME_GANTRY = 0x8202
-CMD_HOME_X_AXIS = 0x8203
-CMD_HOME_Z_AXIS = 0x8204
-CMD_HOME_Y_AXIS = 0x8208
+CMD_HOME_ALL        = 0x8201
+CMD_HOME_GANTRY     = 0x8202
+CMD_HOME_X_AXIS     = 0x8203
+CMD_HOME_Z_AXIS     = 0x8204
+CMD_HOME_Y_AXIS     = 0x8208
 CMD_GET_GANTRY_STATUS = 0x8205
-CMD_Z_TEST_GPIO = 0x8206
-CMD_MOVE_GANTRY = 0x8207
-CMD_MOVE_Z_AXIS = 0x8209
-CMD_MOVE_TO_WELL = 0x820A
-CMD_TH_POWER_EN = 0x820B
-CMD_MOVE_TO_LOCATION = 0x820C
-CMD_SET_LOC_CENTRE = 0x820D
-CMD_SET_LOC_OFFSET = 0x820E
-CMD_TIP_SWAP = 0x820F
-CMD_LID_MOVE = 0x8210
+CMD_Z_TEST_GPIO     = 0x8206
+CMD_MOVE_GANTRY     = 0x8207
+CMD_MOVE_Z_AXIS     = 0x8209
+CMD_MOVE_TO_WELL        = 0x820A
+CMD_TH_POWER_EN         = 0x820B
+CMD_MOVE_TO_LOCATION    = 0x820C
+CMD_SET_LOC_CENTRE      = 0x820D
+CMD_SET_LOC_OFFSET      = 0x820E
+CMD_TIP_SWAP            = 0x820F
+CMD_LID_MOVE            = 0x8210
+CMD_READ_Z_DRV          = 0x8211
 
 # Lift stepper (0x8Bxx)
-CMD_LIFT_HOME = 0x8B01
-CMD_LIFT_STOP = 0x8B02
-CMD_LIFT_MOVE = 0x8B03
-CMD_LIFT_STATUS = 0x8B04
-CMD_LIFT_MOVE_TOP = 0x8B05
+CMD_LIFT_HOME       = 0x8B01
+CMD_LIFT_STOP       = 0x8B02
+CMD_LIFT_MOVE       = 0x8B03
+CMD_LIFT_STATUS     = 0x8B04
+CMD_LIFT_MOVE_TOP   = 0x8B05
 
 # Pump basic (0x83xx)
-CMD_PUMP_ASPIRATE = 0x8301
-CMD_PUMP_DISPENSE = 0x8302
-CMD_PUMP_PRIME = 0x8303
-CMD_PUMP_BLOWOUT = 0x8304
+CMD_PUMP_ASPIRATE   = 0x8301
+CMD_PUMP_DISPENSE   = 0x8302
+CMD_PUMP_PRIME      = 0x8303
+CMD_PUMP_BLOWOUT    = 0x8304
 
 # Pump advanced (0x84xx)
-CMD_PUMP_INIT = 0x8401
-CMD_PUMP_SET_RES = 0x8402
-CMD_PUMP_SET_GAIN = 0x8403
-CMD_PUMP_MOVE_ABS = 0x8404
-CMD_PUMP_EN_STREAM = 0x8405
-CMD_PUMP_WAIT_IDLE = 0x8406
+CMD_PUMP_INIT       = 0x8401
+CMD_PUMP_SET_RES    = 0x8402
+CMD_PUMP_SET_GAIN   = 0x8403
+CMD_PUMP_MOVE_ABS   = 0x8404
+CMD_PUMP_EN_STREAM  = 0x8405
+CMD_PUMP_WAIT_IDLE  = 0x8406
 CMD_PUMP_GET_STATUS = 0x8407
-CMD_PUMP_RAW = 0x8408
-CMD_PUMP_TEST_MOVE = 0x8409
-CMD_PUMP_LLD_START = 0x840A
-CMD_PUMP_LLD_STOP = 0x840B
+CMD_PUMP_RAW        = 0x8408
+CMD_PUMP_TEST_MOVE  = 0x8409
+CMD_PUMP_LLD_START  = 0x840A
+CMD_PUMP_LLD_STOP   = 0x840B
 CMD_PUMP_PISTON_RST = 0x840C
 CMD_PUMP_STREAM_TST = 0x840D
 
 # Centrifuge (0x85xx)
-CMD_CFUGE_START = 0x8501
-CMD_CFUGE_STOP = 0x8502
-CMD_CFUGE_ROCK = 0x8503
-CMD_CFUGE_STATUS = 0x8504
+CMD_CFUGE_START      = 0x8501
+CMD_CFUGE_STOP       = 0x8502
+CMD_CFUGE_ROCK       = 0x8503
+CMD_CFUGE_STATUS     = 0x8504
 CMD_CFUGE_MOVE_ANGLE = 0x8505
-CMD_CFUGE_HOME = 0x8506
-CMD_CFUGE_BLDC_CMD = 0x8507
-CMD_CFUGE_POWER = 0x8508
-CMD_CFUGE_UNLOCK = 0x8509
-CMD_CFUGE_LOCK = 0x850A
-CMD_CFUGE_REVERSE = 0x850B
+CMD_CFUGE_HOME       = 0x8506
+CMD_CFUGE_BLDC_CMD   = 0x8507
+CMD_CFUGE_POWER      = 0x8508
+CMD_CFUGE_UNLOCK     = 0x8509
+CMD_CFUGE_LOCK       = 0x850A
+CMD_CFUGE_REVERSE    = 0x850B
+CMD_CFUGE_GOTO_SERUM   = 0x850C
+CMD_CFUGE_GOTO_PIPETTE = 0x850D
 
 # BLDC driver command IDs (for use with CMD_CFUGE_BLDC_CMD)
-BLDC_GET_STATE = 0x0001
+BLDC_GET_STATE         = 0x0001
 BLDC_GET_ENCODER_ALIGN = 0x0002
-BLDC_GET_VBUS = 0x0003
-BLDC_GET_TEMP = 0x0004
-BLDC_GET_ERROR = 0x0005
-BLDC_CLEAR_ERROR = 0x0006
-BLDC_GET_RPM = 0x0007
-BLDC_GET_ANGLE = 0x0008
-BLDC_GET_TARGET_RPM = 0x0009
-BLDC_SET_TARGET_RPM = 0x000A
-BLDC_GET_ALIGN_ANGLE = 0x000B
-BLDC_SET_ALIGN_ANGLE = 0x000C
-BLDC_GET_AUTO_ALIGN = 0x000D
-BLDC_SET_AUTO_ALIGN = 0x000E
-BLDC_START_MOTOR = 0x0010
-BLDC_STOP_MOTOR = 0x0011
-BLDC_START_ALIGNMENT = 0x0012
-BLDC_ENCODER_ALIGN = 0x0013
-BLDC_GET_POS_HOLD = 0x0014
-BLDC_SET_POS_HOLD = 0x0015
+BLDC_GET_VBUS          = 0x0003
+BLDC_GET_TEMP          = 0x0004
+BLDC_GET_ERROR         = 0x0005
+BLDC_CLEAR_ERROR       = 0x0006
+BLDC_GET_RPM           = 0x0007
+BLDC_GET_ANGLE         = 0x0008
+BLDC_GET_TARGET_RPM    = 0x0009
+BLDC_SET_TARGET_RPM    = 0x000A
+BLDC_GET_ALIGN_ANGLE   = 0x000B
+BLDC_SET_ALIGN_ANGLE   = 0x000C
+BLDC_GET_AUTO_ALIGN    = 0x000D
+BLDC_SET_AUTO_ALIGN    = 0x000E
+BLDC_START_MOTOR       = 0x0010
+BLDC_STOP_MOTOR        = 0x0011
+BLDC_START_ALIGNMENT   = 0x0012
+BLDC_ENCODER_ALIGN     = 0x0013
+BLDC_GET_POS_HOLD      = 0x0014
+BLDC_SET_POS_HOLD      = 0x0015
 
 # V1.01/V1.02 position-hold tuning commands
-BLDC_GET_POS_DEV_THRESH = 0x0016  # uint32, 0.01 deg
-BLDC_SET_POS_DEV_THRESH = 0x0017
+BLDC_GET_POS_DEV_THRESH    = 0x0016  # uint32, 0.01 deg
+BLDC_SET_POS_DEV_THRESH    = 0x0017
 BLDC_GET_POS_CTRL_MAX_TIME = 0x0018  # uint32, ms
 BLDC_SET_POS_CTRL_MAX_TIME = 0x0019
-BLDC_GET_SOFT_CURR_LIMIT = 0x001A  # uint16, 0.1 A
-BLDC_SET_SOFT_CURR_LIMIT = 0x001B
-BLDC_GET_STOP_POS_THRESH = 0x001C  # uint32, 0.01 deg
-BLDC_SET_STOP_POS_THRESH = 0x001D
-BLDC_GET_STOP_DETECT_TIME = 0x001E  # uint32, ms
-BLDC_SET_STOP_DETECT_TIME = 0x001F
+BLDC_GET_SOFT_CURR_LIMIT   = 0x001A  # uint16, 0.1 A
+BLDC_SET_SOFT_CURR_LIMIT   = 0x001B
+BLDC_GET_STOP_POS_THRESH   = 0x001C  # uint32, 0.01 deg
+BLDC_SET_STOP_POS_THRESH   = 0x001D
+BLDC_GET_STOP_DETECT_TIME  = 0x001E  # uint32, ms
+BLDC_SET_STOP_DETECT_TIME  = 0x001F
 
-BLDC_GET_MAX_CURRENT = 0x0050  # uint16, 0.1 A (V1.03)
-BLDC_SET_MAX_CURRENT = 0x0051
+BLDC_GET_MAX_CURRENT       = 0x0050  # uint16, 0.1 A (V1.03)
+BLDC_SET_MAX_CURRENT       = 0x0051
 
-BLDC_NOTIFY_ERROR = 0x2040  # async unsolicited error from controller
+BLDC_NOTIFY_ERROR      = 0x2040  # async unsolicited error from controller
 
-BLDC_GET_SPEED_PID = 0x0020
-BLDC_SET_SPEED_PID = 0x0021
-BLDC_GET_POS_PID = 0x0022
-BLDC_SET_POS_PID = 0x0023
-BLDC_GET_TRIGGER_INFO = 0x0030
-BLDC_SET_TRIGGER_EN = 0x0031
-BLDC_SET_TRIGGER_POL = 0x0032
+BLDC_GET_SPEED_PID     = 0x0020
+BLDC_SET_SPEED_PID     = 0x0021
+BLDC_GET_POS_PID       = 0x0022
+BLDC_SET_POS_PID       = 0x0023
+BLDC_GET_TRIGGER_INFO  = 0x0030
+BLDC_SET_TRIGGER_EN    = 0x0031
+BLDC_SET_TRIGGER_POL   = 0x0032
 BLDC_SET_TRIGGER_WIDTH = 0x0033
-BLDC_SET_TRIGGER_POS = 0x0034
+BLDC_SET_TRIGGER_POS   = 0x0034
 
 # Door (0x86xx)
-CMD_DOOR_OPEN = 0x8601
-CMD_DOOR_CLOSE = 0x8602
-CMD_DOOR_STATUS = 0x8603
+CMD_DOOR_OPEN       = 0x8601
+CMD_DOOR_CLOSE      = 0x8602
+CMD_DOOR_STATUS     = 0x8603
 
 # Tip (0x87xx)
-CMD_TIP_PICKUP = 0x8701
-CMD_TIP_EJECT = 0x8702
+# TIP_PICKUP (0x8701) and TIP_EJECT (0x8702) removed — collided with
+# FAN_SET_DUTY / FAN_GET_STATUS.  Use gantry_tip_swap (0x820F) instead.
 
 # Configuration (0x88xx)
-CMD_SET_SPEED = 0x8801
-CMD_SET_ACCEL = 0x8802
-CMD_CALIBRATE = 0x8803
+CMD_SET_SPEED       = 0x8801
+CMD_SET_ACCEL       = 0x8802
+CMD_CALIBRATE       = 0x8803
 
 # Well geometry IDs (must match well_id_t in well_geometry.h)
 WELL_ID_SMALL = 0    # Ultra small well (~452 µL, area ≈5–30 mm²)
 WELL_ID_LARGE = 1    # Ultra large well (~262 µL, area ≈3–52 mm²)
-WELL_ID_AUTO = 0xFF  # Firmware auto-detects from last gantry location
+WELL_ID_AUTO  = 0xFF # Firmware auto-detects from last gantry location
 # Small = narrower/taller, Large = wider/shorter
 
 # Gantry Z axis physical bottom limit (µsteps, must match GANTRY_Z_MIN_POS
@@ -176,165 +179,179 @@ WELL_ID_AUTO = 0xFF  # Firmware auto-detects from last gantry location
 GANTRY_Z_MIN_POS = -15625
 
 # Liquid handling (0x8Axx)
-CMD_LLD_PERFORM = 0x8A01
-CMD_LLF_START = 0x8A02
-CMD_LLF_STOP = 0x8A03
-CMD_SMART_ASPIRATE = 0x8A04
-CMD_WELL_DISPENSE = 0x8A06
+CMD_LLD_PERFORM     = 0x8A01
+CMD_LLF_START       = 0x8A02
+CMD_LLF_STOP        = 0x8A03
+CMD_SMART_ASPIRATE  = 0x8A04
+CMD_WELL_DISPENSE   = 0x8A06
 CMD_CART_DISPENSE_BF = 0x8A07
-CMD_CART_DISPENSE = 0x8A08
-CMD_TIP_MIX = 0x8A09
-
-# Air heater (0x8Dxx)
-CMD_AIR_HEATER_SET_DUTY = 0x8D01
-CMD_AIR_HEATER_SET_EN = 0x8D02
-CMD_AIR_HEATER_SET_FAN = 0x8D03
-CMD_AIR_HEATER_GET_STATUS = 0x8D04
-CMD_AIR_HEATER_SET_CTRL = 0x8D05
-RSP_AIR_HEATER_STATUS = 0x9D04
-
-# Accelerometer (0x8Exx)
-CMD_ACCEL_GET_STATUS = 0x8E01
-RSP_ACCEL_STATUS = 0x9E01
+CMD_CART_DISPENSE   = 0x8A08
+CMD_TIP_MIX         = 0x8A09
 
 # LED / UI board (0x8Cxx)
-CMD_LED_SET_PIXEL = 0x8C01
-CMD_LED_SET_BUTTON = 0x8C02
+CMD_LED_SET_PIXEL   = 0x8C01
+CMD_LED_SET_BUTTON  = 0x8C02
 CMD_LED_SET_PIXEL_OFF = 0x8C04
 CMD_LED_SET_ALL_OFF = 0x8C05
 CMD_LED_SET_PATTERN = 0x8C06
-CMD_GET_PRESS_DATA = 0x8A05
+CMD_GET_PRESS_DATA  = 0x8A05
+
+# Air heater (0x8Dxx)
+CMD_AIR_HEATER_SET_DUTY   = 0x8D01
+CMD_AIR_HEATER_SET_EN     = 0x8D02
+CMD_AIR_HEATER_SET_FAN    = 0x8D03
+CMD_AIR_HEATER_GET_STATUS = 0x8D04
+CMD_AIR_HEATER_SET_CTRL   = 0x8D05
+RSP_AIR_HEATER_STATUS     = 0x9D04
+
+# System fans (0x87xx)
+CMD_FAN_SET_DUTY          = 0x8701
+CMD_FAN_GET_STATUS        = 0x8702
+RSP_FAN_STATUS            = 0x9702
+
+# Accelerometer (0x8Exx)
+CMD_ACCEL_GET_STATUS      = 0x8E01
+RSP_ACCEL_STATUS          = 0x9E01
+
+# Temperature sensors — EXT_NTC1/2, INT_NTC (0x91xx)
+# Response wire ID = 0x9101 + 0x1000 = 0xA101 (not treated as async).
+CMD_TEMP_GET_STATUS       = 0x9101
+RSP_TEMP_STATUS           = 0xA101
 
 # Test (0x8Fxx)
 CMD_TEST_INIT_FLAGS = 0x8F01
-CMD_TEST_SET_FLAG = 0x8F02
-CMD_TEST_GET_FLAGS = 0x8F03
+CMD_TEST_SET_FLAG   = 0x8F02
+CMD_TEST_GET_FLAGS  = 0x8F03
 CMD_TEST_TRANSITION = 0x8F04
 
 # Specific response IDs for custom result frames
-RSP_LLD_PERFORM = 0x9A01
-RSP_SMART_ASPIRATE = 0x9A04
-RSP_WELL_DISPENSE = 0x9A06
+RSP_LLD_PERFORM      = 0x9A01
+RSP_SMART_ASPIRATE   = 0x9A04
+RSP_WELL_DISPENSE    = 0x9A06
 RSP_CART_DISPENSE_BF = 0x9A07
-RSP_CART_DISPENSE = 0x9A08
+RSP_CART_DISPENSE    = 0x9A08
 
 # Generic error response
-RSP_ERROR = 0x9FFF
+RSP_ERROR           = 0x9FFF
 
 # Async messages (0xA0xx)
-MSG_STATUS = 0xA001
-MSG_EVENT = 0xA002
-MSG_TELEMETRY = 0xA003
-MSG_PRESSURE = 0xA004
-MSG_LOG = 0xA005
-MSG_ERROR = 0xA006
-MSG_PUMP_DONE = 0xA007
-MSG_GANTRY_DONE = 0xA008
-MSG_LIFT_DONE = 0xA009
+MSG_STATUS          = 0xA001
+MSG_EVENT           = 0xA002
+MSG_TELEMETRY       = 0xA003
+MSG_PRESSURE        = 0xA004
+MSG_LOG             = 0xA005
+MSG_ERROR           = 0xA006
+MSG_PUMP_DONE       = 0xA007
+MSG_GANTRY_DONE     = 0xA008
+MSG_LIFT_DONE       = 0xA009
 
 # Pump transfer flags
 PUMP_FLAG_STREAMING = 0x01
-PUMP_FLAG_WAIT = 0x02
-PUMP_FLAG_VALIDATE = 0x04
+PUMP_FLAG_WAIT      = 0x02
+PUMP_FLAG_VALIDATE  = 0x04
 PUMP_FLAG_INTEGRATE = 0x08
 
 # Command name to ID mapping for high-level API
 CMD_NAME_TO_ID = {
-    'ping': CMD_PING,
-    'get_status': CMD_GET_STATUS,
-    'get_version': CMD_GET_VERSION,
-    'get_flags': CMD_GET_FLAGS,
-    'get_position': CMD_GET_POSITION,
-    'get_sensors': CMD_GET_SENSORS,
-    'reset': CMD_RESET,
-    'set_log_level': CMD_SET_LOG_LEVEL,
-    'set_state': CMD_SET_STATE,
-    'set_control_mode': CMD_SET_CTRL_MODE,
-    'start_protocol': CMD_START_PROTOCOL,
-    'abort': CMD_ABORT,
-    'pause': CMD_PAUSE,
-    'resume': CMD_RESUME,
-    'home_all': CMD_HOME_ALL,
-    'home_gantry': CMD_HOME_GANTRY,
-    'home_x_axis': CMD_HOME_X_AXIS,
-    'home_y_axis': CMD_HOME_Y_AXIS,
-    'home_z_axis': CMD_HOME_Z_AXIS,
-    'get_gantry_status': CMD_GET_GANTRY_STATUS,
-    'z_axis_test_gpio': CMD_Z_TEST_GPIO,
-    'move_gantry': CMD_MOVE_GANTRY,
-    'move_z_axis': CMD_MOVE_Z_AXIS,
-    'move_to_well': CMD_MOVE_TO_WELL,
-    'th_power_en': CMD_TH_POWER_EN,
-    'move_to_location': CMD_MOVE_TO_LOCATION,
-    'set_loc_centre': CMD_SET_LOC_CENTRE,
-    'set_loc_offset': CMD_SET_LOC_OFFSET,
-    'gantry_tip_swap': CMD_TIP_SWAP,
-    'lid_move': CMD_LID_MOVE,
-    'lift_home': CMD_LIFT_HOME,
-    'lift_stop': CMD_LIFT_STOP,
-    'lift_move': CMD_LIFT_MOVE,
-    'lift_status': CMD_LIFT_STATUS,
-    'lift_move_top': CMD_LIFT_MOVE_TOP,
-    'pump_aspirate': CMD_PUMP_ASPIRATE,
-    'pump_dispense': CMD_PUMP_DISPENSE,
-    'pump_prime': CMD_PUMP_PRIME,
-    'pump_blowout': CMD_PUMP_BLOWOUT,
-    'pump_init': CMD_PUMP_INIT,
-    'pump_set_resolution': CMD_PUMP_SET_RES,
+    'ping':                 CMD_PING,
+    'get_status':           CMD_GET_STATUS,
+    'get_version':          CMD_GET_VERSION,
+    'get_flags':            CMD_GET_FLAGS,
+    'get_position':         CMD_GET_POSITION,
+    'get_sensors':          CMD_GET_SENSORS,
+    'reset':                CMD_RESET,
+    'set_log_level':        CMD_SET_LOG_LEVEL,
+    'set_state':            CMD_SET_STATE,
+    'set_control_mode':     CMD_SET_CTRL_MODE,
+    'start_protocol':       CMD_START_PROTOCOL,
+    'abort':                CMD_ABORT,
+    'pause':                CMD_PAUSE,
+    'resume':               CMD_RESUME,
+    'home_all':             CMD_HOME_ALL,
+    'home_gantry':          CMD_HOME_GANTRY,
+    'home_x_axis':          CMD_HOME_X_AXIS,
+    'home_y_axis':          CMD_HOME_Y_AXIS,
+    'home_z_axis':          CMD_HOME_Z_AXIS,
+    'get_gantry_status':    CMD_GET_GANTRY_STATUS,
+    'z_axis_test_gpio':     CMD_Z_TEST_GPIO,
+    'move_gantry':          CMD_MOVE_GANTRY,
+    'move_z_axis':          CMD_MOVE_Z_AXIS,
+    'move_to_well':         CMD_MOVE_TO_WELL,
+    'th_power_en':          CMD_TH_POWER_EN,
+    'move_to_location':     CMD_MOVE_TO_LOCATION,
+    'set_loc_centre':       CMD_SET_LOC_CENTRE,
+    'set_loc_offset':       CMD_SET_LOC_OFFSET,
+    'gantry_tip_swap':      CMD_TIP_SWAP,
+    'lid_move':             CMD_LID_MOVE,
+    'read_z_drv':           CMD_READ_Z_DRV,
+    'lift_home':            CMD_LIFT_HOME,
+    'lift_stop':            CMD_LIFT_STOP,
+    'lift_move':            CMD_LIFT_MOVE,
+    'lift_status':          CMD_LIFT_STATUS,
+    'lift_move_top':        CMD_LIFT_MOVE_TOP,
+    'pump_aspirate':        CMD_PUMP_ASPIRATE,
+    'pump_dispense':        CMD_PUMP_DISPENSE,
+    'pump_prime':           CMD_PUMP_PRIME,
+    'pump_blowout':         CMD_PUMP_BLOWOUT,
+    'pump_init':            CMD_PUMP_INIT,
+    'pump_set_resolution':  CMD_PUMP_SET_RES,
     'pump_set_pressure_gain': CMD_PUMP_SET_GAIN,
-    'pump_move_absolute': CMD_PUMP_MOVE_ABS,
+    'pump_move_absolute':   CMD_PUMP_MOVE_ABS,
     'pump_enable_streaming': CMD_PUMP_EN_STREAM,
-    'pump_wait_idle': CMD_PUMP_WAIT_IDLE,
-    'pump_get_status': CMD_PUMP_GET_STATUS,
-    'pump_raw': CMD_PUMP_RAW,
-    'pump_test_move': CMD_PUMP_TEST_MOVE,
-    'pump_lld_start': CMD_PUMP_LLD_START,
-    'pump_lld_stop': CMD_PUMP_LLD_STOP,
-    'pump_piston_reset': CMD_PUMP_PISTON_RST,
-    'pump_stream_test': CMD_PUMP_STREAM_TST,
-    'centrifuge_start': CMD_CFUGE_START,
-    'centrifuge_stop': CMD_CFUGE_STOP,
-    'centrifuge_rock': CMD_CFUGE_ROCK,
-    'centrifuge_status': CMD_CFUGE_STATUS,
+    'pump_wait_idle':       CMD_PUMP_WAIT_IDLE,
+    'pump_get_status':      CMD_PUMP_GET_STATUS,
+    'pump_raw':             CMD_PUMP_RAW,
+    'pump_test_move':       CMD_PUMP_TEST_MOVE,
+    'pump_lld_start':       CMD_PUMP_LLD_START,
+    'pump_lld_stop':        CMD_PUMP_LLD_STOP,
+    'pump_piston_reset':    CMD_PUMP_PISTON_RST,
+    'pump_stream_test':     CMD_PUMP_STREAM_TST,
+    'centrifuge_start':     CMD_CFUGE_START,
+    'centrifuge_stop':      CMD_CFUGE_STOP,
+    'centrifuge_rock':      CMD_CFUGE_ROCK,
+    'centrifuge_status':    CMD_CFUGE_STATUS,
     'centrifuge_move_angle': CMD_CFUGE_MOVE_ANGLE,
-    'centrifuge_home': CMD_CFUGE_HOME,
-    'centrifuge_bldc_cmd': CMD_CFUGE_BLDC_CMD,
-    'centrifuge_power': CMD_CFUGE_POWER,
-    'centrifuge_unlock': CMD_CFUGE_UNLOCK,
-    'centrifuge_lock': CMD_CFUGE_LOCK,
-    'centrifuge_reverse': CMD_CFUGE_REVERSE,
-    'door_open': CMD_DOOR_OPEN,
-    'door_close': CMD_DOOR_CLOSE,
-    'door_status': CMD_DOOR_STATUS,
-    'tip_pickup': CMD_TIP_PICKUP,
-    'tip_eject': CMD_TIP_EJECT,
-    'set_speed': CMD_SET_SPEED,
-    'set_acceleration': CMD_SET_ACCEL,
-    'calibrate': CMD_CALIBRATE,
-    'lld_perform': CMD_LLD_PERFORM,
-    'llf_start': CMD_LLF_START,
-    'llf_stop': CMD_LLF_STOP,
-    'smart_aspirate': CMD_SMART_ASPIRATE,
-    'well_dispense': CMD_WELL_DISPENSE,
-    'cart_dispense_bf': CMD_CART_DISPENSE_BF,
-    'cart_dispense': CMD_CART_DISPENSE,
-    'tip_mix': CMD_TIP_MIX,
-    'get_pressure_data': CMD_GET_PRESS_DATA,
-    'test_init_flags': CMD_TEST_INIT_FLAGS,
-    'test_set_flag': CMD_TEST_SET_FLAG,
-    'test_get_flags': CMD_TEST_GET_FLAGS,
-    'test_transition': CMD_TEST_TRANSITION,
-    'led_set_pixel': CMD_LED_SET_PIXEL,
-    'led_set_button': CMD_LED_SET_BUTTON,
-    'led_set_pixel_off': CMD_LED_SET_PIXEL_OFF,
-    'led_set_all_off': CMD_LED_SET_ALL_OFF,
-    'led_set_pattern': CMD_LED_SET_PATTERN,
-    'air_heater_set_duty': CMD_AIR_HEATER_SET_DUTY,
-    'air_heater_set_en': CMD_AIR_HEATER_SET_EN,
-    'air_heater_set_fan': CMD_AIR_HEATER_SET_FAN,
+    'centrifuge_home':      CMD_CFUGE_HOME,
+    'centrifuge_bldc_cmd':  CMD_CFUGE_BLDC_CMD,
+    'centrifuge_power':     CMD_CFUGE_POWER,
+    'centrifuge_unlock':    CMD_CFUGE_UNLOCK,
+    'centrifuge_lock':      CMD_CFUGE_LOCK,
+    'centrifuge_reverse':   CMD_CFUGE_REVERSE,
+    'centrifuge_goto_serum':   CMD_CFUGE_GOTO_SERUM,
+    'centrifuge_goto_pipette': CMD_CFUGE_GOTO_PIPETTE,
+    'door_open':            CMD_DOOR_OPEN,
+    'door_close':           CMD_DOOR_CLOSE,
+    'door_status':          CMD_DOOR_STATUS,
+    'set_speed':            CMD_SET_SPEED,
+    'set_acceleration':     CMD_SET_ACCEL,
+    'calibrate':            CMD_CALIBRATE,
+    'lld_perform':          CMD_LLD_PERFORM,
+    'llf_start':            CMD_LLF_START,
+    'llf_stop':             CMD_LLF_STOP,
+    'smart_aspirate':       CMD_SMART_ASPIRATE,
+    'well_dispense':        CMD_WELL_DISPENSE,
+    'cart_dispense_bf':     CMD_CART_DISPENSE_BF,
+    'cart_dispense':        CMD_CART_DISPENSE,
+    'tip_mix':              CMD_TIP_MIX,
+    'get_pressure_data':    CMD_GET_PRESS_DATA,
+    'test_init_flags':      CMD_TEST_INIT_FLAGS,
+    'test_set_flag':        CMD_TEST_SET_FLAG,
+    'test_get_flags':       CMD_TEST_GET_FLAGS,
+    'test_transition':      CMD_TEST_TRANSITION,
+    'led_set_pixel':        CMD_LED_SET_PIXEL,
+    'led_set_button':       CMD_LED_SET_BUTTON,
+    'led_set_pixel_off':    CMD_LED_SET_PIXEL_OFF,
+    'led_set_all_off':      CMD_LED_SET_ALL_OFF,
+    'led_set_pattern':      CMD_LED_SET_PATTERN,
+    'air_heater_set_duty':  CMD_AIR_HEATER_SET_DUTY,
+    'air_heater_set_en':    CMD_AIR_HEATER_SET_EN,
+    'air_heater_set_fan':   CMD_AIR_HEATER_SET_FAN,
     'air_heater_get_status': CMD_AIR_HEATER_GET_STATUS,
-    'air_heater_set_ctrl': CMD_AIR_HEATER_SET_CTRL,
-    'accel_get_status': CMD_ACCEL_GET_STATUS,
+    'air_heater_set_ctrl':  CMD_AIR_HEATER_SET_CTRL,
+    'fan_set_duty':         CMD_FAN_SET_DUTY,
+    'fan_get_status':       CMD_FAN_GET_STATUS,
+    'accel_get_status':     CMD_ACCEL_GET_STATUS,
+    'temp_get_status':      CMD_TEMP_GET_STATUS,
 }
 
 
@@ -401,7 +418,7 @@ def build_frame(
     '''
     if len(data) > MAX_DATA_LEN:
         raise ValueError(
-            f'Data length {len(data)} exceeds max {MAX_DATA_LEN}',
+            f'Data length {len(data)} exceeds max {MAX_DATA_LEN}'
         )
 
     cmd_bytes = struct.pack('<H', command)
@@ -412,11 +429,11 @@ def build_frame(
     crc_bytes = struct.pack('<H', crc)
 
     return (
-        bytes([SOH]) +
-        cmd_bytes +
-        length_byte +
-        data +
-        crc_bytes
+        bytes([SOH])
+        + cmd_bytes
+        + length_byte
+        + data
+        + crc_bytes
     )
 
 
@@ -480,9 +497,9 @@ class FrameParser:
             self._state = 0
 
             crc_input = (
-                struct.pack('<H', self._command) +
-                bytes([self._length]) +
-                bytes(self._data)
+                struct.pack('<H', self._command)
+                + bytes([self._length])
+                + bytes(self._data)
             )
             crc_calc = crc16_ccitt(crc_input)
 
@@ -534,11 +551,9 @@ def pack_move_gantry(
         return int(round(mm * 1000.0))
 
     speed_01mms = int(round(speed * 10.0))
-    return struct.pack(
-        '<IiiiH', seq,
-        _to_um(x_mm), _to_um(y_mm), _to_um(z_mm),
-        speed_01mms,
-    )
+    return struct.pack('<IiiiH', seq,
+                       _to_um(x_mm), _to_um(y_mm), _to_um(z_mm),
+                       speed_01mms)
 
 
 def pack_lift_move(
@@ -560,7 +575,7 @@ def pack_lift_move(
     Returns:
         Packed bytes: struct.pack('<IiH', seq, target_um, speed_01mms).
     '''
-    target_um = int(round(target_mm * 1000.0))
+    target_um   = int(round(target_mm * 1000.0))
     speed_01mms = int(round(speed * 10.0))
     return struct.pack('<IiH', seq, target_um, speed_01mms)
 
@@ -715,11 +730,11 @@ def pack_tip_swap(
         else 22 bytes extended form.
     '''
     _defaults = (
-        x_eject_um == 0 and
-        pick_depth_um == 0 and
-        retract_um == 0 and
-        xy_speed_01mms == 250 and
-        z_speed_01mms == 60
+        x_eject_um == 0
+        and pick_depth_um == 0
+        and retract_um == 0
+        and xy_speed_01mms == 250
+        and z_speed_01mms == 60
     )
     if _defaults:
         return struct.pack('<IBB', seq, from_id, to_id)
@@ -763,9 +778,9 @@ def pack_lid_move(
         else 13 bytes extended form.
     '''
     _defaults = (
-        z_engage_um == 0 and
-        xy_speed_01mms == 250 and
-        z_speed_01mms == 60
+        z_engage_um == 0
+        and xy_speed_01mms == 250
+        and z_speed_01mms == 60
     )
     if _defaults:
         return struct.pack('<IB', seq, int(open))
@@ -940,6 +955,150 @@ def pack_led_set_pattern(
     return struct.pack('<IBB', seq, pattern, stage)
 
 
+# =====================================================================
+# Air heater helpers (0x8Dxx)
+# =====================================================================
+
+def pack_air_heater_set_duty(seq: int, pct: int) -> bytes:
+    '''Pack CMD_AIR_HEATER_SET_DUTY payload. pct = 0-100.'''
+    return struct.pack('<IB', seq, pct)
+
+
+def pack_air_heater_set_en(seq: int, enable: bool) -> bytes:
+    '''Pack CMD_AIR_HEATER_SET_EN payload. enable = True/False.'''
+    return struct.pack('<IB', seq, 1 if enable else 0)
+
+
+def pack_air_heater_set_fan(seq: int, pct: int) -> bytes:
+    '''Pack CMD_AIR_HEATER_SET_FAN payload. pct = 0-100.'''
+    return struct.pack('<IB', seq, pct)
+
+
+def pack_air_heater_get_status(seq: int) -> bytes:
+    '''Pack CMD_AIR_HEATER_GET_STATUS payload.'''
+    return struct.pack('<I', seq)
+
+
+def pack_air_heater_set_ctrl(seq: int, setpoint_c: float,
+                             hysteresis_c: float, heater_duty: int,
+                             fan_duty: int, enable: bool) -> bytes:
+    '''Pack CMD_AIR_HEATER_SET_CTRL payload (11 bytes).'''
+    return struct.pack('<IhhBBB', seq,
+                       int(setpoint_c * 10),
+                       int(hysteresis_c * 10),
+                       heater_duty, fan_duty,
+                       1 if enable else 0)
+
+
+def unpack_air_heater_status(data: bytes) -> dict:
+    '''Unpack AIR_HEATER_GET_STATUS response (0x9D04).
+
+    Extended proto_rsp_air_heater_status_t (21 bytes):
+        seq(4) + error(1) + prim_x10(2) + sec_x10(2) +
+        heater_duty(1) + fan_duty(1) + heater_en(1) + otp(1) +
+        ctrl_enabled(1) + ctrl_setpoint_x10(2) + ctrl_hyst_x10(2) +
+        ctrl_heater_duty(1) + ctrl_fan_duty(1) + ctrl_heating(1)
+    '''
+    if len(data) < 21:
+        return {'seq': 0, 'error': 0xFF}
+    (seq, error, prim_x10, sec_x10, h_duty, f_duty, h_en, otp,
+     ctrl_en, ctrl_sp_x10, ctrl_hyst_x10, ctrl_h_duty, ctrl_f_duty,
+     ctrl_heating) = struct.unpack_from('<IBhhBBBBBhhBBB', data)
+    return {
+        'seq': seq,
+        'error': error,
+        'prim_temp_c': prim_x10 / 10.0,
+        'sec_temp_c': sec_x10 / 10.0,
+        'heater_duty': h_duty,
+        'fan_duty': f_duty,
+        'heater_en': bool(h_en),
+        'otp': bool(otp),
+        'ctrl_enabled': bool(ctrl_en),
+        'ctrl_setpoint_c': ctrl_sp_x10 / 10.0,
+        'ctrl_hysteresis_c': ctrl_hyst_x10 / 10.0,
+        'ctrl_heater_duty': ctrl_h_duty,
+        'ctrl_fan_duty': ctrl_f_duty,
+        'ctrl_heating': bool(ctrl_heating),
+    }
+
+
+def pack_fan_set_duty(seq: int, pct: int) -> bytes:
+    '''Pack CMD_FAN_SET_DUTY payload (5 bytes: seq + duty).'''
+    return struct.pack('<IB', seq, pct)
+
+
+def pack_fan_get_status(seq: int) -> bytes:
+    '''Pack CMD_FAN_GET_STATUS payload (seq only, 4 bytes).'''
+    return struct.pack('<I', seq)
+
+
+def unpack_fan_status(data: bytes) -> dict:
+    '''Unpack FAN_GET_STATUS response (0x9B02).
+
+    proto_rsp_fan_status_t (8 bytes):
+        seq(4) + error(1) + duty(1) + rpm(2)
+    '''
+    if len(data) < 8:
+        return {'seq': 0, 'error': 0xFF}
+    seq, error, duty, rpm = struct.unpack_from('<IBBH', data)
+    return {
+        'seq': seq,
+        'error': error,
+        'duty': duty,
+        'rpm': rpm,
+    }
+
+
+def pack_accel_get_status(seq: int) -> bytes:
+    '''Pack CMD_ACCEL_GET_STATUS payload (seq only, 4 bytes).'''
+    return struct.pack('<I', seq)
+
+
+def unpack_accel_status(data: bytes) -> dict:
+    '''Unpack ACCEL_GET_STATUS response (0x9E01).
+
+    proto_rsp_accel_status_t (18 bytes):
+        seq(4) + error(1) + x_mg(4) + y_mg(4) + z_mg(4) + initialized(1)
+    '''
+    if len(data) < 18:
+        return {'seq': 0, 'error': 0xFF}
+    seq, error, x_mg, y_mg, z_mg, init = struct.unpack_from('<IBiiiB', data)
+    return {
+        'seq': seq,
+        'error': error,
+        'x_g': x_mg / 1000.0,
+        'y_g': y_mg / 1000.0,
+        'z_g': z_mg / 1000.0,
+        'initialized': bool(init),
+    }
+
+
+def pack_temp_get_status(seq: int) -> bytes:
+    '''Pack CMD_TEMP_GET_STATUS payload (seq only, 4 bytes).'''
+    return struct.pack('<I', seq)
+
+
+def unpack_temp_status(data: bytes) -> dict:
+    '''Unpack TEMP_GET_STATUS response (0xA101).
+
+    proto_rsp_temp_status_t (11 bytes):
+        seq(4) + error(1) + ext1_x10(2) + ext2_x10(2) + int_x10(2)
+
+    Temperatures are in 0.1 degC units (signed int16).
+    '''
+    if len(data) < 11:
+        return {'seq': 0, 'error': 0xFF}
+    seq, error, ext1_x10, ext2_x10, int_x10 = struct.unpack_from(
+        '<IBhhh', data)
+    return {
+        'seq': seq,
+        'error': error,
+        'ext1_temp_c': ext1_x10 / 10.0,
+        'ext2_temp_c': ext2_x10 / 10.0,
+        'int_temp_c':  int_x10  / 10.0,
+    }
+
+
 def pack_set_state(seq: int, state: int) -> bytes:
     '''Pack CMD_SET_STATE payload.'''
     return struct.pack('<IB', seq, state)
@@ -1098,15 +1257,15 @@ def pack_bldc_set_pos_hold_thresh(
     '''
     frames = []
     for cmd, val in (
-        (BLDC_SET_POS_DEV_THRESH, dev_thresh_001deg),
+        (BLDC_SET_POS_DEV_THRESH,    dev_thresh_001deg),
         (BLDC_SET_POS_CTRL_MAX_TIME, ctrl_max_ms),
-        (BLDC_SET_STOP_POS_THRESH, stop_pos_thresh_001deg),
-        (BLDC_SET_STOP_DETECT_TIME, stop_detect_ms),
+        (BLDC_SET_STOP_POS_THRESH,   stop_pos_thresh_001deg),
+        (BLDC_SET_STOP_DETECT_TIME,  stop_detect_ms),
     ):
         frames.append(
             pack_centrifuge_bldc_cmd(
                 seq, cmd, struct.pack('<I', val),
-            ),
+            )
         )
         seq += 1
     return frames
@@ -1245,12 +1404,29 @@ def pack_centrifuge_power(
     return struct.pack('<IB', seq, 1 if enable else 0)
 
 
+def pack_centrifuge_goto(
+        seq: int,
+        angle_open_initial_deg: int = 290,
+        move_rpm: int = 1,
+) -> bytes:
+    '''Pack CMD_CFUGE_GOTO_SERUM / CMD_CFUGE_GOTO_PIPETTE payload.
+    Wire: seq(4) + angle_open_initial_deg(2) + move_rpm(2) = 8 bytes.
+    Firmware derives target: serum = open_init-180, pipette = open_init-90.
+    '''
+    return struct.pack(
+        '<IHH',
+        seq,
+        angle_open_initial_deg & 0xFFFF,
+        move_rpm & 0xFFFF,
+    )
+
+
 def pack_centrifuge_sequence(
         seq: int,
         angle_open_initial_deg: int = 290,
-        angle_open_end_deg: int = 260,
-        angle_lock_initial_deg: int = 80,
-        angle_lock_end_deg: int = 110,
+        angle_open_end_deg: int = 0,
+        angle_lock_initial_deg: int = 0,
+        angle_lock_end_deg: int = 0,
         angle_extra_deg: int = 15,
         lift_high_01mm: int = 380,
         lift_mid_01mm: int = 280,
@@ -1261,28 +1437,16 @@ def pack_centrifuge_sequence(
     Wire format (little-endian, 19 bytes total):
         uint32  seq
         uint16  angle_open_initial_deg  (e.g. 290)
-        uint16  angle_open_end_deg      (e.g. 260)
-        uint16  angle_lock_initial_deg  (e.g. 80)
-        uint16  angle_lock_end_deg      (e.g. 110)
+        uint16  angle_open_end_deg      (0 = auto: open_init - 30)
+        uint16  angle_lock_initial_deg  (0 = auto: open_init - 210)
+        uint16  angle_lock_end_deg      (0 = auto: open_init - 180)
         uint8   angle_extra_deg         (e.g. 15)
         uint16  lift_high_01mm          (e.g. 380 = 38.0 mm)
         uint16  lift_mid_01mm           (e.g. 280 = 28.0 mm)
         uint16  move_rpm                (e.g. 1)
 
-    Derived angles (computed in firmware):
-        lock end  = angle_lock_end_deg + angle_extra_deg
-        rev final = angle_open_initial_deg + angle_extra_deg
-
-    Args:
-        seq: Sequence number.
-        angle_open_initial_deg: Open initial angle in whole degrees.
-        angle_open_end_deg: Open end angle in whole degrees.
-        angle_lock_initial_deg: Lock initial angle in whole degrees.
-        angle_lock_end_deg: Lock end angle in whole degrees.
-        angle_extra_deg: Extra degrees added to end angles.
-        lift_high_01mm: High lift position in 0.1 mm units.
-        lift_mid_01mm: Mid lift position in 0.1 mm units.
-        move_rpm: Centrifuge positioning speed in RPM.
+    When open_end / lock_initial / lock_end are 0, firmware derives them
+    from angle_open_initial_deg.
 
     Returns:
         Packed payload bytes (19 bytes).
@@ -1291,13 +1455,13 @@ def pack_centrifuge_sequence(
         '<IHHHHBHHH',
         seq,
         angle_open_initial_deg & 0xFFFF,
-        angle_open_end_deg & 0xFFFF,
+        angle_open_end_deg     & 0xFFFF,
         angle_lock_initial_deg & 0xFFFF,
-        angle_lock_end_deg & 0xFFFF,
-        angle_extra_deg & 0xFF,
-        lift_high_01mm & 0xFFFF,
-        lift_mid_01mm & 0xFFFF,
-        move_rpm & 0xFFFF,
+        angle_lock_end_deg     & 0xFFFF,
+        angle_extra_deg        & 0xFF,
+        lift_high_01mm         & 0xFFFF,
+        lift_mid_01mm          & 0xFFFF,
+        move_rpm               & 0xFFFF,
     )
 
 
@@ -1315,121 +1479,9 @@ def unpack_rsp_centrifuge_sequence(data: bytes) -> dict:
     return {'seq': seq, 'error': error, 'ok': error == 0}
 
 
-def pack_tip_pickup(seq: int, well_id: int) -> bytes:
-    '''Pack CMD_TIP_PICKUP payload.'''
-    return struct.pack('<IB', seq, well_id)
-
-
 def pack_set_value(seq: int, value: int) -> bytes:
     '''Pack CMD_SET_SPEED or CMD_SET_ACCEL payload.'''
     return struct.pack('<Ii', seq, value)
-
-
-# =====================================================================
-# Air heater helpers (0x8Dxx)
-# =====================================================================
-
-def pack_air_heater_set_duty(seq: int, pct: int) -> bytes:
-    '''Pack CMD_AIR_HEATER_SET_DUTY payload. pct = 0-100.'''
-    return struct.pack('<IB', seq, pct)
-
-
-def pack_air_heater_set_en(
-        seq: int, enable: bool,
-) -> bytes:
-    '''Pack CMD_AIR_HEATER_SET_EN payload.'''
-    return struct.pack('<IB', seq, 1 if enable else 0)
-
-
-def pack_air_heater_set_fan(seq: int, pct: int) -> bytes:
-    '''Pack CMD_AIR_HEATER_SET_FAN payload. pct = 0-100.'''
-    return struct.pack('<IB', seq, pct)
-
-
-def pack_air_heater_get_status(seq: int) -> bytes:
-    '''Pack CMD_AIR_HEATER_GET_STATUS payload.'''
-    return struct.pack('<I', seq)
-
-
-def pack_air_heater_set_ctrl(
-        seq: int,
-        setpoint_c: float,
-        hysteresis_c: float,
-        heater_duty: int,
-        fan_duty: int,
-        enable: bool,
-) -> bytes:
-    '''Pack CMD_AIR_HEATER_SET_CTRL payload (11 bytes).'''
-    return struct.pack(
-        '<IhhBBB', seq,
-        int(setpoint_c * 10),
-        int(hysteresis_c * 10),
-        heater_duty, fan_duty,
-        1 if enable else 0,
-    )
-
-
-def unpack_air_heater_status(data: bytes) -> dict:
-    '''Unpack AIR_HEATER_GET_STATUS response (0x9D04).
-
-    Extended proto_rsp_air_heater_status_t (21 bytes):
-        seq(4) + error(1) + prim_x10(2) + sec_x10(2) +
-        heater_duty(1) + fan_duty(1) + heater_en(1) +
-        otp(1) + ctrl_enabled(1) + ctrl_setpoint_x10(2) +
-        ctrl_hyst_x10(2) + ctrl_heater_duty(1) +
-        ctrl_fan_duty(1) + ctrl_heating(1)
-    '''
-    if len(data) < 21:
-        return {'seq': 0, 'error': 0xFF}
-    (
-        seq, error, prim_x10, sec_x10,
-        h_duty, f_duty, h_en, otp,
-        ctrl_en, ctrl_sp_x10, ctrl_hyst_x10,
-        ctrl_h_duty, ctrl_f_duty, ctrl_heating,
-    ) = struct.unpack_from('<IBhhBBBBBhhBBB', data)
-    return {
-        'seq': seq,
-        'error': error,
-        'prim_temp_c': prim_x10 / 10.0,
-        'sec_temp_c': sec_x10 / 10.0,
-        'heater_duty': h_duty,
-        'fan_duty': f_duty,
-        'heater_en': bool(h_en),
-        'otp': bool(otp),
-        'ctrl_enabled': bool(ctrl_en),
-        'ctrl_setpoint_c': ctrl_sp_x10 / 10.0,
-        'ctrl_hysteresis_c': ctrl_hyst_x10 / 10.0,
-        'ctrl_heater_duty': ctrl_h_duty,
-        'ctrl_fan_duty': ctrl_f_duty,
-        'ctrl_heating': bool(ctrl_heating),
-    }
-
-
-def pack_accel_get_status(seq: int) -> bytes:
-    '''Pack CMD_ACCEL_GET_STATUS payload (seq only).'''
-    return struct.pack('<I', seq)
-
-
-def unpack_accel_status(data: bytes) -> dict:
-    '''Unpack ACCEL_GET_STATUS response (0x9E01).
-
-    proto_rsp_accel_status_t (18 bytes):
-        seq(4) + error(1) + x_mg(4) + y_mg(4) +
-        z_mg(4) + initialized(1)
-    '''
-    if len(data) < 18:
-        return {'seq': 0, 'error': 0xFF}
-    (
-        seq, error, x_mg, y_mg, z_mg, init,
-    ) = struct.unpack_from('<IBiiiB', data)
-    return {
-        'seq': seq,
-        'error': error,
-        'x_g': x_mg / 1000.0,
-        'y_g': y_mg / 1000.0,
-        'z_g': z_mg / 1000.0,
-        'initialized': bool(init),
-    }
 
 
 def pack_lld_perform(
@@ -1473,15 +1525,13 @@ def pack_llf_start(
 
     Args:
         seq: Sequence number.
-        well_id: Index into firmware k_well_geometry[] lookup
-            table.  0xFF = auto-detect from last gantry location.
+        well_id: Index into firmware k_well_geometry[] lookup table.
         z_speed_sps: Z-follow speed in steps/s (0 = firmware default).
     '''
     return struct.pack('<IBH', seq, well_id, z_speed_sps)
 
 
 LIQUID_FLAG_STREAM = 0x01
-
 
 def pack_smart_aspirate(
         seq: int,
@@ -1512,8 +1562,7 @@ def pack_smart_aspirate(
                   Default is GANTRY_Z_MIN_POS (−15625 µsteps ≈ −23.8 mm),
                   the actual hardware travel limit.
         z_speed_sps: Z descent/follow speed in steps/s (0 = firmware default).
-        well_id: Index into firmware k_well_geometry[] lookup
-            table.  0xFF = auto-detect from last gantry location.
+        well_id: Index into firmware k_well_geometry[] lookup table.
         air_slug_ul: Air slug volume (µL) to aspirate before LLD; 0 = skip.
         stream: Enable real-time pressure streaming (MSG_PRESSURE 0xA004).
     '''
@@ -1572,7 +1621,7 @@ def pack_cart_dispense_bf(
 ) -> bytes:
     '''Pack CMD_CART_DISPENSE_BF payload.
 
-    Wire layout matches proto_cmd_cart_dispense_bf_t (23 bytes):
+    Wire layout matches proto_cmd_cart_dispense_bf_t (22 bytes):
         seq(4) total_volume_ul(4) vel_ul_s(4f) for_vol_ul(2)
         back_vol_ul(2) reasp_ul(2) sleep_s(2) z_retract_mm(2) flags(1)
 
@@ -1609,7 +1658,7 @@ def pack_cart_dispense(
 ) -> bytes:
     '''Pack CMD_CART_DISPENSE payload.
 
-    Wire layout matches proto_cmd_cart_dispense_t (19 bytes):
+    Wire layout matches proto_cmd_cart_dispense_t (18 bytes):
         seq(4) volume_ul(4) vel_ul_s(4f) reasp_ul(2)
         sleep_s(2) z_retract_mm(2) flags(1)
 
@@ -1668,9 +1717,10 @@ def pack_test_set_flag(
     name_bytes = flag_name.encode('ascii')
     if len(name_bytes) > 63:
         name_bytes = name_bytes[:63]
-    return struct.pack(
-        '<IBB', seq, 1 if value else 0, len(name_bytes),
-    ) + name_bytes
+    return (
+        struct.pack('<IBB', seq, 1 if value else 0, len(name_bytes))
+        + name_bytes
+    )
 
 
 def pack_test_transition(
@@ -1774,11 +1824,24 @@ def unpack_rsp_gantry_status(data: bytes) -> dict:
         'x_homed': bool(x_homed), 'y_homed': bool(y_homed),
         'z_homed': bool(z_homed),
         'x': x, 'y': y, 'z': z,
-        'y_home': bool(sensors & 0x01),
+        'y_home':  bool(sensors & 0x01),
         'y_front': bool(sensors & 0x02),
-        'z_home': bool(sensors & 0x04),
-        'x_mid': bool(sensors & 0x08),
-        'x_end': bool(sensors & 0x10),
+        'z_home':  bool(sensors & 0x04),
+        'x_mid':   bool(sensors & 0x08),
+        'x_end':   bool(sensors & 0x10),
+    }
+
+
+def unpack_rsp_read_z_drv(data: bytes) -> dict:
+    '''Unpack RSP_READ_Z_DRV (0x9211) payload.
+    Wire: seq(4) + error(1) + uart_ok(1) + drv_status(4) = 10 bytes.'''
+    if len(data) < 10:
+        return unpack_rsp_common(data)
+    seq, error, uart_ok, drv_status = struct.unpack_from('<IBBI', data)
+    return {
+        'seq': seq, 'error': error,
+        'uart_ok': bool(uart_ok),
+        'drv_status': drv_status,
     }
 
 
@@ -2084,45 +2147,31 @@ def unpack_msg_status(data: bytes) -> dict:
     if len(data) < 36:
         return {}
     offset = 0
-    ts = struct.unpack_from('<I', data, offset)[0]
-    offset += 4
-    main_st = data[offset]
-    offset += 1
-    sub_st = data[offset]
-    offset += 1
-    progress = data[offset]
-    offset += 1
+    ts = struct.unpack_from('<I', data, offset)[0]; offset += 4
+    main_st = data[offset]; offset += 1
+    sub_st = data[offset]; offset += 1
+    progress = data[offset]; offset += 1
     flags_raw = struct.unpack_from('<I', data, offset)[0]
     offset += 4
-    gx = struct.unpack_from('<i', data, offset)[0]
-    offset += 4
-    gy = struct.unpack_from('<i', data, offset)[0]
-    offset += 4
-    gz = struct.unpack_from('<i', data, offset)[0]
-    offset += 4
-    motion = data[offset]
-    offset += 1
+    gx = struct.unpack_from('<i', data, offset)[0]; offset += 4
+    gy = struct.unpack_from('<i', data, offset)[0]; offset += 4
+    gz = struct.unpack_from('<i', data, offset)[0]; offset += 4
+    motion = data[offset]; offset += 1
     pressure = struct.unpack_from('<h', data, offset)[0]
     offset += 2
     pump_pos = struct.unpack_from('<H', data, offset)[0]
     offset += 2
-    temp = struct.unpack_from('<h', data, offset)[0]
-    offset += 2
-    rpm = struct.unpack_from('<H', data, offset)[0]
-    offset += 2
-    tip_f = data[offset]
-    offset += 1
-    door_f = data[offset]
-    offset += 1
-    last_err = data[offset]
-    offset += 1
-    err_cnt = data[offset]
-    offset += 1
+    temp = struct.unpack_from('<h', data, offset)[0]; offset += 2
+    rpm = struct.unpack_from('<H', data, offset)[0]; offset += 2
+    tip_f = data[offset]; offset += 1
+    door_f = data[offset]; offset += 1
+    last_err = data[offset]; offset += 1
+    err_cnt = data[offset]; offset += 1
 
     z_axis_pos = 0
     if len(data) >= 40:
         z_axis_pos = struct.unpack_from(
-            '<i', data, offset,
+            '<i', data, offset
         )[0]
 
     return {
@@ -2153,19 +2202,12 @@ def unpack_msg_status(data: bytes) -> dict:
 
 
 def unpack_msg_pressure(data: bytes) -> dict:
-    '''Unpack MSG_PRESSURE async payload (8 bytes).
-
-    Timestamp field is the raw 32-bit value from the pump CAN
-    frame.  Firmware docs say "100 us units" but the Rig3 PCAN
-    adapter treats the same field as raw microseconds; store as
-    ``timestamp_raw`` and let the CSV writer apply the correct
-    conversion once verified empirically.
-    '''
+    '''Unpack MSG_PRESSURE async payload (8 bytes).'''
     if len(data) < 8:
         return {}
     ts, pressure, pos = struct.unpack_from('<IhH', data)
     return {
-        'timestamp_raw': ts,
+        'timestamp_ms': ts,
         'pressure_raw': pressure,
         'pump_position': pos,
     }
@@ -2200,8 +2242,8 @@ def unpack_msg_pump_done(data: bytes) -> dict:
     cmd_id, seq, error = struct.unpack_from('<HIB', data)
     return {
         'cmd_id': cmd_id,
-        'seq': seq,
-        'error': error,
+        'seq':    seq,
+        'error':  error,
     }
 
 
@@ -2216,8 +2258,8 @@ def unpack_msg_gantry_done(data: bytes) -> dict:
     cmd_id, seq, error = struct.unpack_from('<HIB', data)
     return {
         'cmd_id': cmd_id,
-        'seq': seq,
-        'error': error,
+        'seq':    seq,
+        'error':  error,
     }
 
 
@@ -2232,8 +2274,8 @@ def unpack_msg_lift_done(data: bytes) -> dict:
     cmd_id, seq, error, pos = struct.unpack_from('<HIBi', data)
     return {
         'cmd_id': cmd_id,
-        'seq': seq,
-        'error': error,
+        'seq':    seq,
+        'error':  error,
         'position_steps': pos,
     }
 

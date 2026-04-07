@@ -247,7 +247,7 @@ class STM32Interface:
                 ):
                     d = fp.unpack_msg_pressure(rsp_data)
                     pressure_samples.append({
-                        'ts': d.get('timestamp_raw', 0),
+                        'ts': d.get('timestamp_ms', 0),
                         'p': d.get('pressure_raw', 0),
                         'pos': d.get(
                             'pump_position', 0,
@@ -330,7 +330,7 @@ class STM32Interface:
             (e.g. 'z_position' for lld_perform).
             When collect_pressure is True, includes
             '_pressure_samples' list of dicts with keys
-            timestamp_raw, pressure, position.
+            timestamp_ms, pressure, position.
             None on timeout.
         '''
         if not self._ser:
@@ -403,8 +403,8 @@ class STM32Interface:
                 ):
                     d = fp.unpack_msg_pressure(rsp_data)
                     pressure_samples.append({
-                        'timestamp_raw': d.get(
-                            'timestamp_raw', 0,
+                        'timestamp_ms': d.get(
+                            'timestamp_ms', 0,
                         ),
                         'pressure': d.get(
                             'pressure_raw', 0,
@@ -503,7 +503,7 @@ class STM32Interface:
                 'pump_get_status', 'pump_test_move',
                 'pump_lld_stop', 'pump_piston_reset',
                 'centrifuge_stop', 'door_open',
-                'door_close', 'tip_eject',
+                'door_close',
                 'lift_home', 'lift_stop',
                 'lift_move_top',
                 'led_set_all_off',
@@ -672,7 +672,14 @@ class STM32Interface:
             'centrifuge_unlock', 'centrifuge_lock',
             'centrifuge_reverse',
         ):
-            return fp.pack_centrifuge_sequence(seq)
+            return fp.pack_centrifuge_sequence(
+                seq,
+                angle_open_initial_deg=int(
+                    cmd.get(
+                        'angle_open_initial_deg', 290,
+                    ),
+                ),
+            )
         if cmd_name == 'centrifuge_move_angle':
             return fp.pack_centrifuge_move_angle(
                 seq=seq,
@@ -690,11 +697,32 @@ class STM32Interface:
                     cmd.get('target_mm', 0.0),
                 ),
             )
-        if cmd_name == 'tip_pickup':
-            return fp.pack_tip_pickup(
+        if cmd_name in (
+            'centrifuge_goto_serum',
+            'centrifuge_goto_pipette',
+        ):
+            return fp.pack_centrifuge_goto(
                 seq=seq,
-                well_id=cmd.get('well', 0),
+                angle_open_initial_deg=int(
+                    cmd.get(
+                        'angle_open_initial_deg', 290,
+                    ),
+                ),
+                move_rpm=int(
+                    cmd.get('move_rpm', 1),
+                ),
             )
+        if cmd_name == 'fan_set_duty':
+            return fp.pack_fan_set_duty(
+                seq=seq,
+                pct=int(cmd.get('pct', 0)),
+            )
+        if cmd_name == 'fan_get_status':
+            return fp.pack_fan_get_status(seq)
+        if cmd_name == 'temp_get_status':
+            return fp.pack_temp_get_status(seq)
+        if cmd_name == 'read_z_drv':
+            return fp.pack_seq(seq)
         if cmd_name == 'lld_perform':
             return fp.pack_lld_perform(
                 seq=seq,
@@ -966,6 +994,8 @@ class STM32Interface:
         elif cmd_name in (
             'centrifuge_unlock', 'centrifuge_lock',
             'centrifuge_reverse',
+            'centrifuge_goto_serum',
+            'centrifuge_goto_pipette',
         ):
             d = fp.unpack_rsp_centrifuge_sequence(data)
             result['error_code'] = d.get(
@@ -974,6 +1004,15 @@ class STM32Interface:
             result['status'] = (
                 'OK' if d.get('ok') else 'ERROR'
             )
+        elif cmd_name == 'fan_get_status':
+            d = fp.unpack_fan_status(data)
+            result.update(d)
+        elif cmd_name == 'temp_get_status':
+            d = fp.unpack_temp_status(data)
+            result.update(d)
+        elif cmd_name == 'read_z_drv':
+            d = fp.unpack_rsp_read_z_drv(data)
+            result.update(d)
         elif cmd_name == 'centrifuge_status':
             d = fp.unpack_rsp_centrifuge_status(data)
             result['error_code'] = d.get(
