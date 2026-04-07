@@ -145,7 +145,7 @@ phases:
         target: PP4
         asp_vol: 100
         cart_vol: 60
-        cart_vel: 1.5
+        cart_vel: 10
 
       - type: well_transfer
         label: DemoTransfer

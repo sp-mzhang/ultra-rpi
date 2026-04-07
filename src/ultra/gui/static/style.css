@@ -39,6 +39,22 @@ header {
 header h1 {
   font-size: 1.1rem;
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.machine-tag {
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: #1a3a2a;
+  color: var(--green);
+}
+
+.machine-tag:empty {
+  display: none;
 }
 
 .badge {
@@ -270,6 +286,11 @@ select, input[type="text"] {
 .btn-yellow { background: var(--yellow); color: #000; }
 .btn-blue { background: var(--blue); color: #fff; }
 .btn-red { background: var(--red); color: #fff; }
+.btn-new {
+  background: var(--accent);
+  color: #fff;
+}
+
 .btn-sm {
   padding: 3px 8px;
   font-size: 0.7rem;
@@ -390,6 +411,10 @@ select, input[type="text"] {
   gap: 4px;
   flex-shrink: 0;
   flex-wrap: wrap;
+}
+
+.chart-toolbar[hidden] {
+  display: none !important;
 }
 
 .chart-toolbar label {

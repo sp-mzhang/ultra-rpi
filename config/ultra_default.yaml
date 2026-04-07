@@ -1,5 +1,6 @@
 device_sn: DEV-1e10e696-cfec-4e5c-ac06-b2951a20aa8a
 station_id: 100
+machine_name: Ultra 3
 protocol_mode: ultra
 
 stm32:

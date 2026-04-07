@@ -14,7 +14,10 @@
 </head>
 <body>
   <header>
-    <h1>Ultra RPi</h1>
+    <h1>Ultra RPi
+      <span id="machine-name" class="machine-tag">
+      </span>
+    </h1>
     <div id="mode-indicator" class="badge badge-blue">
       Manual Mode
     </div>
@@ -48,6 +51,10 @@
         <button id="btn-abort" class="btn btn-red"
                 disabled>
           Abort
+        </button>
+        <button id="btn-new-run" class="btn btn-new"
+                style="display:none">
+          New Run
         </button>
       </div>
       <div class="control-row">
@@ -135,8 +142,7 @@
           </div>
           <div class="canvas-wrap">
             <canvas id="spectrum-canvas"></canvas>
-            <canvas id="sensorgram-canvas"
-                    style="display:none"></canvas>
+            <canvas id="sensorgram-canvas"></canvas>
           </div>
         </div>
         <aside id="channel-sidebar">

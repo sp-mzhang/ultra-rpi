@@ -15,6 +15,7 @@
   const elBtnPause = $('#btn-pause');
   const elBtnResume = $('#btn-resume');
   const elBtnAbort = $('#btn-abort');
+  const elBtnNewRun = $('#btn-new-run');
   const elBtnSmStart = $('#btn-sm-start');
   const elBtnSmStop = $('#btn-sm-stop');
   const elPhase = $('#step-phase');
@@ -23,6 +24,7 @@
   const elBar = $('#progress-bar');
   const elElapsed = $('#elapsed');
   const elMode = $('#mode-indicator');
+  const elMachine = $('#machine-name');
   const elGrid = $('#wells-grid');
 
   /* ---- Init ---- */
@@ -76,13 +78,21 @@
     try {
       const res = await fetch('/api/status');
       const s = await res.json();
+      completedSteps = s.step_index || 0;
       updateProgress(s);
       if (s.wells && Object.keys(s.wells).length) {
         wellDefs = s.wells;
         renderWells(s.wells);
       }
+      if (s.tip) updateTip(s.tip);
       updateMode(s.sm_state || 'inactive');
       updateButtons(s.is_running, s.is_paused);
+      if (!s.is_running && s.step_index > 0) {
+        showNewRun();
+      }
+      if (s.machine_name) {
+        elMachine.textContent = s.machine_name;
+      }
     } catch (e) {
       console.warn('Failed to load status', e);
     }
@@ -147,6 +157,7 @@
       case 'protocol_aborted':
         updateButtons(false, false);
         elLabel.textContent = type.replace('_', ' ');
+        showNewRun();
         break;
       case 'status_changed':
         updateMode(data.state || 'inactive');
@@ -229,6 +240,15 @@
     elBtnPause.disabled = !running || paused;
     elBtnResume.disabled = !running || !paused;
     elBtnAbort.disabled = !running;
+    if (running) {
+      elBtnNewRun.style.display = 'none';
+      elBtnRun.style.display = '';
+    }
+  }
+
+  function showNewRun() {
+    elBtnRun.style.display = 'none';
+    elBtnNewRun.style.display = '';
   }
 
   function renderWells(wells) {
@@ -312,11 +332,13 @@
       sgCanvas.style.display = 'none';
       tbSp.hidden = false;
       tbSg.hidden = true;
+      if (spChart) spChart.resize();
     } else {
       spCanvas.style.display = 'none';
       sgCanvas.style.display = '';
       tbSp.hidden = true;
       tbSg.hidden = false;
+      if (sgChart) sgChart.resize();
     }
   }
 
@@ -684,9 +706,16 @@
   /* ---------- Chart init + flush ---------- */
 
   function initCharts() {
+    const sgCanvas = $('#sensorgram-canvas');
+    const spCanvas = $('#spectrum-canvas');
+    sgCanvas.style.display = '';
+    spCanvas.style.display = '';
+
     initSensorgram();
     initSpectrum();
     syncAllChannelVisibility();
+
+    switchTab(activeTab);
     setInterval(flushCharts, 500);
   }
 
@@ -722,6 +751,31 @@
     } catch (e) {
       alert('Request failed: ' + e.message);
     }
+  };
+
+  elBtnNewRun.onclick = () => {
+    for (let i = 0; i < NUM_CHANNELS; i++) {
+      const key = 'ch' + (i + 1);
+      sgRaw[key] = [];
+      delete sgBaselines[key];
+      sgChart.data.datasets[i].data = [];
+      spChart.data.datasets[i].data = [];
+    }
+    sgChart.update('none');
+    spChart.update('none');
+
+    completedSteps = 0;
+    elPhase.textContent = '--';
+    elLabel.textContent = 'Idle';
+    elTip.textContent = 'Tip: none';
+    elBar.style.width = '0%';
+    elBar.textContent = '0 / 0';
+    elElapsed.textContent = 'Elapsed: 0.0s';
+    elGrid.innerHTML = '';
+
+    elBtnNewRun.style.display = 'none';
+    elBtnRun.style.display = '';
+    elBtnRun.disabled = false;
   };
 
   elBtnPause.onclick = () =>
