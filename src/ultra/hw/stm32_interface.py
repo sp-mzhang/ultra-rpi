@@ -1330,7 +1330,10 @@ class STM32Interface:
                 return False
             rpm_abs = abs(int(r.get('rpm', 0)))
             if (
-                    state == self.CFUGE_ST_READY
+                    state in (
+                        self.CFUGE_ST_IDLE,
+                        self.CFUGE_ST_READY,
+                    )
                     and rpm_abs <= self._RPM_IDLE_MAX
             ):
                 LOG.info(

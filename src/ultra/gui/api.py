@@ -56,7 +56,7 @@ def create_api_router(
         result = snap.to_dict()
         result['is_running'] = runner.is_running
         result['is_paused'] = runner.is_paused
-        result['machine_name'] = app._config.get(
+        result['machine_name'] = app.config.get(
             'machine_name', '',
         )
         if app._state_machine:

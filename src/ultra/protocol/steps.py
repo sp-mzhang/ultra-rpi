@@ -110,8 +110,15 @@ class CentrifugeSpinStep(StepExecutor):
         if not _ok(r):
             return False
         time.sleep(float(duration_s))
+        r_stop = runner.stm32.send_command(
+            cmd={'cmd': 'centrifuge_stop'},
+            timeout_s=10.0,
+        )
+        if not _ok(r_stop):
+            LOG.warning('centrifuge_stop failed')
+        idle_timeout = float(duration_s) + 10.0
         ok = runner.stm32.wait_centrifuge_idle(
-            timeout_s=60.0,
+            timeout_s=idle_timeout,
         )
         if not ok:
             LOG.warning(
