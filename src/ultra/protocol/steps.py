@@ -88,7 +88,13 @@ class CentrifugeLockStep(StepExecutor):
 
 @step_type('centrifuge_spin')
 class CentrifugeSpinStep(StepExecutor):
-    '''Spin centrifuge at given RPM for duration.'''
+    '''Spin centrifuge at given RPM for duration.
+
+    Matches sway: send centrifuge_start, sleep for the
+    full spin duration, then poll centrifuge_status until
+    READY.  Continues even if the idle check times out
+    (sway just warns).
+    '''
 
     def execute(self, params, runner) -> bool:
         rpm = params.get('rpm', 500)
@@ -99,19 +105,29 @@ class CentrifugeSpinStep(StepExecutor):
                 'rpm': rpm,
                 'duration': duration_s,
             },
-            timeout_s=float(duration_s) + 30.0,
+            timeout_s=10.0,
         )
         if not _ok(r):
             return False
+        time.sleep(float(duration_s))
         ok = runner.stm32.wait_centrifuge_idle(
-            timeout_s=float(duration_s) + 60.0,
+            timeout_s=60.0,
         )
-        return ok
+        if not ok:
+            LOG.warning(
+                'Centrifuge not idle after spin -- '
+                'proceeding anyway',
+            )
+        return True
 
 
 @step_type('centrifuge_rotate')
 class CentrifugeRotateStep(StepExecutor):
-    '''Rotate centrifuge to a specific angle.'''
+    '''Rotate centrifuge carousel to a specific angle.
+
+    Matches sway: send_command (ACK only, no DONE wait),
+    then a 1-second settle sleep.
+    '''
 
     def execute(self, params, runner) -> bool:
         angle = params.get('angle_001deg', 0)
@@ -122,7 +138,7 @@ class CentrifugeRotateStep(StepExecutor):
                 'angle_001deg': angle,
                 'move_rpm': move_rpm,
             },
-            timeout_s=60.0,
+            timeout_s=120.0,
         )
         if not _ok(r):
             return False
@@ -132,7 +148,13 @@ class CentrifugeRotateStep(StepExecutor):
 
 @step_type('lift_move')
 class LiftMoveStep(StepExecutor):
-    '''Move lift to a target height in mm.'''
+    '''Move lift to a target height in mm.
+
+    Matches sway: send_command_wait_done (DONE response
+    confirms the move finished), then a short settle
+    sleep.  No extra position-polling -- the DONE message
+    from firmware is sufficient.
+    '''
 
     def execute(self, params, runner) -> bool:
         target_mm = params.get('target_mm', 18.0)
@@ -141,15 +163,12 @@ class LiftMoveStep(StepExecutor):
                 'cmd': 'lift_move',
                 'target_mm': target_mm,
             },
-            timeout_s=90.0,
+            timeout_s=120.0,
         )
         if not _ok(r):
             return False
-        ok = runner.stm32.wait_lift_idle(
-            target_mm=target_mm,
-            timeout_s=90.0,
-        )
-        return ok
+        time.sleep(1.0)
+        return True
 
 
 @step_type('lid')
@@ -237,8 +256,13 @@ class LLDStep(StepExecutor):
     Sends lld_perform to the STM32. On success, converts
     the returned z_position (µsteps) to mm and stores it
     in ``runner.cartridge_z_mm`` for subsequent
-    ``cart_dispense_at`` calls.  Homes Z after detection,
-    matching sway's sequence.
+    ``cart_dispense_at`` calls.
+
+    If LLD fails (e.g. dry cartridge on first run), falls
+    back to ``default_cartridge_z_mm`` from recipe
+    constants so the dispense can still reach the port.
+
+    Always homes Z after the probe, matching sway.
     '''
 
     def execute(self, params, runner) -> bool:
@@ -263,13 +287,22 @@ class LLDStep(StepExecutor):
                 'LLD detected: z=%d usteps = %.2f mm',
                 z_usteps, runner.cartridge_z_mm,
             )
-            runner.stm32.send_command_wait_done(
-                cmd={'cmd': 'home_z_axis'},
-                timeout_s=30.0,
+        else:
+            default_z = runner.recipe.constants.get(
+                'default_cartridge_z_mm', 0.0,
             )
-            return True
-        LOG.warning('LLD failed: %s', r)
-        return r is not None
+            runner.cartridge_z_mm = default_z
+            LOG.warning(
+                'LLD did not detect liquid -- '
+                'using default_cartridge_z_mm=%.2f '
+                '(resp=%s)',
+                default_z, r,
+            )
+        runner.stm32.send_command_wait_done(
+            cmd={'cmd': 'home_z_axis'},
+            timeout_s=30.0,
+        )
+        return True
 
 
 @step_type('reagent_transfer')

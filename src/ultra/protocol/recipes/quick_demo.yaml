@@ -11,6 +11,7 @@ constants:
   air_slug_ul: 40
   reasp_ul: 12
   cart_disp_vel: 1.5
+  default_cartridge_z_mm: -12.0
 
 wells:
   S1:   {loc: 21, reagent: DemoReagent1, volume_ul: 80}

@@ -12,6 +12,7 @@ constants:
   air_slug_hydro: 50
   reasp_ul: 12
   cart_disp_vel: 1.5
+  default_cartridge_z_mm: -12.0
 
 wells:
   S1:   {loc: 21, reagent: Hydrophilic, volume_ul: 110}

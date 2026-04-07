@@ -14,6 +14,7 @@ constants:
   chip_disp_vel: 1.0
   mix_cycles: 4
   mix_vol: 100
+  default_cartridge_z_mm: -12.0
 
 wells:
   # Source wells (DI water / reagent reservoirs)
