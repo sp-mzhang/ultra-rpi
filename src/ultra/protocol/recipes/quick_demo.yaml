@@ -11,10 +11,10 @@ constants:
   cart_disp_vel: 1.5
 
 wells:
-  S1:    {loc: 21, reagent: DemoReagent1, volume_ul: 80}
-  S3:    {loc: 23, reagent: DilutionBuf, volume_ul: 180}
-  M1:    {loc: 33, reagent: DemoReagent2, volume_ul: 100}
+  S5:    {loc: 25, reagent: DemoReagent1, volume_ul: 80}
+  S6:    {loc: 26, reagent: DilutionBuf, volume_ul: 180}
   M2:    {loc: 34, reagent: Waste, volume_ul: 0}
+  M6:    {loc: 38, reagent: DemoReagent2, volume_ul: 100}
   M3:    {loc: 35, reagent: DemoTransferSrc, volume_ul: 80}
   M4:    {loc: 36, reagent: SerumDilution, volume_ul: 0}
   M5:    {loc: 37, reagent: DemoTransferDst, volume_ul: 0}
@@ -39,10 +39,10 @@ phases:
         label: Pick Tip 1
         tip_id: 1
 
-      # Dilution: S3 -> M4, 180 uL
+      # Dilution: S6 -> M4, 180 uL
       - type: dilution_transfer
-        label: Dilution (S3 -> M4)
-        source: S3
+        label: Dilution (S6 -> M4)
+        source: S6
         dest: M4
         volume: 180
         asp_speed: 80.0
@@ -128,7 +128,7 @@ phases:
 
       - type: reagent_transfer
         label: DemoReagent1
-        source: S1
+        source: S5
         target: PP4
         asp_vol: 80
         cart_vol: 50
@@ -141,7 +141,7 @@ phases:
 
       - type: reagent_transfer
         label: DemoReagent2
-        source: M1
+        source: M6
         target: PP4
         asp_vol: 100
         cart_vol: 60

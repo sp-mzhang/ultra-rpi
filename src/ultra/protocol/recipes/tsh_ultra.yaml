@@ -10,13 +10,13 @@ constants:
   cart_disp_vel: 1.5
 
 wells:
-  S1:    {loc: 21, reagent: Hydrophilic, volume_ul: 110}
   S2:    {loc: 22, reagent: PBS, volume_ul: 45}
-  S3:    {loc: 23, reagent: DilutionBuf1, volume_ul: 180}
   S4:    {loc: 24, reagent: DilutionBuf2, volume_ul: 180}
-  M1:    {loc: 33, reagent: DI Water, volume_ul: 210}
+  S5:    {loc: 25, reagent: Hydrophilic, volume_ul: 110}
+  S6:    {loc: 26, reagent: DilutionBuf1, volume_ul: 180}
   M2:    {loc: 34, reagent: Waste, volume_ul: 0}
   M3:    {loc: 35, reagent: PBST, volume_ul: 190}
+  M6:    {loc: 38, reagent: DI Water, volume_ul: 210}
   M4:    {loc: 36, reagent: SerumDilution, volume_ul: 0}
   M5:    {loc: 37, reagent: Sample Buffer, volume_ul: 270}
   M7:    {loc: 39, reagent: Sample Buffer, volume_ul: 240}
@@ -45,10 +45,10 @@ phases:
         label: Pick Tip 1
         tip_id: 1
 
-      # Dilution 1: S3 -> M4, 180 uL
+      # Dilution 1: S6 -> M4, 180 uL
       - type: dilution_transfer
-        label: Dilution 1 (S3 -> M4)
-        source: S3
+        label: Dilution 1 (S6 -> M4)
+        source: S6
         dest: M4
         volume: 180
         asp_speed: 80.0
@@ -131,10 +131,10 @@ phases:
         label: Pre-flight LLD
         threshold: 20
 
-      # Step 9: Hydrophilic
+      # Step 9: Hydrophilic (S5, was S1)
       - type: reagent_transfer
         label: Hydrophilic
-        source: S1
+        source: S5
         target: PP4
         asp_vol: 110
         cart_vol: 70
@@ -146,10 +146,10 @@ phases:
         from_id: 4
         to_id: 5
 
-      # Step 11: DI Water
+      # Step 11: DI Water (M6, was M1)
       - type: reagent_transfer
         label: DI Water
-        source: M1
+        source: M6
         target: PP4
         asp_vol: 210
         cart_vol: 160
