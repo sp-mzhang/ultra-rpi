@@ -271,10 +271,12 @@ class MoveToLocationStep(StepExecutor):
                 'move_to_location: unknown well ref',
             )
             return False
-        r = runner.stm32.send_command(
+        speed = int(params.get('speed_01mms', 250))
+        r = runner.stm32.send_command_wait_done(
             cmd={
                 'cmd': 'move_to_location',
                 'location_id': well.loc_id,
+                'speed_01mms': speed,
             },
             timeout_s=120.0,
         )

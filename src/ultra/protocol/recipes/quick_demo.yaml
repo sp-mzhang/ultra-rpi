@@ -124,7 +124,7 @@ phases:
         target: PP4
         asp_vol: 180
         cart_vol: 150
-        cart_vel: 0.5
+        cart_vel: 10
 
       - type: reagent_transfer
         label: DemoReagent1
@@ -132,7 +132,7 @@ phases:
         target: PP4
         asp_vol: 80
         cart_vol: 50
-        cart_vel: 1.5
+        cart_vel: 10
 
       - type: tip_swap
         label: Swap 4 -> 5
