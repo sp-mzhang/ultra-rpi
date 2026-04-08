@@ -56,6 +56,7 @@ class WebSocketBroadcaster:
         )
         self._last_sweep: dict[str, Any] | None = None
         self._marker_buffer: list[dict] = []
+        self._last_protocol_started: dict | None = None
 
     def connect(self, ws: WebSocket) -> None:
         '''Register a new WebSocket connection.
@@ -118,15 +119,25 @@ class WebSocketBroadcaster:
             self._connections.discard(ws)
 
     async def replay(self, ws: WebSocket) -> None:
-        '''Send buffered chart data to a single client.
+        '''Send buffered state to a single client.
 
-        Replays all cached peak_data events then the latest
-        sweep_data so a newly connected browser rebuilds the
-        full sensorgram and spectrum.
+        Replays the last protocol_started (step manifest),
+        all cached peak_data, the latest sweep_data, and
+        timing markers so a newly connected browser rebuilds
+        the full UI state.
 
         Args:
             ws: The newly connected WebSocket.
         '''
+        if self._last_protocol_started is not None:
+            msg = json.dumps({
+                'type': 'protocol_started',
+                'data': self._last_protocol_started,
+            })
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                return
         for peak in self._peak_buffer:
             msg = json.dumps({
                 'type': 'peak_data', 'data': peak,
@@ -154,15 +165,25 @@ class WebSocketBroadcaster:
             except Exception:
                 return
 
-    def clear_buffers(self) -> None:
-        '''Discard all buffered chart data.
+    def clear_buffers(
+            self,
+            protocol_started_data: dict | None = None,
+    ) -> None:
+        '''Discard buffered chart data and store new start.
 
         Called when a new protocol run starts so stale data
         from the previous run is not replayed.
+
+        Args:
+            protocol_started_data: The protocol_started
+                payload to buffer for late-joining clients.
         '''
         self._peak_buffer.clear()
         self._last_sweep = None
         self._marker_buffer.clear()
+        self._last_protocol_started = (
+            protocol_started_data
+        )
 
 
 def create_app(application: 'Application') -> FastAPI:
@@ -225,7 +246,9 @@ def create_app(application: 'Application') -> FastAPI:
     async def _on_protocol_started(
             data: dict,
     ) -> None:
-        broadcaster.clear_buffers()
+        broadcaster.clear_buffers(
+            protocol_started_data=data,
+        )
         await broadcaster.broadcast(
             'protocol_started', data,
         )

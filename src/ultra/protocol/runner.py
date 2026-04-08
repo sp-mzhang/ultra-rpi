@@ -432,12 +432,12 @@ class ProtocolRunner:
         rg.mark_started()
 
         reader_sn = 'pproc-001'
-        run_dir, _ = rg.add_run(
+        run_dir, rdt = rg.add_run(
             reader_sn=reader_sn,
             chip_id=chip_id or 'unknown',
             note=note,
         )
-        return rg, run_dir
+        return rg, run_dir, rdt
 
     # ----------------------------------------------------------
     # Main run -- synchronous core in protocol thread
@@ -529,9 +529,12 @@ class ProtocolRunner:
 
         rg_writer = None
         run_dir = None
+        run_dir_tup = None
         try:
-            rg_writer, run_dir = self._create_run_group(
-                chip_id, note=note,
+            rg_writer, run_dir, run_dir_tup = (
+                self._create_run_group(
+                    chip_id, note=note,
+                )
             )
             self._run_dir = run_dir
             LOG.info('Run data dir: %s', run_dir)
@@ -654,9 +657,13 @@ class ProtocolRunner:
             f'({total} steps, '
             f'{self.tracker.snapshot().elapsed_s:.1f}s)',
         )
+        done_data = self.tracker.snapshot().to_dict()
+        if run_dir_tup is not None:
+            done_data['run_uuid_dir_list'] = [
+                run_dir_tup,
+            ]
         self._event_bus.emit_sync(
-            'protocol_done',
-            self.tracker.snapshot().to_dict(),
+            'protocol_done', done_data,
         )
         return self.tracker.results
 

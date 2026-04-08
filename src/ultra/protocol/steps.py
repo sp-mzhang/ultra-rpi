@@ -583,6 +583,9 @@ class ReagentTransferStep(StepExecutor):
                 sa, params['label'],
             )
 
+        label = params.get('label', 'reagent_transfer')
+        _emit_timing_marker(runner, label, 'start')
+
         cd_r = runner.stm32.cart_dispense_at(
             loc_id=target.loc_id,
             volume_ul=cart_vol,
@@ -596,6 +599,9 @@ class ReagentTransferStep(StepExecutor):
         )
         if not cd_r:
             return False
+
+        _emit_timing_marker(runner, label, 'stop')
+
         runner.tracker.update_well(
             target.name, delta_ul=cart_vol,
             operation=f'disp {cart_vol}uL',
@@ -692,6 +698,9 @@ class ReagentTransferBFStep(StepExecutor):
                 sa, params['label'],
             )
 
+        label = params.get('label', 'reagent_transfer_bf')
+        _emit_timing_marker(runner, label, 'start')
+
         cd_r = runner.stm32.cart_dispense_bf_at(
             loc_id=target.loc_id,
             duration_s=duration_s,
@@ -708,6 +717,9 @@ class ReagentTransferBFStep(StepExecutor):
         )
         if not cd_r:
             return False
+
+        _emit_timing_marker(runner, label, 'stop')
+
         runner.tracker.update_well(
             target.name, delta_ul=cart_vol,
             operation=f'disp_bf ~{cart_vol}uL ({duration_s}s)',
@@ -902,6 +914,9 @@ class WellToChipStep(StepExecutor):
         )
         runner.collect_pressure(sa, params['label'])
 
+        label = params.get('label', 'well_to_chip')
+        _emit_timing_marker(runner, label, 'start')
+
         cd_r = runner.stm32.cart_dispense_at(
             loc_id=target.loc_id,
             volume_ul=chip_vol,
@@ -915,6 +930,9 @@ class WellToChipStep(StepExecutor):
         )
         if not cd_r:
             return False
+
+        _emit_timing_marker(runner, label, 'stop')
+
         runner.tracker.update_well(
             target.name, delta_ul=chip_vol,
             operation=f'disp {chip_vol}uL',
@@ -1187,6 +1205,62 @@ _SAMPLE_LOG_HEADER = (
 )
 
 
+def _emit_timing_marker(
+        runner, label: str, event_type: str,
+) -> None:
+    '''Emit a timing marker event and write to sample.log.
+
+    Shared helper used by reagent transfer and chip dispense
+    steps to automatically bracket cartridge dispenses with
+    start/stop markers.
+
+    Args:
+        runner: Protocol runner instance.
+        label: Marker label (e.g. reagent name).
+        event_type: ``start`` or ``stop``.
+    '''
+    from datetime import datetime
+    import os.path as op
+
+    snap = runner.tracker.snapshot()
+    elapsed = round(snap.elapsed_s, 2)
+    now_str = datetime.now().strftime(
+        '%Y/%m/%d-%H:%M:%S',
+    )
+    sample_name = f'TIMING: {label} ({event_type})'
+
+    LOG.info(
+        'timing_marker: %s at %.2fs',
+        sample_name, elapsed,
+    )
+
+    run_dir = getattr(runner, '_run_dir', None)
+    if run_dir:
+        path = op.join(run_dir, 'sample.log')
+        try:
+            with open(path, 'a') as fh:
+                if fh.tell() == 0:
+                    fh.write(_SAMPLE_LOG_HEADER)
+                fh.write(
+                    f'{now_str},{elapsed},'
+                    f'Timing_Marker,0,0,'
+                    f'{sample_name},0,\n',
+                )
+        except Exception as exc:
+            LOG.warning(
+                'Failed to write sample.log: %s', exc,
+            )
+
+    runner._event_bus.emit_sync(
+        'timing_marker', {
+            'elapsed_s': elapsed,
+            'label': label,
+            'event_type': event_type,
+            'trigger_analysis': False,
+        },
+    )
+
+
 @step_type('timing_marker')
 class TimingMarkerStep(StepExecutor):
     '''Record a timing marker in sample.log and emit a
@@ -1216,83 +1290,18 @@ class TimingMarkerStep(StepExecutor):
         Returns:
             True (always succeeds).
         '''
-        from datetime import datetime
-        import os.path as op
-
         label = params.get('label', '')
         event_type = params.get('event_type', 'start')
         trigger = params.get(
             'trigger_analysis', False,
         )
 
-        snap = runner.tracker.snapshot()
-        elapsed = round(snap.elapsed_s, 2)
-        now_str = datetime.now().strftime(
-            '%Y/%m/%d-%H:%M:%S',
-        )
-        sample_name = f'TIMING: {label} ({event_type})'
-
-        LOG.info(
-            'timing_marker: %s at %.2fs '
-            '(trigger_analysis=%s)',
-            sample_name, elapsed, trigger,
-        )
-
-        run_dir = getattr(runner, '_run_dir', None)
-        if run_dir:
-            self._write_sample_log(
-                op.join(run_dir, 'sample.log'),
-                now_str, elapsed, sample_name,
-            )
-
-        runner._event_bus.emit_sync(
-            'timing_marker', {
-                'elapsed_s': elapsed,
-                'label': label,
-                'event_type': event_type,
-                'trigger_analysis': trigger,
-            },
-        )
+        _emit_timing_marker(runner, label, event_type)
 
         if trigger:
             runner.trigger_analysis()
 
         return True
-
-    @staticmethod
-    def _write_sample_log(
-            path: str,
-            dt_str: str,
-            start_time: float,
-            sample: str,
-    ) -> None:
-        '''Append a timing-marker row to sample.log.
-
-        Matches sway's ``save_sample_log`` format exactly:
-        ``datetime,start_time,well_name,volume,flow_rate,
-        sample,rpm,tecan_port_num``.
-
-        Args:
-            path: Absolute path to sample.log.
-            dt_str: Wall-clock datetime string.
-            start_time: Elapsed seconds since protocol
-                start (same clock as peak_data
-                ``timestamp_s``).
-            sample: Sample name with ``TIMING:`` prefix.
-        '''
-        try:
-            with open(path, 'a') as fh:
-                if fh.tell() == 0:
-                    fh.write(_SAMPLE_LOG_HEADER)
-                fh.write(
-                    f'{dt_str},{start_time},'
-                    f'Timing_Marker,0,0,'
-                    f'{sample},0,\n',
-                )
-        except Exception as exc:
-            LOG.warning(
-                'Failed to write sample.log: %s', exc,
-            )
 
 
 def _ok(resp: dict | None) -> bool:

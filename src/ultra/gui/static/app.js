@@ -622,8 +622,10 @@
     sgChart.options.plugins.annotation
       .annotations[id] = {
       type: 'line',
+      scaleID: 'x',
       xMin: t,
       xMax: t,
+      yScaleID: 'yPeak',
       borderColor: color,
       borderWidth: 1,
       borderDash: [4, 3],
