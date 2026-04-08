@@ -36,8 +36,3 @@ default recipe, and other parameters.
 
 Protocol recipes live in `src/ultra/protocol/recipes/*.yaml`.
 See `tsh_ultra.yaml` and `quick_demo.yaml` for examples.
-
-## Architecture
-
-See `.cursor/plans/ultra_rpi_architecture_*.plan.md` for the full
-architecture document.
