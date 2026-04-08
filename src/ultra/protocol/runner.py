@@ -392,14 +392,16 @@ class ProtocolRunner:
             chip_id: str,
             note: str = '',
     ) -> tuple[Any, str]:
-        '''Create a RunGroupWriter and run directory.
+        '''Create a RunGroupWriter, run directory, and
+        register the RunGroup + Run on Dollop so that
+        ``run_id`` is assigned immediately.
 
         Args:
             chip_id: Chip ID for the run.
             note: User-provided run note.
 
         Returns:
-            (RunGroupWriter, run_dir_path) tuple.
+            (RunGroupWriter, run_dir_path, RunDirTuple).
         '''
         from ultra.services.run_data import RunGroupWriter
 
@@ -437,7 +439,148 @@ class ProtocolRunner:
             chip_id=chip_id or 'unknown',
             note=note,
         )
+
+        rdt = self._register_on_dollop(rg, rdt)
         return rg, run_dir, rdt
+
+    def _register_on_dollop(
+            self, rg: Any, rdt: Any,
+    ) -> Any:
+        '''Register RunGroup and Run on Dollop at start time.
+
+        Updates the on-disk JSON files with the Dollop-assigned
+        IDs so the egress service can skip re-creation.
+        Failures are non-fatal -- egress will retry later.
+
+        Args:
+            rg: RunGroupWriter instance.
+            rdt: RunDirTuple from ``add_run``.
+
+        Returns:
+            Updated RunDirTuple with Dollop IDs (or original
+            on failure).
+        '''
+        from ultra.services import (
+            dollop_client as dollop,
+        )
+        from ultra.services.run_data import RunDirTuple
+
+        rg_id = rg.rg_dict.get('rungroup_id', -1)
+        if rg_id == -1:
+            try:
+                rg_id, _ = dollop.create_rungroup(
+                    rg.rg_dict,
+                )
+            except Exception as exc:
+                LOG.warning(
+                    'Dollop RunGroup create failed: %s',
+                    exc,
+                )
+                return rdt
+            if rg_id != -1:
+                rg.rg_dict['rungroup_id'] = rg_id
+                rg._write_rg_json()
+                LOG.info(
+                    'Dollop RunGroup created: id=%d',
+                    rg_id,
+                )
+            else:
+                LOG.warning(
+                    'Dollop RunGroup creation returned '
+                    'default ID',
+                )
+                return rdt
+
+        reader_cfg = self._config.get('reader', {})
+        reader_dollop = reader_cfg.get(
+            'dollop_name', 'reader7',
+        )
+
+        run_id = rdt.run_id
+        if run_id == -1:
+            try:
+                run_dict = dollop.read_run_json(
+                    rdt.run_dir_path,
+                )
+                run_dict['rungroup_id'] = rg_id
+                run_dict['local_directory_path'] = (
+                    rdt.run_dir_path
+                )
+                run_id = dollop.create_run(
+                    run_dict,
+                    reader_dollop_name=reader_dollop,
+                )
+            except Exception as exc:
+                LOG.warning(
+                    'Dollop Run create failed: %s', exc,
+                )
+                return rdt._replace(
+                    rungroup_id=rg_id,
+                )
+            if run_id != -1:
+                LOG.info(
+                    'Dollop Run created: id=%d', run_id,
+                )
+                self._update_run_json_id(
+                    rdt.run_dir_path, run_id, rg_id,
+                )
+            else:
+                LOG.warning(
+                    'Dollop Run creation returned '
+                    'default ID',
+                )
+
+        new_rdt = RunDirTuple(
+            run_uuid=rdt.run_uuid,
+            run_id=run_id,
+            rungroup_uuid=rdt.rungroup_uuid,
+            rungroup_id=rg_id,
+            run_dir_path=rdt.run_dir_path,
+            rungroup_dir_path=rdt.rungroup_dir_path,
+        )
+
+        rdt_list = rg.rg_dict.get(
+            'run_uuid_dir_list', [],
+        )
+        for i, entry in enumerate(rdt_list):
+            uid = (
+                entry[0]
+                if isinstance(entry, (list, tuple))
+                else ''
+            )
+            if uid == rdt.run_uuid:
+                rdt_list[i] = new_rdt.to_list()
+                break
+        rg._write_rg_json()
+
+        return new_rdt
+
+    @staticmethod
+    def _update_run_json_id(
+            run_dir: str, run_id: int, rg_id: int,
+    ) -> None:
+        '''Patch run.json with Dollop-assigned IDs.
+
+        Args:
+            run_dir: Path to the run directory.
+            run_id: Dollop-assigned Run ID.
+            rg_id: Dollop-assigned RunGroup ID.
+        '''
+        import json
+        fp = os.path.join(run_dir, 'run.json')
+        try:
+            with open(fp, 'r') as fh:
+                d = json.load(fh)
+            d['run_id'] = run_id
+            d['rungroup_id'] = rg_id
+            with open(fp, 'w') as fh:
+                json.dump(
+                    d, fh, sort_keys=True, indent=2,
+                )
+        except Exception as exc:
+            LOG.warning(
+                'Failed to update run.json: %s', exc,
+            )
 
     # ----------------------------------------------------------
     # Main run -- synchronous core in protocol thread

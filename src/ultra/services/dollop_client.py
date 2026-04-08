@@ -134,6 +134,7 @@ def update_rungroup(
 
 def create_run(
         run_dict: dict[str, Any],
+        reader_dollop_name: str = '',
 ) -> int:
     '''Create a Run on Dollop.
 
@@ -144,6 +145,10 @@ def create_run(
 
     Args:
         run_dict: run.json-compatible dict.
+        reader_dollop_name: Dollop device name for the
+            reader (e.g. ``reader1``).  When provided this
+            overrides the ``reader_sn`` field in
+            *run_dict* for the device lookup.
 
     Returns:
         Dollop run ID, or DOLLOP_DEFAULT_ID on failure.
@@ -151,7 +156,10 @@ def create_run(
     from siphox.dollopclient.api import (
         devices as ddev,
     )
-    reader_sn = run_dict.get('reader_sn', '')
+    if reader_dollop_name:
+        reader_sn = reader_dollop_name
+    else:
+        reader_sn = run_dict.get('reader_sn', '')
     if not reader_sn.startswith('reader'):
         reader_sn = f'reader{reader_sn}'
 

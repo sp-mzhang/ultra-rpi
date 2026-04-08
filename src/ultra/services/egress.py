@@ -104,6 +104,11 @@ class EgressService:
         if dollop_host:
             dollop.configure(dollop_host, dollop_port)
 
+        reader_cfg = config.get('reader', {})
+        self._reader_dollop_name: str = reader_cfg.get(
+            'dollop_name', 'reader7',
+        )
+
         self._loop_sleep_s: float = egress_cfg.get(
             'loop_sleep_s', DEFAULT_LOOP_SLEEP_S,
         )
@@ -346,11 +351,15 @@ class EgressService:
             egress_ts_str=ts,
         )
 
+        fresh = self._db.get_run_by_rowid(run_tup.rowid)
+        if fresh is None:
+            fresh = run_tup
+
         self._emit_egress_event(
-            'egress_done', run_tup,
+            'egress_done', fresh,
         )
-        self._update_dollop_run(run_tup, ts)
-        self._check_rungroup_complete(run_tup)
+        self._update_dollop_run(fresh, ts)
+        self._check_rungroup_complete(fresh)
         self._prev_rowid = None
         self._num_egressed += 1
         self._process_recovery()
@@ -393,7 +402,9 @@ class EgressService:
             self, tup: edb.EgressTuple,
     ) -> None:
         '''Create RunGroup + Run on Dollop if not yet done.'''
-        if tup.rungroup_id == edb.DOLLOP_DEFAULT_ID:
+        rg_id = tup.rungroup_id
+
+        if rg_id == edb.DOLLOP_DEFAULT_ID:
             try:
                 rg_dict = dollop.read_rungroup_json(
                     tup.rungroup_dir_path,
@@ -415,6 +426,13 @@ class EgressService:
                 dollop.write_rungroup_json(
                     tup.rungroup_dir_path, rg_dict,
                 )
+            else:
+                LOG.warning(
+                    'Failed to create RunGroup on '
+                    'Dollop for %s',
+                    tup.rungroup_uuid[:8],
+                )
+                return
 
         if tup.run_id == edb.DOLLOP_DEFAULT_ID:
             try:
@@ -431,18 +449,24 @@ class EgressService:
             run_dict['local_directory_path'] = (
                 tup.run_dir_path
             )
-            run_dict['reader_device_sn'] = 'reader1'
+            run_dict['rungroup_id'] = rg_id
 
-            if run_dict.get(
-                'rungroup_id', -1,
-            ) == edb.DOLLOP_DEFAULT_ID:
-                run_dict['rungroup_id'] = tup.rungroup_id
-
-            run_id = dollop.create_run(run_dict)
+            run_id = dollop.create_run(
+                run_dict,
+                reader_dollop_name=(
+                    self._reader_dollop_name
+                ),
+            )
             if run_id != dollop.DOLLOP_DEFAULT_ID:
                 self._db.set_api_run_id(
                     run_uuid=tup.run_uuid,
                     run_id=run_id,
+                )
+            else:
+                LOG.warning(
+                    'Failed to create Run on Dollop '
+                    'for %s',
+                    tup.run_uuid[:8],
                 )
 
     def _copy_rg_files(

@@ -10,6 +10,7 @@ stm32:
 
 reader:
   port: auto
+  dollop_name: reader7
   acq_mode: continuous
   acq_time_total_s: 20000
   acq_time_step_s: 4

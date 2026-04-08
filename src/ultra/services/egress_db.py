@@ -227,6 +227,18 @@ class EgressDB:
         row = cur.fetchone()
         return EgressTuple(*row) if row else None
 
+    def get_run_by_rowid(
+            self, rowid: int,
+    ) -> EgressTuple | None:
+        '''Fetch a single run by its rowid.'''
+        cur = self.con.execute(
+            f'SELECT rowid, * FROM {self.TBL_EGRESS} '
+            'WHERE rowid=?',
+            (rowid,),
+        )
+        row = cur.fetchone()
+        return EgressTuple(*row) if row else None
+
     def mark_egressed(
             self, *,
             rowid: int,
