@@ -753,6 +753,54 @@ textarea {
 .egress-status-pending { color: var(--text-dim); }
 .egress-status-error { color: var(--red); }
 
+/* --- Log panel --- */
+.logs-panel {
+  position: fixed;
+  top: 60px;
+  right: 20px;
+  z-index: 1000;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  width: 600px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+}
+.logs-panel[hidden] { display: none; }
+
+.logs-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: move;
+}
+.logs-panel-header > span:first-child {
+  margin-right: auto;
+}
+
+.logs-content {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px 8px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.65rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 55vh;
+}
+
 /* --- Responsive fallback --- */
 @media (max-width: 768px) {
   main {

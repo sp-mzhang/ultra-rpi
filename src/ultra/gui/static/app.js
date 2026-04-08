@@ -43,6 +43,11 @@
   const elBtnEgressClearUpl = $(
     '#btn-egress-clear-uploaded',
   );
+  const elBtnLogs = $('#btn-logs');
+  const elLogsPanel = $('#logs-panel');
+  const elLogsContent = $('#logs-content');
+  const elBtnLogsClear = $('#btn-logs-clear');
+  const elBtnLogsClose = $('#btn-logs-close');
 
   /* ---- Init ---- */
   async function init() {
@@ -55,6 +60,7 @@
     initCharts();
     initCamera();
     initEgress();
+    initLogs();
   }
 
   async function loadRecipes() {
@@ -194,6 +200,9 @@
         break;
       case 'status_changed':
         updateMode(data.state || 'inactive');
+        break;
+      case 'log_line':
+        appendLogLine(data.line || '');
         break;
     }
   }
@@ -627,6 +636,70 @@
         + `<td class="${stClass}">${stLabel}</td>`;
       elEgressTbody.appendChild(tr);
     }
+  }
+
+  /* ---- Log Panel ---- */
+  let logsPanelOpen = false;
+  const LOG_MAX_LINES = 500;
+  const logBuffer = [];
+
+  function initLogs() {
+    fetchLogs();
+    elBtnLogs.onclick = () => {
+      logsPanelOpen = !logsPanelOpen;
+      elLogsPanel.hidden = !logsPanelOpen;
+      if (logsPanelOpen) renderLogBuffer();
+    };
+    elBtnLogsClose.onclick = () => {
+      logsPanelOpen = false;
+      elLogsPanel.hidden = true;
+    };
+    elBtnLogsClear.onclick = () => {
+      logBuffer.length = 0;
+      elLogsContent.textContent = '';
+    };
+    makeDraggable(
+      elLogsPanel,
+      elLogsPanel.querySelector('.logs-panel-header'),
+    );
+  }
+
+  async function fetchLogs() {
+    try {
+      const res = await fetch('/api/logs');
+      const data = await res.json();
+      const lines = data.lines || [];
+      logBuffer.length = 0;
+      logBuffer.push(...lines);
+      if (logsPanelOpen) renderLogBuffer();
+    } catch (e) {
+      console.warn('Failed to fetch logs', e);
+    }
+  }
+
+  function appendLogLine(line) {
+    logBuffer.push(line);
+    if (logBuffer.length > LOG_MAX_LINES) {
+      logBuffer.splice(
+        0, logBuffer.length - LOG_MAX_LINES,
+      );
+    }
+    if (!logsPanelOpen) return;
+    elLogsContent.textContent += line + '\n';
+    scrollLogsToBottom();
+  }
+
+  function renderLogBuffer() {
+    elLogsContent.textContent = (
+      logBuffer.join('\n')
+    );
+    scrollLogsToBottom();
+  }
+
+  function scrollLogsToBottom() {
+    elLogsContent.scrollTop = (
+      elLogsContent.scrollHeight
+    );
   }
 
   /* ---- Timing Markers ---- */

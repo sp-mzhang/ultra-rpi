@@ -379,6 +379,17 @@ def create_api_router(
         n = db.clear_egressed()
         return {'deleted': n}
 
+    # ---- Logs ----
+
+    @router.get('/logs')
+    async def get_logs():
+        '''Return recent log lines from the ring buffer.'''
+        from ultra.utils.logging import get_log_handler
+        handler = get_log_handler()
+        if handler is None:
+            return {'lines': []}
+        return {'lines': handler.get_lines()}
+
     # ---- Camera MJPEG streaming ----
 
     _camera = None

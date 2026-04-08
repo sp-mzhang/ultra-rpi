@@ -23,6 +23,10 @@
               title="Egress status">
         Egress: --
       </button>
+      <button id="btn-logs" class="btn btn-sm"
+              title="Toggle log viewer">
+        Logs
+      </button>
       <button id="btn-camera" class="btn btn-sm"
               title="Toggle camera view">
         Camera
@@ -65,6 +69,17 @@
         <tbody id="egress-tbody"></tbody>
       </table>
     </div>
+  </div>
+
+  <div id="logs-panel" class="logs-panel" hidden>
+    <div class="logs-panel-header">
+      <span>Logs</span>
+      <button id="btn-logs-clear"
+              class="egress-header-btn">Clear</button>
+      <button id="btn-logs-close"
+              class="egress-panel-close">&times;</button>
+    </div>
+    <pre id="logs-content" class="logs-content"></pre>
   </div>
 
   <main>

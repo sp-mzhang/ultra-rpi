@@ -292,6 +292,22 @@ def create_app(application: 'Application') -> FastAPI:
         'protocol_started', _on_protocol_started,
     )
 
+    from ultra.utils.logging import get_log_handler
+    _lh = get_log_handler()
+    if _lh is not None:
+        import asyncio as _aio
+
+        def _on_log_line(line: str) -> None:
+            loop = _aio.get_event_loop()
+            loop.call_soon_threadsafe(
+                _aio.ensure_future,
+                broadcaster.broadcast(
+                    'log_line', {'line': line},
+                ),
+            )
+
+        _lh.set_callback(_on_log_line)
+
     @app.websocket('/ws')
     async def websocket_endpoint(ws: WebSocket):
         await ws.accept()
