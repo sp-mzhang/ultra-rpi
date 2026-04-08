@@ -623,15 +623,14 @@
       .annotations[id] = {
       type: 'line',
       scaleID: 'x',
-      xMin: t,
-      xMax: t,
-      yScaleID: 'yPeak',
+      value: t,
       borderColor: color,
       borderWidth: 1,
       borderDash: [4, 3],
       label: {
         display: !!label,
-        content: label,
+        content: label + ' (' + evtType + ')',
+        rotation: 'auto',
         position: 'start',
         backgroundColor: 'rgba(0,0,0,0.6)',
         color: '#fff',
