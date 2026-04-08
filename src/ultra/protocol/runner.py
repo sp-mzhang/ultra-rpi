@@ -91,6 +91,11 @@ class ProtocolRunner:
         self._reader_thread: threading.Thread | None = None
         self._reader_stop = threading.Event()
 
+        self._flat_steps: list[tuple] = []
+        self._tip_state_at: list[int] = []
+        self._start_step: int = 1
+        self._restart_requested = False
+
     @property
     def is_running(self) -> bool:
         '''Whether a protocol is currently executing.'''
@@ -151,6 +156,71 @@ class ProtocolRunner:
                     self.tracker.snapshot().to_dict(),
                 )
                 LOG.info('Protocol RESUMED')
+
+    def restart_from(self, step_index: int) -> None:
+        '''Set the runner to restart from a specific step.
+
+        Must be called while paused. Reconciles tip state
+        with the expected state at the target step, updates
+        the loop cursor, then resumes.
+
+        Args:
+            step_index: 1-based step index to restart from.
+
+        Raises:
+            ValueError: If step_index is out of range or
+                the protocol is not paused.
+        '''
+        if not self._running or not self.is_paused:
+            raise ValueError(
+                'Protocol must be running and paused',
+            )
+        total = len(self._flat_steps) - 1
+        if step_index < 1 or step_index > total:
+            raise ValueError(
+                f'step_index must be 1..{total}, '
+                f'got {step_index}',
+            )
+        self._reconcile_tip(step_index)
+        self._start_step = step_index
+        self._restart_requested = True
+        LOG.info(
+            'Restart from step %d requested', step_index,
+        )
+        self.resume()
+
+    def _reconcile_tip(self, target_step: int) -> None:
+        '''Swap tips so the physical state matches what
+        the target step expects.
+
+        Args:
+            target_step: 1-based step index about to run.
+        '''
+        current_tip = (
+            self.tracker.snapshot().tip.current_tip_id
+        )
+        needed_tip = self._tip_state_at[target_step]
+        if current_tip == needed_tip:
+            return
+
+        LOG.info(
+            'Tip reconciliation: current=%d needed=%d',
+            current_tip, needed_tip,
+        )
+        r = self.stm32.send_command_wait_done(
+            cmd={
+                'cmd': 'gantry_tip_swap',
+                'from_id': current_tip,
+                'to_id': needed_tip,
+            },
+            timeout_s=60.0,
+        )
+        if r and r.get('status') == 'ok':
+            self.tracker.update_tip(needed_tip)
+        else:
+            LOG.error(
+                'Tip reconciliation failed: %s', r,
+            )
 
     # ----------------------------------------------------------
     # Background reader acquisition
@@ -317,12 +387,15 @@ class ProtocolRunner:
     # ----------------------------------------------------------
 
     def _create_run_group(
-            self, chip_id: str,
+            self,
+            chip_id: str,
+            note: str = '',
     ) -> tuple[Any, str]:
         '''Create a RunGroupWriter and run directory.
 
         Args:
             chip_id: Chip ID for the run.
+            note: User-provided run note.
 
         Returns:
             (RunGroupWriter, run_dir_path) tuple.
@@ -361,6 +434,7 @@ class ProtocolRunner:
         run_dir, _ = rg.add_run(
             reader_sn=reader_sn,
             chip_id=chip_id or 'unknown',
+            note=note,
         )
         return rg, run_dir
 
@@ -368,10 +442,61 @@ class ProtocolRunner:
     # Main run -- synchronous core in protocol thread
     # ----------------------------------------------------------
 
+    def _build_flat_steps(self) -> None:
+        '''Flatten recipe phases into an indexed list and
+        precompute the expected tip state at each step.
+
+        Populates ``_flat_steps`` as a list of
+        ``(phase, step_def)`` tuples (1-indexed: element 0
+        is a sentinel) and ``_tip_state_at`` where entry *i*
+        holds the ``current_tip_id`` expected at the *start*
+        of step *i*.
+        '''
+        flat: list[tuple] = [('', None)]
+        tip_at: list[int] = [0]
+        cur_tip = 0
+        for phase in self.recipe.phases:
+            for step_def in phase.steps:
+                tip_at.append(cur_tip)
+                flat.append((phase, step_def))
+                stype = step_def.type
+                if stype == 'tip_pick':
+                    cur_tip = step_def.params.get(
+                        'tip_id', 0,
+                    )
+                elif stype == 'tip_swap':
+                    cur_tip = step_def.params.get(
+                        'to_id', 0,
+                    )
+                elif stype == 'tip_return':
+                    cur_tip = 0
+        self._flat_steps = flat
+        self._tip_state_at = tip_at
+
+    def _build_step_manifest(self) -> list[dict]:
+        '''Build a JSON-serializable list of every step.
+
+        Returns:
+            List of dicts with index, phase, label, type,
+            and expected_tip for each step.
+        '''
+        manifest = []
+        for i in range(1, len(self._flat_steps)):
+            phase, step_def = self._flat_steps[i]
+            manifest.append({
+                'index': i,
+                'phase': phase.name,
+                'label': step_def.label,
+                'type': step_def.type,
+                'expected_tip': self._tip_state_at[i],
+            })
+        return manifest
+
     def _run_sync(
             self,
             recipe_name: str,
             chip_id: str = '',
+            note: str = '',
     ) -> list[dict]:
         '''Execute a complete protocol recipe (synchronous).
 
@@ -382,6 +507,8 @@ class ProtocolRunner:
         Args:
             recipe_name: Recipe name or path to YAML file.
             chip_id: Optional chip ID for tracking.
+            note: User-provided run note persisted in
+                run data.
 
         Returns:
             List of per-step result dicts.
@@ -395,12 +522,15 @@ class ProtocolRunner:
         self._abort_event.clear()
         self._pause_event.set()
         self._running = True
+        self._start_step = 1
+
+        self._build_flat_steps()
 
         rg_writer = None
         run_dir = None
         try:
             rg_writer, run_dir = self._create_run_group(
-                chip_id,
+                chip_id, note=note,
             )
             LOG.info('Run data dir: %s', run_dir)
         except Exception as exc:
@@ -424,6 +554,7 @@ class ProtocolRunner:
                 'chip_id': chip_id,
                 'total_steps': self.recipe.total_steps,
                 'run_dir': run_dir or '',
+                'steps': self._build_step_manifest(),
             },
         )
         LOG.info(
@@ -431,10 +562,14 @@ class ProtocolRunner:
             f'({self.recipe.total_steps} steps)',
         )
 
-        step_index = 0
+        total = self.recipe.total_steps
         try:
-            for phase in self.recipe.phases:
-                for step_def in phase.steps:
+            while self._start_step <= total:
+                self._restart_requested = False
+                for si in range(
+                    self._start_step,
+                    len(self._flat_steps),
+                ):
                     self.check_pause()
                     if self._abort_event.is_set():
                         LOG.warning('Protocol ABORTED')
@@ -444,8 +579,16 @@ class ProtocolRunner:
                             ).to_dict(),
                         )
                         return self.tracker.results
+                    if self._restart_requested:
+                        LOG.info(
+                            'Restarting from step %d',
+                            self._start_step,
+                        )
+                        break
 
-                    step_index += 1
+                    phase, step_def = (
+                        self._flat_steps[si]
+                    )
                     executor_cls = STEP_REGISTRY.get(
                         step_def.type,
                     )
@@ -455,13 +598,13 @@ class ProtocolRunner:
                             f'"{step_def.type}"',
                         )
                         self.tracker.end_step(
-                            step_index, ok=False,
+                            si, ok=False,
                         )
                         continue
 
                     self.tracker.begin_step(
-                        index=step_index,
-                        total=self.recipe.total_steps,
+                        index=si,
+                        total=total,
                         label=step_def.label,
                         phase=phase.name,
                     )
@@ -470,23 +613,23 @@ class ProtocolRunner:
                     ok = executor.execute(
                         step_def.params, self,
                     )
-                    self.tracker.end_step(
-                        step_index, ok=ok,
-                    )
+                    self.tracker.end_step(si, ok=ok)
 
                     if not ok:
                         LOG.error(
-                            f'Step {step_index} '
+                            f'Step {si} '
                             f'"{step_def.label}" '
                             f'FAILED -- aborting',
                         )
                         self._event_bus.emit_sync(
                             'protocol_error', {
-                                'step': step_index,
+                                'step': si,
                                 'label': step_def.label,
                             },
                         )
                         return self.tracker.results
+                else:
+                    break
         finally:
             self._stop_reader()
             self._running = False
@@ -506,7 +649,7 @@ class ProtocolRunner:
         LOG.info(
             f'Protocol completed: '
             f'{self.recipe.name} '
-            f'({step_index} steps, '
+            f'({total} steps, '
             f'{self.tracker.snapshot().elapsed_s:.1f}s)',
         )
         self._event_bus.emit_sync(
@@ -519,6 +662,7 @@ class ProtocolRunner:
             self,
             recipe_name: str,
             chip_id: str = '',
+            note: str = '',
     ) -> list[dict]:
         '''Async wrapper that launches ``_run_sync`` in
         a thread pool.
@@ -531,6 +675,7 @@ class ProtocolRunner:
         Args:
             recipe_name: Recipe name or path to YAML file.
             chip_id: Optional chip ID for tracking.
+            note: User-provided run note.
 
         Returns:
             List of per-step result dicts.
@@ -538,7 +683,12 @@ class ProtocolRunner:
         loop = asyncio.get_running_loop()
         self._event_bus.set_loop(loop)
         return await loop.run_in_executor(
-            None, self._run_sync, recipe_name, chip_id,
+            None,
+            lambda: self._run_sync(
+                recipe_name,
+                chip_id=chip_id,
+                note=note,
+            ),
         )
 
     def collect_pressure(

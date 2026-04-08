@@ -263,6 +263,7 @@ phases:
         for_vol: 45
         back_vol: 30
         sleep_s: 30
+        skip_aspirate: true
 
       # Step 22: DetBuf3
       - type: reagent_transfer

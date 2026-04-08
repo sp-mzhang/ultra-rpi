@@ -35,6 +35,11 @@
         <input type="text" id="chip-id"
                placeholder="ULTRA-TEST-001">
       </div>
+      <div class="control-row note-row">
+        <label for="run-note">Note:</label>
+        <textarea id="run-note" rows="2"
+                  placeholder="Run notes..."></textarea>
+      </div>
       <div class="btn-row">
         <button id="btn-run" class="btn btn-green">
           Run
@@ -67,7 +72,7 @@
       </div>
     </section>
 
-    <section id="progress" class="panel">
+    <section id="progress" class="panel progress-panel">
       <h2>Step Progress</h2>
       <div id="step-info">
         <span id="step-phase" class="phase-badge">--</span>
@@ -83,6 +88,7 @@
         </div>
       </div>
       <div id="elapsed">Elapsed: 0.0s</div>
+      <div id="step-list" class="step-list"></div>
     </section>
 
     <section id="cartridge-map" class="panel">

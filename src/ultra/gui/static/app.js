@@ -7,10 +7,14 @@
   /* ---- State ---- */
   let ws = null;
   let wellDefs = {};
+  let isPaused = false;
+  let isRunning = false;
+  let stepManifest = [];
 
   /* ---- Elements ---- */
   const elRecipe = $('#recipe-select');
   const elChipId = $('#chip-id');
+  const elNote = $('#run-note');
   const elBtnRun = $('#btn-run');
   const elBtnPause = $('#btn-pause');
   const elBtnResume = $('#btn-resume');
@@ -26,6 +30,7 @@
   const elMode = $('#mode-indicator');
   const elMachine = $('#machine-name');
   const elGrid = $('#wells-grid');
+  const elStepList = $('#step-list');
 
   /* ---- Init ---- */
   async function init() {
@@ -124,6 +129,7 @@
     switch (type) {
       case 'step_changed':
         updateProgress(data);
+        updateStepList(data);
         break;
       case 'well_updated':
         updateWell(data);
@@ -144,25 +150,133 @@
         updateButtons(true, true);
         elLabel.textContent = 'PAUSED: '
           + (data.step_label || '');
+        markStepListPaused(true);
         break;
       case 'protocol_resumed':
         updateButtons(true, false);
+        markStepListPaused(false);
         break;
       case 'protocol_started':
         completedSteps = 0;
         updateButtons(true, false);
+        if (data.steps) buildStepList(data.steps);
         break;
       case 'protocol_done':
       case 'protocol_error':
       case 'protocol_aborted':
         updateButtons(false, false);
         elLabel.textContent = type.replace('_', ' ');
+        markStepListPaused(false);
         showNewRun();
         break;
       case 'status_changed':
         updateMode(data.state || 'inactive');
         break;
     }
+  }
+
+  /* ---- Step List ---- */
+
+  function buildStepList(steps) {
+    stepManifest = steps;
+    elStepList.innerHTML = '';
+    steps.forEach((s) => {
+      const row = document.createElement('div');
+      row.className = 'step-item';
+      row.id = 'step-row-' + s.index;
+      row.dataset.index = s.index;
+      row.dataset.expectedTip = s.expected_tip;
+      row.innerHTML =
+        '<span class="step-num">' + s.index + '</span>'
+        + '<span class="step-phase-tag">'
+        + s.phase + '</span>'
+        + '<span class="step-lbl">'
+        + escHtml(s.label) + '</span>'
+        + '<span class="step-status"></span>';
+      row.addEventListener('click', onStepClick);
+      elStepList.appendChild(row);
+    });
+  }
+
+  function updateStepList(d) {
+    const idx = d.step || d.step_index || 0;
+    if (!idx) return;
+
+    if (d.completed) {
+      const row = document.getElementById(
+        'step-row-' + idx
+      );
+      if (row) {
+        row.classList.remove('active', 'paused');
+        row.classList.add(
+          d.ok === false ? 'failed' : 'completed'
+        );
+      }
+    } else {
+      const prev = elStepList.querySelector(
+        '.step-item.active'
+      );
+      if (prev) prev.classList.remove('active');
+      const row = document.getElementById(
+        'step-row-' + idx
+      );
+      if (row) {
+        row.classList.add('active');
+        row.scrollIntoView({
+          block: 'nearest',
+          behavior: 'smooth',
+        });
+      }
+    }
+  }
+
+  function markStepListPaused(paused) {
+    const active = elStepList.querySelector(
+      '.step-item.active'
+    );
+    if (active) {
+      active.classList.toggle('paused', paused);
+    }
+    elStepList.querySelectorAll('.step-item')
+      .forEach((el) => {
+        el.classList.toggle('clickable', paused);
+      });
+  }
+
+  async function onStepClick(e) {
+    if (!isPaused) return;
+    const row = e.currentTarget;
+    const idx = parseInt(row.dataset.index, 10);
+    const lbl = row.querySelector('.step-lbl')
+      .textContent;
+    const expTip = row.dataset.expectedTip || '0';
+
+    const msg = 'Restart from step ' + idx
+      + ': ' + lbl
+      + '?\nExpected tip: ' + expTip;
+    if (!confirm(msg)) return;
+
+    try {
+      const res = await fetch('/api/restart_from', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ step_index: idx }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.detail || 'Restart failed');
+      }
+    } catch (err) {
+      alert('Restart request failed: ' + err.message);
+    }
+  }
+
+  function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
   }
 
   /* ---- UI Updates ---- */
@@ -200,7 +314,7 @@
     const fillEl = el.querySelector('.fill-bar-inner');
     if (volEl) {
       volEl.textContent =
-        `${d.current_volume_ul.toFixed(0)} µL`;
+        `${d.current_volume_ul.toFixed(0)} \u00b5L`;
     }
     const init = wellDefs[d.name];
     if (init && fillEl) {
@@ -236,6 +350,8 @@
   }
 
   function updateButtons(running, paused) {
+    isRunning = running;
+    isPaused = paused;
     elBtnRun.disabled = running;
     elBtnPause.disabled = !running || paused;
     elBtnResume.disabled = !running || !paused;
@@ -269,7 +385,7 @@
         <div class="well-reagent"
              title="${w.reagent}">${w.reagent}</div>
         <div class="well-vol">
-          ${curVol.toFixed(0)} µL
+          ${curVol.toFixed(0)} \u00b5L
         </div>
         <div class="fill-bar">
           <div class="fill-bar-inner"
@@ -735,6 +851,7 @@
     const body = {
       recipe: elRecipe.value,
       chip_id: elChipId.value || 'ULTRA-TEST-001',
+      note: elNote.value,
     };
     try {
       const res = await fetch('/api/run', {
@@ -772,6 +889,8 @@
     elBar.textContent = '0 / 0';
     elElapsed.textContent = 'Elapsed: 0.0s';
     elGrid.innerHTML = '';
+    elStepList.innerHTML = '';
+    stepManifest = [];
 
     elBtnNewRun.style.display = 'none';
     elBtnRun.style.display = '';

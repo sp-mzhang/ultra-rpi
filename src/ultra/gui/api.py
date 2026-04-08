@@ -23,6 +23,12 @@ class RunRequest(BaseModel):
     '''Request body for starting a protocol run.'''
     recipe: str
     chip_id: str = ''
+    note: str = ''
+
+
+class RestartRequest(BaseModel):
+    '''Request body for restarting from a specific step.'''
+    step_index: int
 
 
 class SMRequest(BaseModel):
@@ -155,6 +161,7 @@ def create_api_router(
             return runner._run_sync(
                 req.recipe,
                 chip_id=req.chip_id,
+                note=req.note,
             )
 
         async def _run():
@@ -217,6 +224,36 @@ def create_api_router(
             )
         runner.abort()
         return {'status': 'aborting'}
+
+    @router.post('/restart_from')
+    async def restart_from_step(req: RestartRequest):
+        '''Restart protocol from a specific step.
+
+        Only allowed when the protocol is paused. Reconciles
+        tip state and resumes from the requested step.
+        '''
+        runner = app.get_runner()
+        if not runner.is_running:
+            raise HTTPException(
+                status_code=409,
+                detail='No protocol running',
+            )
+        if not runner.is_paused:
+            raise HTTPException(
+                status_code=409,
+                detail='Protocol must be paused first',
+            )
+        try:
+            runner.restart_from(req.step_index)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=str(exc),
+            )
+        return {
+            'status': 'restarting',
+            'from_step': req.step_index,
+        }
 
     @router.get('/wells')
     async def get_wells():

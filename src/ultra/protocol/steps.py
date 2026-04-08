@@ -523,6 +523,10 @@ class ReagentTransferStep(StepExecutor):
     Handles: piston reset, air slug, LLF aspiration,
     cartridge dispense with reasp, blowout, pressure
     collection, well state updates.
+
+    Set ``skip_aspirate: true`` when a preceding tip_mix
+    with ``pull_vol`` already loaded the liquid into the
+    tip so the LLF aspiration is unnecessary.
     '''
 
     def execute(self, params, runner) -> bool:
@@ -544,26 +548,40 @@ class ReagentTransferStep(StepExecutor):
         reasp = consts.get('reasp_ul', 12)
         remainder = asp_vol - cart_vol + reasp
 
-        sa = runner.stm32.smart_aspirate_at(
-            loc_id=source.loc_id,
-            volume_ul=asp_vol,
-            speed_ul_s=consts.get(
-                'aspirate_speed', 40.0,
-            ),
-            lld_threshold=consts.get(
-                'lld_threshold', 20,
-            ),
-            piston_reset=True,
-            air_slug_ul=consts.get('air_slug_ul', 40),
-            stream=False,
-        )
-        if sa is None:
-            return False
-        runner.tracker.update_well(
-            source.name, delta_ul=-asp_vol,
-            operation=f'asp {asp_vol}uL',
-        )
-        runner.collect_pressure(sa, params['label'])
+        if params.get('skip_aspirate'):
+            LOG.info(
+                'reagent_transfer: skip_aspirate '
+                '(liquid already in tip)',
+            )
+            runner.tracker.update_well(
+                source.name, delta_ul=-asp_vol,
+                operation=f'asp {asp_vol}uL (pre-pulled)',
+            )
+        else:
+            sa = runner.stm32.smart_aspirate_at(
+                loc_id=source.loc_id,
+                volume_ul=asp_vol,
+                speed_ul_s=consts.get(
+                    'aspirate_speed', 40.0,
+                ),
+                lld_threshold=consts.get(
+                    'lld_threshold', 20,
+                ),
+                piston_reset=True,
+                air_slug_ul=consts.get(
+                    'air_slug_ul', 40,
+                ),
+                stream=False,
+            )
+            if sa is None:
+                return False
+            runner.tracker.update_well(
+                source.name, delta_ul=-asp_vol,
+                operation=f'asp {asp_vol}uL',
+            )
+            runner.collect_pressure(
+                sa, params['label'],
+            )
 
         cd_r = runner.stm32.cart_dispense_at(
             loc_id=target.loc_id,
@@ -613,6 +631,10 @@ class ReagentTransferBFStep(StepExecutor):
     ``duration_s`` rather than a target volume. The
     ``cart_vol`` parameter is still required for volume
     bookkeeping (remainder return and well state tracking).
+
+    Set ``skip_aspirate: true`` when a preceding tip_mix
+    with ``pull_vol`` already loaded the liquid into the
+    tip so the LLF aspiration is unnecessary.
     '''
 
     def execute(self, params, runner) -> bool:
@@ -635,26 +657,40 @@ class ReagentTransferBFStep(StepExecutor):
         reasp = consts.get('reasp_ul', 12)
         remainder = asp_vol - cart_vol + reasp
 
-        sa = runner.stm32.smart_aspirate_at(
-            loc_id=source.loc_id,
-            volume_ul=asp_vol,
-            speed_ul_s=consts.get(
-                'aspirate_speed', 40.0,
-            ),
-            lld_threshold=consts.get(
-                'lld_threshold', 20,
-            ),
-            piston_reset=True,
-            air_slug_ul=consts.get('air_slug_ul', 40),
-            stream=False,
-        )
-        if sa is None:
-            return False
-        runner.tracker.update_well(
-            source.name, delta_ul=-asp_vol,
-            operation=f'asp {asp_vol}uL',
-        )
-        runner.collect_pressure(sa, params['label'])
+        if params.get('skip_aspirate'):
+            LOG.info(
+                'reagent_transfer_bf: skip_aspirate '
+                '(liquid already in tip)',
+            )
+            runner.tracker.update_well(
+                source.name, delta_ul=-asp_vol,
+                operation=f'asp {asp_vol}uL (pre-pulled)',
+            )
+        else:
+            sa = runner.stm32.smart_aspirate_at(
+                loc_id=source.loc_id,
+                volume_ul=asp_vol,
+                speed_ul_s=consts.get(
+                    'aspirate_speed', 40.0,
+                ),
+                lld_threshold=consts.get(
+                    'lld_threshold', 20,
+                ),
+                piston_reset=True,
+                air_slug_ul=consts.get(
+                    'air_slug_ul', 40,
+                ),
+                stream=False,
+            )
+            if sa is None:
+                return False
+            runner.tracker.update_well(
+                source.name, delta_ul=-asp_vol,
+                operation=f'asp {asp_vol}uL',
+            )
+            runner.collect_pressure(
+                sa, params['label'],
+            )
 
         cd_r = runner.stm32.cart_dispense_bf_at(
             loc_id=target.loc_id,

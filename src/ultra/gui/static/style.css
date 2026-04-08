@@ -250,7 +250,7 @@ main {
   font-size: 0.8rem;
 }
 
-select, input[type="text"] {
+select, input[type="text"], textarea {
   flex: 1;
   padding: 4px 8px;
   background: var(--bg);
@@ -258,6 +258,12 @@ select, input[type="text"] {
   border-radius: 4px;
   color: var(--text);
   font-size: 0.8rem;
+  font-family: inherit;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 2em;
 }
 
 .btn-row {
@@ -349,6 +355,108 @@ select, input[type="text"] {
   margin-top: 2px;
   font-size: 0.75rem;
   color: var(--text-dim);
+}
+
+.progress-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.step-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 6px;
+  background: var(--bg);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.step-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  font-size: 0.7rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: default;
+  transition: background 0.15s;
+}
+
+.step-item:last-child { border-bottom: none; }
+
+.step-item .step-num {
+  min-width: 22px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.step-item .step-phase-tag {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  background: var(--border);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.step-item .step-lbl {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-item .step-status {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+}
+
+.step-item.active {
+  background: rgba(79, 125, 249, 0.18);
+  color: var(--text);
+}
+
+.step-item.active .step-phase-tag {
+  background: var(--accent);
+  color: #fff;
+}
+
+.step-item.completed {
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.step-item.completed .step-status::after {
+  content: '\2713';
+  color: var(--green);
+}
+
+.step-item.failed {
+  background: rgba(218, 54, 51, 0.12);
+  color: var(--red);
+}
+
+.step-item.failed .step-status::after {
+  content: '\2717';
+  color: var(--red);
+}
+
+.step-item.paused {
+  background: rgba(210, 153, 34, 0.15);
+}
+
+.step-item.clickable {
+  cursor: pointer;
+}
+
+.step-item.clickable:hover {
+  background: rgba(79, 125, 249, 0.12);
 }
 
 /* --- Cartridge / Wells --- */
