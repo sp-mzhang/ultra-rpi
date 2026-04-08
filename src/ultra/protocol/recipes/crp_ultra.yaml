@@ -1,0 +1,278 @@
+name: CRP Ultra
+description: >
+  HS CRP blood-analysis protocol across 4 phases:
+  centrifuge separation, 4 buffer dilutions + serum prep
+  with 2 serial dilutions (10x->100x->750x), 7 reagent
+  transfers to chip (including GNP back-and-forth), and
+  final lock. Adapted from sway crp_steps_with_dilution
+  _tc_pump.py.
+
+constants:
+  air_slug_ul: 40
+  reasp_ul: 12
+  cart_disp_vel: 1.5
+
+wells:
+  # Buffer source wells (small)
+  S2:    {loc: 22, reagent: CRP Buffer 1, volume_ul: 180}
+  S4:    {loc: 24, reagent: CRP Buffer 2, volume_ul: 180}
+  S5:    {loc: 25, reagent: CRP Buffer 3, volume_ul: 130}
+  S6:    {loc: 26, reagent: CRP Buffer 4, volume_ul: 130}
+
+  # Reagent source wells
+  S7:    {loc: 27, reagent: Hydrophilic, volume_ul: 110}
+  S9:    {loc: 29, reagent: Lane4Buffer, volume_ul: 180}
+  M3:    {loc: 35, reagent: DI Water, volume_ul: 250}
+  M5:    {loc: 37, reagent: PBST, volume_ul: 220}
+  M7:    {loc: 39, reagent: 30CC-GNP, volume_ul: 200}
+
+  # Mixing wells (medium, start empty)
+  M4:    {loc: 36, reagent: Mix10x, volume_ul: 0}
+  M6:    {loc: 38, reagent: Mix100x, volume_ul: 0}
+  M9:    {loc: 41, reagent: Mix750x, volume_ul: 0}
+
+  # Other
+  M2:    {loc: 34, reagent: Waste, volume_ul: 0}
+  SERUM: {loc: 18, reagent: Serum, volume_ul: 50}
+  PP4:   {loc: 11, reagent: Cartridge, volume_ul: 0}
+
+phases:
+  - name: A
+    label: Centrifuge
+    include: _common.yaml#centrifuge_phase
+
+  - name: B
+    label: Dilution and Serum Prep
+    steps:
+      - type: lid
+        label: Open lid
+        open: true
+
+      # --- Buffer dilutions (Tip 1) ---
+
+      - type: tip_pick
+        label: Pick Tip 1
+        tip_id: 1
+
+      - type: dilution_transfer
+        label: CRP Buffer 1 (S2 -> M4)
+        source: S2
+        dest: M4
+        volume: 180
+        asp_speed: 80.0
+
+      - type: dilution_transfer
+        label: CRP Buffer 2 (S4 -> M6)
+        source: S4
+        dest: M6
+        volume: 180
+        asp_speed: 80.0
+
+      - type: dilution_transfer
+        label: CRP Buffer 3 (S5 -> M9)
+        source: S5
+        dest: M9
+        volume: 130
+        asp_speed: 80.0
+
+      - type: dilution_transfer
+        label: CRP Buffer 4 (S6 -> M9)
+        source: S6
+        dest: M9
+        volume: 130
+        asp_speed: 80.0
+
+      # --- Serum aspiration (Tip 2) ---
+
+      - type: tip_swap
+        label: Tip swap 1 -> 2
+        from_id: 1
+        to_id: 2
+
+      - type: move_to_location
+        label: Move to serum port
+        well: SERUM
+
+      - type: centrifuge_goto_serum
+        label: Rotate to serum position
+
+      - type: smart_aspirate
+        label: Aspirate serum
+        well: SERUM
+        volume: 50
+        speed: 75.0
+        air_slug: 50
+        piston_reset: true
+
+      - type: home_z
+        label: Home Z after serum aspirate
+
+      - type: centrifuge_goto_pipette
+        label: Rotate to pipette position
+
+      - type: well_dispense
+        label: Dispense serum to M4
+        well: M4
+        volume: 20
+        speed: 20.0
+        blowout: false
+
+      - type: well_dispense
+        label: Waste to M2
+        well: M2
+        volume: 30
+        speed: 100.0
+        blowout: true
+
+      # --- Serial dilutions (Tips 3-4) ---
+
+      - type: tip_swap
+        label: Tip swap 2 -> 3
+        from_id: 2
+        to_id: 3
+
+      - type: tip_mix
+        label: Mix M4 (10x dilution)
+        well: M4
+        mix_vol: 100
+        speed: 100.0
+        cycles: 4
+
+      - type: dilution_transfer
+        label: 10x to 100x (M4 -> M6)
+        source: M4
+        dest: M6
+        volume: 20
+        asp_speed: 20.0
+
+      - type: tip_mix
+        label: Mix M6 (100x dilution)
+        well: M6
+        mix_vol: 100
+        speed: 100.0
+        cycles: 4
+
+      - type: tip_swap
+        label: Tip swap 3 -> 4
+        from_id: 3
+        to_id: 4
+
+      - type: dilution_transfer
+        label: 100x to 750x (M6 -> M9)
+        source: M6
+        dest: M9
+        volume: 40
+        asp_speed: 20.0
+
+      - type: tip_mix
+        label: Mix M9 (750x dilution)
+        well: M9
+        mix_vol: 100
+        speed: 100.0
+        cycles: 4
+
+      - type: tip_return
+        label: Return Tip 4
+        tip_id: 4
+
+  - name: C
+    label: Main Reagent Dispensing
+    steps:
+      - type: tip_pick
+        label: Pick Tip 5
+        tip_id: 5
+
+      - type: lld
+        label: Pre-flight LLD
+        threshold: 20
+
+      # Hydrophilic Coating
+      - type: reagent_transfer
+        label: Hydrophilic
+        source: S7
+        target: PP4
+        asp_vol: 110
+        cart_vol: 70
+        cart_vel: 0.5
+
+      - type: tip_swap
+        label: Tip swap 5 -> 6
+        from_id: 5
+        to_id: 6
+
+      # DI Water
+      - type: reagent_transfer
+        label: DI Water
+        source: M3
+        target: PP4
+        asp_vol: 210
+        cart_vol: 160
+        cart_vel: 1.5
+
+      # PBST (simplified from slow+fast accel-boost)
+      - type: reagent_transfer
+        label: PBST
+        source: M5
+        target: PP4
+        asp_vol: 220
+        cart_vol: 180
+        cart_vel: 1.0
+
+      # Lane4 Buffer 4.23 (first)
+      - type: reagent_transfer
+        label: Lane4 Buffer (1st)
+        source: S9
+        target: PP4
+        asp_vol: 90
+        cart_vol: 60
+        cart_vel: 0.5
+
+      # Dilution7 (750x from M9)
+      - type: reagent_transfer
+        label: Dilution7 (750x)
+        source: M9
+        target: PP4
+        asp_vol: 150
+        cart_vol: 120
+        cart_vel: 0.5
+
+      # Lane4 Buffer 4.23 (second)
+      - type: reagent_transfer
+        label: Lane4 Buffer (2nd)
+        source: S9
+        target: PP4
+        asp_vol: 90
+        cart_vol: 60
+        cart_vel: 0.5
+
+      # GNP pre-mix then back-and-forth
+      - type: tip_mix
+        label: GNP Mix
+        well: M7
+        mix_vol: 100
+        speed: 100.0
+        cycles: 5
+        pull_vol: 200
+
+      - type: reagent_transfer_bf
+        label: GNP Dispense
+        source: M7
+        target: PP4
+        asp_vol: 200
+        cart_vol: 145
+        duration_s: 480
+        cart_vel: 1.5
+        for_vol: 35
+        back_vol: 25
+        sleep_s: 0
+
+      - type: tip_return
+        label: Return Tip 6
+        tip_id: 6
+
+      - type: home_close
+        label: Home all + close lid
+
+  - name: D
+    label: Lock
+    include: _common.yaml#lock_phase

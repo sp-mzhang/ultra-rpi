@@ -154,6 +154,76 @@ class CentrifugeRotateStep(StepExecutor):
         return True
 
 
+@step_type('centrifuge_shake')
+class CentrifugeShakeStep(StepExecutor):
+    '''Shake the carousel back and forth around a centre
+    angle to agitate the sample after lowering to the
+    carousel.
+
+    Each cycle rotates to (centre + amplitude) then to
+    (centre - amplitude). After all cycles the carousel
+    returns to the centre angle.
+
+    Params (YAML):
+        centre_angle_001deg: Centre position in 0.01 deg
+            units. Defaults to angle_open_initial_deg * 100
+            from recipe constants (i.e. 290 deg = 29000).
+        shake_angle_deg: Amplitude in degrees (default
+            from recipe constant ``shake_angle_deg``, or
+            45 if unset).
+        cycles: Number of full back-and-forth cycles
+            (default from recipe constant
+            ``shake_cycles``, or 3 if unset).
+    '''
+
+    def execute(self, params, runner) -> bool:
+        consts = runner.recipe.constants
+        open_deg = consts.get(
+            'angle_open_initial_deg', 290,
+        )
+        centre = params.get(
+            'centre_angle_001deg',
+            int(open_deg * 100),
+        )
+        amp_deg = params.get(
+            'shake_angle_deg',
+            consts.get('shake_angle_deg', 45),
+        )
+        cycles = params.get(
+            'cycles',
+            consts.get('shake_cycles', 3),
+        )
+        amp = int(amp_deg * 100)
+        move_rpm = consts.get('move_rpm', 1)
+
+        for i in range(int(cycles)):
+            for target in (centre + amp, centre - amp):
+                r = runner.stm32.send_command(
+                    cmd={
+                        'cmd': 'centrifuge_move_angle',
+                        'angle_001deg': target,
+                        'move_rpm': move_rpm,
+                    },
+                    timeout_s=120.0,
+                )
+                if not _ok(r):
+                    return False
+                time.sleep(1.0)
+
+        r = runner.stm32.send_command(
+            cmd={
+                'cmd': 'centrifuge_move_angle',
+                'angle_001deg': centre,
+                'move_rpm': move_rpm,
+            },
+            timeout_s=120.0,
+        )
+        if not _ok(r):
+            return False
+        time.sleep(1.0)
+        return True
+
+
 @step_type('centrifuge_goto_serum')
 class CentrifugeGotoSerumStep(StepExecutor):
     '''Rotate centrifuge to serum-access position.
@@ -497,6 +567,11 @@ class ReagentTransferBFStep(StepExecutor):
 
     Used for SampleDil1A and SA-GNP type steps that need
     prolonged incubation with mixing.
+
+    The firmware runs the back-and-forth for a fixed
+    ``duration_s`` rather than a target volume. The
+    ``cart_vol`` parameter is still required for volume
+    bookkeeping (remainder return and well state tracking).
     '''
 
     def execute(self, params, runner) -> bool:
@@ -514,6 +589,7 @@ class ReagentTransferBFStep(StepExecutor):
 
         asp_vol = params['asp_vol']
         cart_vol = params['cart_vol']
+        duration_s = params['duration_s']
         consts = runner.recipe.constants
         reasp = consts.get('reasp_ul', 12)
         remainder = asp_vol - cart_vol + reasp
@@ -541,7 +617,7 @@ class ReagentTransferBFStep(StepExecutor):
 
         cd_r = runner.stm32.cart_dispense_bf_at(
             loc_id=target.loc_id,
-            total_volume_ul=cart_vol,
+            duration_s=duration_s,
             vel_ul_s=params.get(
                 'cart_vel',
                 consts.get('cart_disp_vel', 1.5),
@@ -557,7 +633,7 @@ class ReagentTransferBFStep(StepExecutor):
             return False
         runner.tracker.update_well(
             target.name, delta_ul=cart_vol,
-            operation=f'disp_bf {cart_vol}uL',
+            operation=f'disp_bf ~{cart_vol}uL ({duration_s}s)',
         )
         if isinstance(cd_r, dict):
             runner.collect_pressure(

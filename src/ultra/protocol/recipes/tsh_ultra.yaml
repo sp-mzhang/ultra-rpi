@@ -189,6 +189,7 @@ phases:
         target: PP4
         asp_vol: 190
         cart_vol: 160
+        duration_s: 1600
         cart_vel: 0.25
         for_vol: 40
         back_vol: 20
@@ -254,6 +255,7 @@ phases:
         target: PP4
         asp_vol: 200
         cart_vol: 165
+        duration_s: 430
         cart_vel: 1.5
         for_vol: 45
         back_vol: 30

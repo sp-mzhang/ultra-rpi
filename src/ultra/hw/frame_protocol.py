@@ -103,6 +103,7 @@ CMD_CFUGE_LOCK       = 0x850A
 CMD_CFUGE_REVERSE    = 0x850B
 CMD_CFUGE_GOTO_SERUM   = 0x850C
 CMD_CFUGE_GOTO_PIPETTE = 0x850D
+CMD_CFUGE_GOTO_BLISTER = 0x850E
 
 # BLDC driver command IDs (for use with CMD_CFUGE_BLDC_CMD)
 BLDC_GET_STATE         = 0x0001
@@ -319,6 +320,7 @@ CMD_NAME_TO_ID = {
     'centrifuge_reverse':   CMD_CFUGE_REVERSE,
     'centrifuge_goto_serum':   CMD_CFUGE_GOTO_SERUM,
     'centrifuge_goto_pipette': CMD_CFUGE_GOTO_PIPETTE,
+    'centrifuge_goto_blister': CMD_CFUGE_GOTO_BLISTER,
     'door_open':            CMD_DOOR_OPEN,
     'door_close':           CMD_DOOR_CLOSE,
     'door_status':          CMD_DOOR_STATUS,
@@ -753,6 +755,7 @@ def pack_lid_move(
         z_engage_um: int = 0,
         xy_speed_01mms: int = 250,
         z_speed_01mms: int = 60,
+        x_open_extra_um: int = 0,
 ) -> bytes:
     '''Pack CMD_LID_MOVE payload.
 
@@ -761,29 +764,41 @@ def pack_lid_move(
 
     Optional motion overrides. 0 means use firmware default for that
     parameter:
-      z_engage_um   : Signed absolute gantry Z target (µm, negative);
-                      0 = firmware default (-4500 µm / -4.5 mm).
-      xy_speed_01mms: XY cruise speed in 0.1 mm/s; default 250 (25 mm/s).
-      z_speed_01mms : Z cruise speed in 0.1 mm/s; default 60 (6 mm/s).
+      z_engage_um    : Signed absolute gantry Z target (µm, negative);
+                       0 = firmware default (-4500 µm / -4.5 mm).
+      xy_speed_01mms : XY cruise speed in 0.1 mm/s; default 250 (25 mm/s).
+      z_speed_01mms  : Z cruise speed in 0.1 mm/s; default 60 (6 mm/s).
+      x_open_extra_um: Extra X travel away from home on open (µm);
+                       0 = firmware default (10 mm).
 
     Args:
-        seq           : sequence number.
-        open          : True = open lid, False = close lid.
-        z_engage_um   : signed absolute gantry Z (µm, negative); 0 = def.
-        xy_speed_01mms: XY cruise speed (0.1 mm/s); 250 = default.
-        z_speed_01mms : Z cruise speed (0.1 mm/s); 60 = default.
+        seq             : sequence number.
+        open            : True = open lid, False = close lid.
+        z_engage_um     : signed absolute gantry Z (µm, negative); 0 = def.
+        xy_speed_01mms  : XY cruise speed (0.1 mm/s); 250 = default.
+        z_speed_01mms   : Z cruise speed (0.1 mm/s); 60 = default.
+        x_open_extra_um : extra X travel on open (µm); 0 = firmware default.
 
     Returns:
         5 bytes (short form) when all optional params are at defaults;
+        17 bytes extended-v2 form when x_open_extra_um is set;
         else 13 bytes extended form.
     '''
     _defaults = (
         z_engage_um == 0
         and xy_speed_01mms == 250
         and z_speed_01mms == 60
+        and x_open_extra_um == 0
     )
     if _defaults:
         return struct.pack('<IB', seq, int(open))
+    if x_open_extra_um != 0:
+        return struct.pack(
+            '<IBHHii',
+            seq, int(open),
+            xy_speed_01mms, z_speed_01mms,
+            z_engage_um, x_open_extra_um,
+        )
     return struct.pack(
         '<IBHHi',
         seq, int(open),
@@ -1409,9 +1424,9 @@ def pack_centrifuge_goto(
         angle_open_initial_deg: int = 290,
         move_rpm: int = 1,
 ) -> bytes:
-    '''Pack CMD_CFUGE_GOTO_SERUM / CMD_CFUGE_GOTO_PIPETTE payload.
+    '''Pack CMD_CFUGE_GOTO_SERUM / PIPETTE / BLISTER payload.
     Wire: seq(4) + angle_open_initial_deg(2) + move_rpm(2) = 8 bytes.
-    Firmware derives target: serum = open_init-180, pipette = open_init-90.
+    Firmware derives: pipette=init-90, serum=init-180, blister=init-270.
     '''
     return struct.pack(
         '<IHH',
@@ -1610,7 +1625,7 @@ def pack_well_dispense(
 
 def pack_cart_dispense_bf(
         seq: int,
-        total_volume_ul: int,
+        duration_s: int = 170,
         vel_ul_s: float = 1.0,
         for_vol_ul: int = 60,
         back_vol_ul: int = 30,
@@ -1622,14 +1637,14 @@ def pack_cart_dispense_bf(
     '''Pack CMD_CART_DISPENSE_BF payload.
 
     Wire layout matches proto_cmd_cart_dispense_bf_t (22 bytes):
-        seq(4) total_volume_ul(4) vel_ul_s(4f) for_vol_ul(2)
+        seq(4) duration_s(2) _reserved(2) vel_ul_s(4f) for_vol_ul(2)
         back_vol_ul(2) reasp_ul(2) sleep_s(2) z_retract_mm(2) flags(1)
 
     Caller handles XY and Z positioning before this command.
 
     Args:
         seq: Sequence number.
-        total_volume_ul: Total dispense volume in µL.
+        duration_s: Total B&F duration in seconds (default 170).
         vel_ul_s: Dispense/aspirate speed in µL/s (float, default 1).
         for_vol_ul: Forward dispense per cycle in µL (default 60).
         back_vol_ul: Backward aspirate per cycle in µL (default 30).
@@ -1640,8 +1655,8 @@ def pack_cart_dispense_bf(
     '''
     flags = LIQUID_FLAG_STREAM if stream else 0
     return struct.pack(
-        '<IIfHHHHHB',
-        seq, total_volume_ul, float(vel_ul_s),
+        '<IHHfHHHHHB',
+        seq, duration_s, 0, float(vel_ul_s),
         for_vol_ul, back_vol_ul, reasp_ul, sleep_s,
         z_retract_mm, flags,
     )

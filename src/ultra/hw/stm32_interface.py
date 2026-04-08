@@ -781,7 +781,7 @@ class STM32Interface:
         if cmd_name == 'cart_dispense_bf':
             return fp.pack_cart_dispense_bf(
                 seq=seq,
-                total_volume_ul=cmd.get('volume', 0),
+                duration_s=cmd.get('duration_s', 170),
                 vel_ul_s=float(
                     cmd.get('vel', 1.0),
                 ),
@@ -1908,7 +1908,7 @@ class STM32Interface:
     def cart_dispense_bf_at(
             self,
             loc_id: int,
-            total_volume_ul: int,
+            duration_s: int = 170,
             vel_ul_s: float = 1.0,
             for_vol_ul: int = 60,
             back_vol_ul: int = 30,
@@ -1920,20 +1920,26 @@ class STM32Interface:
             stream: bool = False,
             timeout_s: float = 120.0,
     ) -> dict | bool:
-        '''Move to a location and firmware back-and-forth dispense.
+        '''Move to a location and firmware back-and-forth
+        dispense for a fixed duration.
 
         Sequence: move_to_location -> (Z to cartridge_z) ->
         cart_dispense_bf (wait DONE) -> home Z.
 
         Args:
             loc_id: Cartridge location ID (e.g. PP4).
-            total_volume_ul: Total volume to dispense in uL.
+            duration_s: Total back-and-forth duration in
+                seconds. Firmware runs forward/back cycles
+                for this long.
             vel_ul_s: Dispense velocity in uL/s.
-            for_vol_ul: Forward dispense volume per cycle uL.
-            back_vol_ul: Back-aspirate volume per cycle uL.
+            for_vol_ul: Forward dispense volume per cycle
+                in uL.
+            back_vol_ul: Back-aspirate volume per cycle
+                in uL.
             reasp_ul: Re-aspiration volume in uL.
-            sleep_s: Post-dispense sleep in seconds.
-            z_retract_mm: Retract height after dispense in mm.
+            sleep_s: Post-dispense dwell in seconds.
+            z_retract_mm: Retract height after dispense
+                in mm.
             cartridge_z: Pre-detected Z position in mm.
             move_speed_01mms: XY move speed in 0.1 mm/s.
             stream: Enable real-time pressure streaming.
@@ -1975,26 +1981,13 @@ class STM32Interface:
                 return False
             time.sleep(0.3)
 
-        net_per_cycle = max(
-            for_vol_ul - back_vol_ul, 1,
-        )
-        n_cycles = max(
-            (total_volume_ul - for_vol_ul)
-            // net_per_cycle,
-            0,
-        )
-        pump_time = (
-            float(for_vol_ul)
-            + n_cycles
-            * float(for_vol_ul + back_vol_ul)
-        ) / max(vel_ul_s, 0.01)
         long_timeout = (
-            pump_time + float(sleep_s) + 60.0
+            float(duration_s) + float(sleep_s) + 60.0
         )
         r = self.send_command_wait_done(
             cmd={
                 'cmd': 'cart_dispense_bf',
-                'volume': total_volume_ul,
+                'duration_s': duration_s,
                 'vel': vel_ul_s,
                 'for_vol': for_vol_ul,
                 'back_vol': back_vol_ul,
@@ -2010,7 +2003,7 @@ class STM32Interface:
             LOG.error(
                 f'cart_dispense_bf_at: '
                 f'cart_dispense_bf '
-                f'{total_volume_ul} ul FAILED',
+                f'{duration_s}s FAILED',
             )
             return False
         pressure = (
@@ -2019,7 +2012,7 @@ class STM32Interface:
         )
         LOG.info(
             f'cart_dispense_bf_at loc={loc_id}: '
-            f'{total_volume_ul} ul OK',
+            f'{duration_s}s OK',
         )
         time.sleep(0.3)
 

@@ -5,6 +5,8 @@ defaults:
   well_disp_speed: 100.0
   lld_threshold: 20
   default_cartridge_z_mm: -23.8
+  shake_angle_deg: 45
+  shake_cycles: 3
 
 centrifuge_phase:
   steps:
@@ -23,6 +25,9 @@ centrifuge_phase:
     - type: lift_move
       label: Lower lift to 15mm
       target_mm: 15.0
+
+    - type: centrifuge_shake
+      label: Shake carousel
 
     - type: centrifuge_goto_pipette
       label: Rotate to pipette position
