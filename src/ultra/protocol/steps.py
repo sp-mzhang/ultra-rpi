@@ -1181,6 +1181,120 @@ class DelayStep(StepExecutor):
         return True
 
 
+_SAMPLE_LOG_HEADER = (
+    'datetime,start_time,well_name,'
+    'volume,flow_rate,sample,rpm,tecan_port_num\n'
+)
+
+
+@step_type('timing_marker')
+class TimingMarkerStep(StepExecutor):
+    '''Record a timing marker in sample.log and emit a
+    ``timing_marker`` event for the GUI sensorgram.
+
+    Writes a sway-compatible ``sample.log`` row with the
+    ``TIMING:`` prefix so downstream analysis can identify
+    marker rows. The ``start_time`` column uses the same
+    ``tracker.elapsed_s`` clock as peak data, keeping the
+    marker x-position aligned with the sensorgram.
+
+    Optionally triggers analysis (stub).
+    '''
+
+    def execute(self, params, runner) -> bool:
+        '''Write timing to sample.log and broadcast.
+
+        Args:
+            params: Step params from YAML recipe.
+                ``label`` (str): marker event name.
+                ``event_type`` (str): ``start`` or ``stop``
+                    (controls vertical line colour).
+                ``trigger_analysis`` (bool): whether to
+                    invoke the analysis stub.
+            runner: Protocol runner instance.
+
+        Returns:
+            True (always succeeds).
+        '''
+        from datetime import datetime
+        import os.path as op
+
+        label = params.get('label', '')
+        event_type = params.get('event_type', 'start')
+        trigger = params.get(
+            'trigger_analysis', False,
+        )
+
+        snap = runner.tracker.snapshot()
+        elapsed = round(snap.elapsed_s, 2)
+        now_str = datetime.now().strftime(
+            '%Y/%m/%d-%H:%M:%S',
+        )
+        sample_name = f'TIMING: {label} ({event_type})'
+
+        LOG.info(
+            'timing_marker: %s at %.2fs '
+            '(trigger_analysis=%s)',
+            sample_name, elapsed, trigger,
+        )
+
+        run_dir = getattr(runner, '_run_dir', None)
+        if run_dir:
+            self._write_sample_log(
+                op.join(run_dir, 'sample.log'),
+                now_str, elapsed, sample_name,
+            )
+
+        runner._event_bus.emit_sync(
+            'timing_marker', {
+                'elapsed_s': elapsed,
+                'label': label,
+                'event_type': event_type,
+                'trigger_analysis': trigger,
+            },
+        )
+
+        if trigger:
+            runner.trigger_analysis()
+
+        return True
+
+    @staticmethod
+    def _write_sample_log(
+            path: str,
+            dt_str: str,
+            start_time: float,
+            sample: str,
+    ) -> None:
+        '''Append a timing-marker row to sample.log.
+
+        Matches sway's ``save_sample_log`` format exactly:
+        ``datetime,start_time,well_name,volume,flow_rate,
+        sample,rpm,tecan_port_num``.
+
+        Args:
+            path: Absolute path to sample.log.
+            dt_str: Wall-clock datetime string.
+            start_time: Elapsed seconds since protocol
+                start (same clock as peak_data
+                ``timestamp_s``).
+            sample: Sample name with ``TIMING:`` prefix.
+        '''
+        try:
+            with open(path, 'a') as fh:
+                if fh.tell() == 0:
+                    fh.write(_SAMPLE_LOG_HEADER)
+                fh.write(
+                    f'{dt_str},{start_time},'
+                    f'Timing_Marker,0,0,'
+                    f'{sample},0,\n',
+                )
+        except Exception as exc:
+            LOG.warning(
+                'Failed to write sample.log: %s', exc,
+            )
+
+
 def _ok(resp: dict | None) -> bool:
     '''Check if a command response indicates success.'''
     return bool(resp and resp.get('status') == 'OK')

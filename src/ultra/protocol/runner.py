@@ -95,6 +95,7 @@ class ProtocolRunner:
         self._tip_state_at: list[int] = []
         self._start_step: int = 1
         self._restart_requested = False
+        self._run_dir: str | None = None
 
     @property
     def is_running(self) -> bool:
@@ -532,6 +533,7 @@ class ProtocolRunner:
             rg_writer, run_dir = self._create_run_group(
                 chip_id, note=note,
             )
+            self._run_dir = run_dir
             LOG.info('Run data dir: %s', run_dir)
         except Exception as exc:
             LOG.warning(
@@ -689,6 +691,17 @@ class ProtocolRunner:
                 chip_id=chip_id,
                 note=note,
             ),
+        )
+
+    def trigger_analysis(self) -> None:
+        '''Stub for analysis trigger at a timing marker.
+
+        Called when a ``timing_marker`` step has
+        ``trigger_analysis: true``. Currently logs and
+        returns; fill in when analysis integration is ready.
+        '''
+        LOG.info(
+            'trigger_analysis called (stub -- no-op)',
         )
 
     def collect_pressure(

@@ -26,6 +26,9 @@ peak_detect:
 protocol:
   default_recipe: tsh_ultra
 
+camera:
+  device: /dev/video0
+
 gui:
   host: 0.0.0.0
   port: 8080

@@ -1,7 +1,8 @@
 '''ultra.gui.api -- REST API endpoints for the web GUI.
 
 Provides endpoints for protocol control, status queries,
-recipe listing, and state machine management.
+recipe listing, camera streaming, and state machine
+management.
 '''
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -293,5 +295,88 @@ def create_api_router(
                 'state': app._state_machine.state.value,
             }
         return {'active': False, 'state': 'inactive'}
+
+    # ---- Egress status endpoints ----
+
+    def _get_egress_db():
+        '''Return the EgressDB if egress is enabled.'''
+        svc = getattr(app, '_egress_svc', None)
+        if svc is None:
+            return None
+        return getattr(svc, '_db', None)
+
+    @router.get('/egress/status')
+    async def egress_status():
+        '''Return egress summary counts.
+
+        Returns ``{total, egressed, pending, errored}``.
+        When egress is disabled returns all zeros.
+        '''
+        db = _get_egress_db()
+        if db is None:
+            return {
+                'total': 0, 'egressed': 0,
+                'pending': 0, 'errored': 0,
+            }
+        return db.get_summary()
+
+    @router.get('/egress/runs')
+    async def egress_runs():
+        '''Return all egress runs as JSON list.
+
+        Each entry contains run metadata and egress state.
+        Newest runs appear first.
+        '''
+        db = _get_egress_db()
+        if db is None:
+            return []
+        rows = db.get_all_runs()
+        return [
+            {
+                'rowid': r.rowid,
+                'rundate_ts': r.rundate_ts,
+                'run_uuid': r.run_uuid,
+                'run_id': r.run_id,
+                'rungroup_uuid': r.rungroup_uuid,
+                'is_egressed': bool(r.is_egressed),
+                'egress_ts': r.egress_ts,
+                'run_dir_path': r.run_dir_path,
+                'egress_errors': r.egress_errors,
+            }
+            for r in rows
+        ]
+
+    # ---- Camera MJPEG streaming ----
+
+    _camera = None
+
+    def _get_camera():
+        nonlocal _camera
+        if _camera is None:
+            from ultra.hw.camera import CameraStream
+            cam_cfg = app.config.get('camera', {})
+            device = cam_cfg.get(
+                'device', '/dev/video0',
+            )
+            _camera = CameraStream(device=device)
+        if not _camera.is_running:
+            _camera.start()
+        return _camera
+
+    @router.get('/camera/stream')
+    async def camera_stream():
+        '''Stream MJPEG frames from the USB camera.
+
+        Returns a multipart/x-mixed-replace response
+        that browsers render natively in an ``<img>`` tag.
+        '''
+        cam = _get_camera()
+        return StreamingResponse(
+            cam.generate_mjpeg(),
+            media_type=(
+                'multipart/x-mixed-replace; '
+                'boundary=frame'
+            ),
+        )
 
     return router

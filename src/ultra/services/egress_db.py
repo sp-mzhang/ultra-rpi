@@ -431,6 +431,57 @@ class EgressDB:
             )
 
     # ----------------------------------------------------------
+    # listing / summary
+    # ----------------------------------------------------------
+
+    def get_all_runs(self) -> list[EgressTuple]:
+        '''Return all runs ordered newest first.
+
+        Returns:
+            List of EgressTuple rows from egresstable.
+        '''
+        cur = self.con.execute(
+            f'SELECT rowid, * FROM {self.TBL_EGRESS} '
+            'ORDER BY ROWID DESC',
+        )
+        return [
+            EgressTuple(*row) for row in cur.fetchall()
+        ]
+
+    def get_summary(self) -> dict[str, int]:
+        '''Return aggregate egress counts.
+
+        Returns:
+            Dict with keys ``total``, ``egressed``,
+            ``pending``, ``errored``.
+        '''
+        cur = self.con.execute(
+            f'SELECT '
+            f'COUNT(*), '
+            f'SUM(CASE WHEN is_egressed=1 '
+            f'THEN 1 ELSE 0 END), '
+            f'SUM(CASE WHEN is_egressed=0 '
+            f'AND egress_errors<={self.max_retries} '
+            f'THEN 1 ELSE 0 END), '
+            f'SUM(CASE WHEN is_egressed=0 '
+            f'AND egress_errors>{self.max_retries} '
+            f'THEN 1 ELSE 0 END) '
+            f'FROM {self.TBL_EGRESS}',
+        )
+        row = cur.fetchone()
+        if row is None:
+            return {
+                'total': 0, 'egressed': 0,
+                'pending': 0, 'errored': 0,
+            }
+        return {
+            'total': row[0] or 0,
+            'egressed': row[1] or 0,
+            'pending': row[2] or 0,
+            'errored': row[3] or 0,
+        }
+
+    # ----------------------------------------------------------
     # helpers
     # ----------------------------------------------------------
 

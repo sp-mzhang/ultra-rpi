@@ -170,6 +170,28 @@ class EgressService:
     # main loop tick
     # ----------------------------------------------------------
 
+    def _emit_egress_event(
+            self,
+            event_type: str,
+            run_tup: edb.EgressTuple,
+    ) -> None:
+        '''Emit an egress event with summary counts.
+
+        Args:
+            event_type: One of ``egress_started``,
+                ``egress_done``, ``egress_error``.
+            run_tup: The run being processed.
+        '''
+        summary = self._db.get_summary()
+        self._event_bus.emit_sync(
+            event_type,
+            {
+                'run_uuid': run_tup.run_uuid,
+                'run_dir_path': run_tup.run_dir_path,
+                **summary,
+            },
+        )
+
     async def _tick(self) -> None:
         self._heartbeat()
 
@@ -182,6 +204,9 @@ class EgressService:
             return
 
         LOG.info('Egressing run %s', run_tup.run_uuid[:8])
+        self._emit_egress_event(
+            'egress_started', run_tup,
+        )
         try:
             ok, ts = self._egress_run(run_tup)
         except Exception as err:
@@ -191,11 +216,17 @@ class EgressService:
             )
             self._num_errors += 1
             self._db.mark_egress_error(run_tup.run_uuid)
+            self._emit_egress_event(
+                'egress_error', run_tup,
+            )
             return
 
         if not ok or not ts:
             self._num_errors += 1
             self._db.mark_egress_error(run_tup.run_uuid)
+            self._emit_egress_event(
+                'egress_error', run_tup,
+            )
             return
 
         self._db.mark_egressed(
@@ -204,6 +235,9 @@ class EgressService:
             egress_ts_str=ts,
         )
 
+        self._emit_egress_event(
+            'egress_done', run_tup,
+        )
         self._update_dollop_run(run_tup, ts)
         self._check_rungroup_complete(run_tup)
         self._prev_rowid = None

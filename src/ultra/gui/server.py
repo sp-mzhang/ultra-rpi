@@ -55,6 +55,7 @@ class WebSocketBroadcaster:
             maxlen=_PEAK_BUFFER_MAX,
         )
         self._last_sweep: dict[str, Any] | None = None
+        self._marker_buffer: list[dict] = []
 
     def connect(self, ws: WebSocket) -> None:
         '''Register a new WebSocket connection.
@@ -98,6 +99,8 @@ class WebSocketBroadcaster:
             self._peak_buffer.append(data)
         elif event_type == 'sweep_data':
             self._last_sweep = data
+        elif event_type == 'timing_marker':
+            self._marker_buffer.append(data)
 
         if not self._connections:
             return
@@ -141,6 +144,15 @@ class WebSocketBroadcaster:
                 await ws.send_text(msg)
             except Exception:
                 pass
+        for marker in self._marker_buffer:
+            msg = json.dumps({
+                'type': 'timing_marker',
+                'data': marker,
+            })
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                return
 
     def clear_buffers(self) -> None:
         '''Discard all buffered chart data.
@@ -150,6 +162,7 @@ class WebSocketBroadcaster:
         '''
         self._peak_buffer.clear()
         self._last_sweep = None
+        self._marker_buffer.clear()
 
 
 def create_app(application: 'Application') -> FastAPI:
@@ -187,13 +200,15 @@ def create_app(application: 'Application') -> FastAPI:
     _BROADCAST_EVENTS = [
         'step_changed', 'well_updated',
         'wells_initialized', 'tip_changed',
-        'peak_data', 'sweep_data', 'protocol_paused',
-        'protocol_resumed',
+        'peak_data', 'sweep_data', 'timing_marker',
+        'protocol_paused', 'protocol_resumed',
         'protocol_done', 'protocol_error',
         'protocol_aborted', 'status_changed',
         'door_opened', 'door_closed',
         'pressure_update', 'temperature_update',
         'centrifuge_rpm', 'stm32_error',
+        'egress_started', 'egress_done',
+        'egress_error',
     ]
 
     for event_name in _BROADCAST_EVENTS:

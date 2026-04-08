@@ -31,6 +31,14 @@
   const elMachine = $('#machine-name');
   const elGrid = $('#wells-grid');
   const elStepList = $('#step-list');
+  const elBtnCamera = $('#btn-camera');
+  const elCameraPanel = $('#camera-panel');
+  const elCameraFeed = $('#camera-feed');
+  const elBtnCameraClose = $('#btn-camera-close');
+  const elBtnEgress = $('#btn-egress');
+  const elEgressPanel = $('#egress-panel');
+  const elEgressTbody = $('#egress-tbody');
+  const elBtnEgressClose = $('#btn-egress-close');
 
   /* ---- Init ---- */
   async function init() {
@@ -41,6 +49,8 @@
     initTabs();
     initSidebar();
     initCharts();
+    initCamera();
+    initEgress();
   }
 
   async function loadRecipes() {
@@ -159,7 +169,16 @@
       case 'protocol_started':
         completedSteps = 0;
         updateButtons(true, false);
+        clearTimingMarkers();
         if (data.steps) buildStepList(data.steps);
+        break;
+      case 'timing_marker':
+        addTimingMarker(data);
+        break;
+      case 'egress_started':
+      case 'egress_done':
+      case 'egress_error':
+        updateEgressButton(data, type);
         break;
       case 'protocol_done':
       case 'protocol_error':
@@ -356,6 +375,8 @@
     elBtnPause.disabled = !running || paused;
     elBtnResume.disabled = !running || !paused;
     elBtnAbort.disabled = !running;
+    elBtnRun.textContent = 'Run';
+    elBtnRun.classList.remove('btn-starting');
     if (running) {
       elBtnNewRun.style.display = 'none';
       elBtnRun.style.display = '';
@@ -394,6 +415,194 @@
       `;
       elGrid.appendChild(card);
     });
+  }
+
+  /* ---- Camera ---- */
+  function initCamera() {
+    function toggleCamera(show) {
+      if (show) {
+        elCameraPanel.hidden = false;
+        elCameraFeed.src = '/api/camera/stream';
+        elBtnCamera.classList.add('active');
+      } else {
+        elCameraPanel.hidden = true;
+        elCameraFeed.src = '';
+        elBtnCamera.classList.remove('active');
+      }
+    }
+    elBtnCamera.onclick = () => {
+      toggleCamera(elCameraPanel.hidden);
+    };
+    elBtnCameraClose.onclick = () => {
+      toggleCamera(false);
+    };
+  }
+
+  /* ---- Egress ---- */
+  let egressPanelOpen = false;
+
+  function initEgress() {
+    fetchEgressStatus();
+
+    elBtnEgress.onclick = () => {
+      egressPanelOpen = !egressPanelOpen;
+      if (egressPanelOpen) {
+        elEgressPanel.hidden = false;
+        fetchEgressRuns();
+      } else {
+        elEgressPanel.hidden = true;
+      }
+    };
+    elBtnEgressClose.onclick = () => {
+      egressPanelOpen = false;
+      elEgressPanel.hidden = true;
+    };
+  }
+
+  async function fetchEgressStatus() {
+    try {
+      const res = await fetch('/api/egress/status');
+      const s = await res.json();
+      applyEgressSummary(s);
+    } catch (e) {
+      console.warn('Failed to load egress status', e);
+    }
+  }
+
+  function applyEgressSummary(s) {
+    const btn = elBtnEgress;
+    btn.classList.remove(
+      'egress-idle', 'egress-uploading',
+      'egress-done', 'egress-error',
+    );
+    const pending = s.pending || 0;
+    const errored = s.errored || 0;
+    const total = s.total || 0;
+    const egressed = s.egressed || 0;
+
+    if (total === 0) {
+      btn.textContent = 'Egress: --';
+      btn.classList.add('egress-idle');
+    } else if (errored > 0) {
+      btn.textContent = `Egress: ${errored} err`;
+      btn.classList.add('egress-error');
+    } else if (pending > 0) {
+      btn.textContent = `Egress: ${pending} pending`;
+      btn.classList.add('egress-uploading');
+    } else {
+      btn.textContent =
+        `Egress: ${egressed}/${total} done`;
+      btn.classList.add('egress-done');
+    }
+  }
+
+  function updateEgressButton(data, evtType) {
+    applyEgressSummary(data);
+    if (egressPanelOpen) fetchEgressRuns();
+  }
+
+  async function fetchEgressRuns() {
+    try {
+      const res = await fetch('/api/egress/runs');
+      const runs = await res.json();
+      renderEgressRuns(runs);
+    } catch (e) {
+      console.warn('Failed to load egress runs', e);
+    }
+  }
+
+  function renderEgressRuns(runs) {
+    elEgressTbody.innerHTML = '';
+    if (!runs.length) {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td colspan="3" '
+        + 'style="text-align:center;color:var(--text-dim)"'
+        + '>No runs</td>';
+      elEgressTbody.appendChild(tr);
+      return;
+    }
+    for (const r of runs) {
+      const tr = document.createElement('tr');
+      const dt = r.rundate_ts
+        ? r.rundate_ts.slice(0, 19).replace('T', ' ')
+        : '--';
+      const uuid = r.run_uuid
+        ? r.run_uuid.slice(0, 8)
+        : '--';
+      const dir = r.run_dir_path || '';
+      const parts = dir.split('/');
+      const chip = parts.length > 1
+        ? parts[parts.length - 2] : uuid;
+
+      let stClass, stLabel;
+      if (r.is_egressed) {
+        stClass = 'egress-status-done';
+        stLabel = 'done';
+      } else if (r.egress_errors > 0) {
+        stClass = 'egress-status-error';
+        stLabel = `error (${r.egress_errors})`;
+      } else {
+        stClass = 'egress-status-pending';
+        stLabel = 'pending';
+      }
+
+      tr.innerHTML =
+        `<td title="${r.rundate_ts || ''}">${dt}</td>`
+        + `<td title="${dir}">`
+        + `${chip}<br>`
+        + `<small>${uuid}</small></td>`
+        + `<td class="${stClass}">${stLabel}</td>`;
+      elEgressTbody.appendChild(tr);
+    }
+  }
+
+  /* ---- Timing Markers ---- */
+  const sgMarkers = [];
+
+  function addTimingMarker(d) {
+    const t = d.elapsed_s;
+    const label = d.label || '';
+    const evtType = d.event_type || 'start';
+    sgMarkers.push({
+      x: t, label: label, event_type: evtType,
+    });
+    if (!sgChart) return;
+    const id = 'marker_' + sgMarkers.length;
+    if (!sgChart.options.plugins.annotation) {
+      sgChart.options.plugins.annotation = {
+        annotations: {},
+      };
+    }
+    let color = 'rgba(255,255,255,0.5)';
+    if (evtType === 'start') color = 'rgba(255,80,80,0.7)';
+    else if (evtType === 'stop') color = 'rgba(80,140,255,0.7)';
+    sgChart.options.plugins.annotation
+      .annotations[id] = {
+      type: 'line',
+      xMin: t,
+      xMax: t,
+      borderColor: color,
+      borderWidth: 1,
+      borderDash: [4, 3],
+      label: {
+        display: !!label,
+        content: label,
+        position: 'start',
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        color: '#fff',
+        font: { size: 9 },
+        padding: 2,
+      },
+    };
+    sgDirty = true;
+  }
+
+  function clearTimingMarkers() {
+    sgMarkers.length = 0;
+    if (sgChart && sgChart.options.plugins.annotation) {
+      sgChart.options.plugins.annotation.annotations = {};
+    }
   }
 
   /* ========================================================
@@ -569,6 +778,7 @@
         },
         plugins: {
           legend: { display: false },
+          annotation: { annotations: {} },
           zoom: {
             pan: { enabled: true, mode: 'xy' },
             zoom: {
@@ -822,6 +1032,9 @@
   /* ---------- Chart init + flush ---------- */
 
   function initCharts() {
+    if (window.chartjsPluginAnnotation) {
+      Chart.register(window.chartjsPluginAnnotation);
+    }
     const sgCanvas = $('#sensorgram-canvas');
     const spCanvas = $('#spectrum-canvas');
     sgCanvas.style.display = '';
@@ -853,6 +1066,12 @@
       chip_id: elChipId.value || 'ULTRA-TEST-001',
       note: elNote.value,
     };
+
+    elBtnRun.disabled = true;
+    elBtnRun.textContent = 'Starting\u2026';
+    elBtnRun.classList.add('btn-starting');
+    elLabel.textContent = 'Initialising hardware\u2026';
+
     try {
       const res = await fetch('/api/run', {
         method: 'POST',
@@ -864,9 +1083,17 @@
       if (!res.ok) {
         const err = await res.json();
         alert(err.detail || 'Failed to start');
+        elBtnRun.disabled = false;
+        elBtnRun.textContent = 'Run';
+        elBtnRun.classList.remove('btn-starting');
+        elLabel.textContent = 'Idle';
       }
     } catch (e) {
       alert('Request failed: ' + e.message);
+      elBtnRun.disabled = false;
+      elBtnRun.textContent = 'Run';
+      elBtnRun.classList.remove('btn-starting');
+      elLabel.textContent = 'Idle';
     }
   };
 
@@ -891,6 +1118,7 @@
     elGrid.innerHTML = '';
     elStepList.innerHTML = '';
     stepManifest = [];
+    clearTimingMarkers();
 
     elBtnNewRun.style.display = 'none';
     elBtnRun.style.display = '';

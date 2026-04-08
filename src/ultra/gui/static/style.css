@@ -289,6 +289,15 @@ textarea {
 }
 
 .btn-green { background: var(--green); color: #fff; }
+.btn-starting {
+  background: var(--yellow) !important;
+  color: #000 !important;
+  animation: pulse-starting 1s ease-in-out infinite;
+}
+@keyframes pulse-starting {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
 .btn-yellow { background: var(--yellow); color: #000; }
 .btn-blue { background: var(--blue); color: #fff; }
 .btn-red { background: var(--red); color: #fff; }
@@ -564,6 +573,168 @@ textarea {
   color: #fff;
   border-color: var(--accent);
 }
+
+/* --- Header layout --- */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- Camera panel --- */
+.camera-panel {
+  position: fixed;
+  top: 50px;
+  right: 12px;
+  z-index: 1000;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  resize: both;
+  min-width: 200px;
+  min-height: 160px;
+  width: 400px;
+}
+
+.camera-panel[hidden] { display: none; }
+
+.camera-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: move;
+}
+
+.camera-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.camera-close:hover { color: var(--red); }
+
+#camera-feed {
+  display: block;
+  width: 100%;
+  height: calc(100% - 28px);
+  object-fit: contain;
+  background: #000;
+}
+
+/* --- Egress button --- */
+.egress-btn {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.egress-btn.egress-idle { color: var(--text-dim); }
+.egress-btn.egress-uploading {
+  background: #b8860b;
+  color: #fff;
+  border-color: #b8860b;
+}
+.egress-btn.egress-done {
+  background: var(--green);
+  color: #fff;
+  border-color: var(--green);
+}
+.egress-btn.egress-error {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+}
+
+/* --- Egress panel --- */
+.egress-panel {
+  position: fixed;
+  top: 50px;
+  right: 12px;
+  z-index: 999;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  width: 460px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+}
+.egress-panel[hidden] { display: none; }
+
+.egress-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.egress-panel-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.egress-panel-close:hover { color: var(--red); }
+
+.egress-table-wrap {
+  overflow-y: auto;
+  flex: 1;
+}
+
+#egress-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+#egress-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+}
+#egress-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+#egress-table tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.egress-status-done { color: var(--green); }
+.egress-status-pending { color: var(--text-dim); }
+.egress-status-error { color: var(--red); }
 
 /* --- Responsive fallback --- */
 @media (max-width: 768px) {
