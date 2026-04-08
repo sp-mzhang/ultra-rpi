@@ -558,7 +558,7 @@
     if (!runs.length) {
       const tr = document.createElement('tr');
       tr.innerHTML =
-        '<td colspan="3" '
+        '<td colspan="4" '
         + 'style="text-align:center;color:var(--text-dim)"'
         + '>No runs</td>';
       elEgressTbody.appendChild(tr);
@@ -589,8 +589,11 @@
         stLabel = 'pending';
       }
 
+      const runId = r.run_id != null
+        ? r.run_id : '--';
       tr.innerHTML =
         `<td title="${r.rundate_ts || ''}">${dt}</td>`
+        + `<td>${runId}</td>`
         + `<td title="${dir}">`
         + `${chip}<br>`
         + `<small>${uuid}</small></td>`
