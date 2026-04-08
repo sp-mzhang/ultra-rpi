@@ -57,6 +57,8 @@ class WebSocketBroadcaster:
         self._last_sweep: dict[str, Any] | None = None
         self._marker_buffer: list[dict] = []
         self._last_protocol_started: dict | None = None
+        self._current_step_index: int = 0
+        self._step_count: int = 0
 
     def connect(self, ws: WebSocket) -> None:
         '''Register a new WebSocket connection.
@@ -102,6 +104,12 @@ class WebSocketBroadcaster:
             self._last_sweep = data
         elif event_type == 'timing_marker':
             self._marker_buffer.append(data)
+        elif event_type == 'step_changed':
+            idx = data.get(
+                'step', data.get('step_index', 0),
+            )
+            if not data.get('completed'):
+                self._current_step_index = idx
 
         if not self._connections:
             return
@@ -133,6 +141,31 @@ class WebSocketBroadcaster:
             msg = json.dumps({
                 'type': 'protocol_started',
                 'data': self._last_protocol_started,
+            })
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                return
+        if self._current_step_index > 0:
+            for i in range(1, self._current_step_index):
+                msg = json.dumps({
+                    'type': 'step_changed',
+                    'data': {
+                        'step': i,
+                        'completed': True,
+                        'ok': True,
+                    },
+                })
+                try:
+                    await ws.send_text(msg)
+                except Exception:
+                    return
+            msg = json.dumps({
+                'type': 'step_changed',
+                'data': {
+                    'step': self._current_step_index,
+                    'completed': False,
+                },
             })
             try:
                 await ws.send_text(msg)
@@ -181,6 +214,7 @@ class WebSocketBroadcaster:
         self._peak_buffer.clear()
         self._last_sweep = None
         self._marker_buffer.clear()
+        self._current_step_index = 0
         self._last_protocol_started = (
             protocol_started_data
         )

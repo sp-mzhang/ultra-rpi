@@ -17,7 +17,10 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import os.path as op
 import shutil
 import time
 from typing import Any
@@ -69,6 +72,9 @@ class EgressService:
         self._event_bus = event_bus
         egress_cfg = config.get('egress', {})
 
+        self._data_dir = os.path.expanduser(
+            egress_cfg.get('data_dir', '~/sway_runs'),
+        )
         db_path = egress_cfg.get('db_path', '')
         self._db = edb.create_db(db_path)
 
@@ -111,12 +117,108 @@ class EgressService:
         )
 
     # ----------------------------------------------------------
+    # startup scan
+    # ----------------------------------------------------------
+
+    def _scan_existing_runs(self) -> None:
+        '''Discover runs on disk not yet in the egress DB.
+
+        Walks the data directory looking for ``run.json``
+        files, reads the run UUID from each, and inserts
+        any that are missing from the egress DB so that
+        historical runs appear in the UI.
+        '''
+        known = {
+            r.run_uuid
+            for r in self._db.get_all_runs()
+        }
+        data_dir = self._data_dir
+        if not op.isdir(data_dir):
+            return
+        added = 0
+        for year in sorted(os.listdir(data_dir)):
+            ydir = op.join(data_dir, year)
+            if not op.isdir(ydir) or not year.isdigit():
+                continue
+            for month in sorted(os.listdir(ydir)):
+                mdir = op.join(ydir, month)
+                if not op.isdir(mdir):
+                    continue
+                for rg_name in os.listdir(mdir):
+                    rg_dir = op.join(mdir, rg_name)
+                    if not op.isdir(rg_dir):
+                        continue
+                    rg_json_path = op.join(
+                        rg_dir, 'rungroup.json',
+                    )
+                    if not op.isfile(rg_json_path):
+                        continue
+                    rg_meta = self._read_json(
+                        rg_json_path,
+                    )
+                    rg_uuid = rg_meta.get(
+                        'rungroup_uuid', '',
+                    )
+                    rg_id = rg_meta.get(
+                        'rungroup_id', -1,
+                    )
+                    for entry in os.listdir(rg_dir):
+                        run_dir = op.join(
+                            rg_dir, entry,
+                        )
+                        rj = op.join(
+                            run_dir, 'run.json',
+                        )
+                        if not op.isfile(rj):
+                            continue
+                        run_meta = self._read_json(rj)
+                        run_uuid = run_meta.get(
+                            'run_uuid', '',
+                        )
+                        if (
+                            not run_uuid
+                            or run_uuid in known
+                        ):
+                            continue
+                        self._db.insert_run(
+                            run_uuid=run_uuid,
+                            run_id=run_meta.get(
+                                'run_id', -1,
+                            ),
+                            rungroup_uuid=rg_uuid,
+                            rungroup_id=rg_id,
+                            rundate_ts_str=(
+                                edb.get_current_ts_str()
+                            ),
+                            run_dir_path=run_dir,
+                            rungroup_dir_path=rg_dir,
+                            complete=1,
+                        )
+                        known.add(run_uuid)
+                        added += 1
+        if added:
+            LOG.info(
+                'Egress scan: added %d existing run(s) '
+                'to DB', added,
+            )
+
+    @staticmethod
+    def _read_json(path: str) -> dict:
+        '''Read a JSON file, returning {} on error.'''
+        try:
+            with open(path) as fh:
+                return json.load(fh)
+        except Exception:
+            return {}
+
+    # ----------------------------------------------------------
     # public
     # ----------------------------------------------------------
 
     async def start(self) -> None:
         '''Run the egress loop forever.'''
         LOG.info('EgressService starting')
+        self._scan_existing_runs()
         await asyncio.sleep(0.5)
         while True:
             try:
