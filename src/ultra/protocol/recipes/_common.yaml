@@ -7,9 +7,15 @@ defaults:
   default_cartridge_z_mm: -23.8
   shake_angle_deg: 45
   shake_cycles: 3
+  loc_offset_x_um: 0
+  loc_offset_y_um: 0
+  loc_offset_z_um: 0
 
 centrifuge_phase:
   steps:
+    - type: set_loc_offset
+      label: Apply gantry offset
+
     - type: centrifuge_unlock
       label: Unlock cartridge
 

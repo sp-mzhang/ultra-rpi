@@ -44,6 +44,9 @@ phases:
   - name: B
     label: Dilution and Serum Prep
     steps:
+      - type: set_loc_offset
+        label: Apply gantry offset
+
       - type: lid
         label: Open lid
         open: true

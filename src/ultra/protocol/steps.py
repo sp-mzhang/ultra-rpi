@@ -62,6 +62,47 @@ class StepExecutor:
         raise NotImplementedError
 
 
+@step_type('set_loc_offset')
+class SetLocOffsetStep(StepExecutor):
+    '''Send a global calibration offset to the firmware.
+
+    Shifts every named cartridge location by (dx, dy, dz).
+    Reads defaults from recipe constants ``loc_offset_x_um``,
+    ``loc_offset_y_um``, ``loc_offset_z_um``; per-step
+    overrides via params.
+    '''
+
+    def execute(self, params, runner) -> bool:
+        consts = runner.recipe.constants
+        dx = int(params.get(
+            'dx_um',
+            consts.get('loc_offset_x_um', 0),
+        ))
+        dy = int(params.get(
+            'dy_um',
+            consts.get('loc_offset_y_um', 0),
+        ))
+        dz = int(params.get(
+            'dz_um',
+            consts.get('loc_offset_z_um', 0),
+        ))
+        r = runner.stm32.send_command(
+            cmd={
+                'cmd': 'set_loc_offset',
+                'dx_um': dx,
+                'dy_um': dy,
+                'dz_um': dz,
+            },
+            timeout_s=10.0,
+        )
+        if _ok(r):
+            LOG.info(
+                f'set_loc_offset: '
+                f'dx={dx} dy={dy} dz={dz} um',
+            )
+        return _ok(r)
+
+
 @step_type('centrifuge_unlock')
 class CentrifugeUnlockStep(StepExecutor):
     '''Unlock the cartridge holder.'''

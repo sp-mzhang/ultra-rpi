@@ -35,6 +35,9 @@ phases:
   - name: B
     label: Pipetting
     steps:
+      - type: set_loc_offset
+        label: Apply gantry offset
+
       - type: lid
         label: Open lid
         open: true
