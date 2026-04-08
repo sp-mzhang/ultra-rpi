@@ -58,7 +58,7 @@ class WebSocketBroadcaster:
         self._marker_buffer: list[dict] = []
         self._last_protocol_started: dict | None = None
         self._current_step_index: int = 0
-        self._step_count: int = 0
+        self._last_step_data: dict | None = None
 
     def connect(self, ws: WebSocket) -> None:
         '''Register a new WebSocket connection.
@@ -110,6 +110,7 @@ class WebSocketBroadcaster:
             )
             if not data.get('completed'):
                 self._current_step_index = idx
+                self._last_step_data = dict(data)
 
         if not self._connections:
             return
@@ -146,12 +147,14 @@ class WebSocketBroadcaster:
                 await ws.send_text(msg)
             except Exception:
                 return
-        if self._current_step_index > 0:
+        if self._last_step_data is not None:
+            total = self._last_step_data.get('total', 0)
             for i in range(1, self._current_step_index):
                 msg = json.dumps({
                     'type': 'step_changed',
                     'data': {
                         'step': i,
+                        'total': total,
                         'completed': True,
                         'ok': True,
                     },
@@ -162,10 +165,7 @@ class WebSocketBroadcaster:
                     return
             msg = json.dumps({
                 'type': 'step_changed',
-                'data': {
-                    'step': self._current_step_index,
-                    'completed': False,
-                },
+                'data': self._last_step_data,
             })
             try:
                 await ws.send_text(msg)
@@ -215,6 +215,7 @@ class WebSocketBroadcaster:
         self._last_sweep = None
         self._marker_buffer.clear()
         self._current_step_index = 0
+        self._last_step_data = None
         self._last_protocol_started = (
             protocol_started_data
         )
