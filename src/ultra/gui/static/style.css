@@ -689,6 +689,7 @@ textarea {
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-dim);
+  cursor: move;
 }
 .egress-panel-close {
   background: none;

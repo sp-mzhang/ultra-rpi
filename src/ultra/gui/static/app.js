@@ -417,6 +417,38 @@
     });
   }
 
+  /* ---- Draggable panels ---- */
+  function makeDraggable(panel, handle) {
+    let ox = 0, oy = 0, sx = 0, sy = 0;
+    handle.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button')) return;
+      e.preventDefault();
+      sx = e.clientX;
+      sy = e.clientY;
+      const onMove = (ev) => {
+        ox = ev.clientX - sx;
+        oy = ev.clientY - sy;
+        sx = ev.clientX;
+        sy = ev.clientY;
+        const t = panel.offsetTop + oy;
+        const l = panel.offsetLeft + ox;
+        panel.style.top = t + 'px';
+        panel.style.left = l + 'px';
+        panel.style.right = 'auto';
+      };
+      const onUp = () => {
+        document.removeEventListener(
+          'mousemove', onMove,
+        );
+        document.removeEventListener(
+          'mouseup', onUp,
+        );
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+
   /* ---- Camera ---- */
   function initCamera() {
     function toggleCamera(show) {
@@ -436,6 +468,10 @@
     elBtnCameraClose.onclick = () => {
       toggleCamera(false);
     };
+    makeDraggable(
+      elCameraPanel,
+      elCameraPanel.querySelector('.camera-header'),
+    );
   }
 
   /* ---- Egress ---- */
@@ -457,6 +493,12 @@
       egressPanelOpen = false;
       elEgressPanel.hidden = true;
     };
+    makeDraggable(
+      elEgressPanel,
+      elEgressPanel.querySelector(
+        '.egress-panel-header',
+      ),
+    );
   }
 
   async function fetchEgressStatus() {

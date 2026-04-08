@@ -7,6 +7,8 @@ an ``<img>`` tag or ``StreamingResponse``.
 The capture loop runs in a background daemon thread; the
 MJPEG generator reads the latest frame under a lock so
 multiple HTTP clients can share a single capture device.
+
+No frames are saved to disk.
 '''
 from __future__ import annotations
 
@@ -29,31 +31,6 @@ _CAPTURE_INTERVAL = 0.05  # ~20 fps
 _MJPEG_BOUNDARY = b'frame'
 
 
-def _no_camera_jpeg() -> bytes:
-    '''Generate a small black JPEG with "No Camera" text.
-
-    Used as a placeholder when OpenCV is unavailable or the
-    camera device cannot be opened.
-
-    Returns:
-        JPEG-encoded bytes of the placeholder image.
-    '''
-    if not HAS_CV2:
-        return b''
-    import numpy as np
-    img = np.zeros((240, 320, 3), dtype=np.uint8)
-    cv2.putText(
-        img, 'No Camera', (60, 130),
-        cv2.FONT_HERSHEY_SIMPLEX, 1.0,
-        (255, 255, 255), 2,
-    )
-    ok, buf = cv2.imencode(
-        '.jpg', img,
-        [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY],
-    )
-    return bytes(buf) if ok else b''
-
-
 class CameraStream:
     '''Thread-safe USB camera capture with MJPEG output.
 
@@ -70,7 +47,7 @@ class CameraStream:
     '''
 
     def __init__(self, device: str = '/dev/video0') -> None:
-        '''Initialize the camera stream.
+        '''Initialise the camera stream.
 
         Args:
             device: V4L2 device path or integer index.
@@ -78,7 +55,7 @@ class CameraStream:
         '''
         self._device = device
         self._cap = None
-        self._frame: bytes = _no_camera_jpeg()
+        self._frame: bytes | None = None
         self._lock = threading.Lock()
         self._running = False
         self._stop = threading.Event()
@@ -92,7 +69,9 @@ class CameraStream:
         '''
         if not HAS_CV2:
             LOG.warning(
-                'OpenCV not installed -- camera disabled',
+                'OpenCV not installed -- camera disabled. '
+                'Install via: sudo apt install python3-opencv'
+                ' or pip install opencv-python-headless',
             )
             return False
 
@@ -134,8 +113,7 @@ class CameraStream:
         LOG.info('Camera stopped')
 
     def _capture_loop(self) -> None:
-        '''Background thread: read frames continuously.'''
-        placeholder = _no_camera_jpeg()
+        '''Background thread: read and JPEG-encode frames.'''
         while not self._stop.is_set():
             if self._cap is None:
                 break
@@ -152,9 +130,6 @@ class CameraStream:
                     self._frame = bytes(buf)
             time.sleep(_CAPTURE_INTERVAL)
 
-        with self._lock:
-            self._frame = placeholder
-
     def generate_mjpeg(
             self,
     ) -> Generator[bytes, None, None]:
@@ -162,14 +137,17 @@ class CameraStream:
 
         Each chunk includes the multipart boundary, content
         headers, and one JPEG frame. The generator runs
-        indefinitely until the caller disconnects.
+        until the capture stops or the caller disconnects.
 
         Yields:
             Bytes of one MJPEG multipart frame.
         '''
-        while True:
+        while self._running:
             with self._lock:
                 frame = self._frame
+            if frame is None:
+                time.sleep(_CAPTURE_INTERVAL)
+                continue
             yield (
                 b'--' + _MJPEG_BOUNDARY + b'\r\n'
                 b'Content-Type: image/jpeg\r\n'
