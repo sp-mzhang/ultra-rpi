@@ -448,6 +448,31 @@ class EgressDB:
             EgressTuple(*row) for row in cur.fetchall()
         ]
 
+    def clear_all(self) -> int:
+        '''Delete all rows from the egress table.
+
+        Returns:
+            Number of rows deleted.
+        '''
+        cur = self.con.execute(
+            f'DELETE FROM {self.TBL_EGRESS}',
+        )
+        self.con.commit()
+        return cur.rowcount
+
+    def clear_egressed(self) -> int:
+        '''Delete only successfully uploaded runs.
+
+        Returns:
+            Number of rows deleted.
+        '''
+        cur = self.con.execute(
+            f'DELETE FROM {self.TBL_EGRESS} '
+            'WHERE is_egressed = 1',
+        )
+        self.con.commit()
+        return cur.rowcount
+
     def get_summary(self) -> dict[str, int]:
         '''Return aggregate egress counts.
 

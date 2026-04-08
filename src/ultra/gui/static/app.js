@@ -39,6 +39,10 @@
   const elEgressPanel = $('#egress-panel');
   const elEgressTbody = $('#egress-tbody');
   const elBtnEgressClose = $('#btn-egress-close');
+  const elBtnEgressClear = $('#btn-egress-clear');
+  const elBtnEgressClearUpl = $(
+    '#btn-egress-clear-uploaded',
+  );
 
   /* ---- Init ---- */
   async function init() {
@@ -492,6 +496,29 @@
     elBtnEgressClose.onclick = () => {
       egressPanelOpen = false;
       elEgressPanel.hidden = true;
+    };
+    elBtnEgressClear.onclick = async () => {
+      if (!confirm('Clear ALL egress records?')) return;
+      try {
+        await fetch('/api/egress/clear', {
+          method: 'POST',
+        });
+        fetchEgressRuns();
+        fetchEgressStatus().then(applyEgressSummary);
+      } catch (e) {
+        console.warn('Failed to clear egress', e);
+      }
+    };
+    elBtnEgressClearUpl.onclick = async () => {
+      try {
+        await fetch('/api/egress/clear_uploaded', {
+          method: 'POST',
+        });
+        fetchEgressRuns();
+        fetchEgressStatus().then(applyEgressSummary);
+      } catch (e) {
+        console.warn('Failed to clear uploaded', e);
+      }
     };
     makeDraggable(
       elEgressPanel,

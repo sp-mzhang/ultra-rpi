@@ -682,7 +682,7 @@ textarea {
 .egress-panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   padding: 4px 8px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
@@ -690,6 +690,22 @@ textarea {
   font-weight: 600;
   color: var(--text-dim);
   cursor: move;
+}
+.egress-panel-header > span:first-child {
+  margin-right: auto;
+}
+.egress-header-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-size: 0.65rem;
+  cursor: pointer;
+  padding: 1px 6px;
+}
+.egress-header-btn:hover {
+  color: var(--red);
+  border-color: var(--red);
 }
 .egress-panel-close {
   background: none;

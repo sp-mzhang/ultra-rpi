@@ -346,6 +346,39 @@ def create_api_router(
             for r in rows
         ]
 
+    @router.post('/egress/clear')
+    async def egress_clear():
+        '''Delete all rows from the egress database.
+
+        Returns ``{deleted: N}`` with the count of removed
+        rows. The egress service will re-discover runs on
+        the next restart if the startup scan is enabled.
+        '''
+        db = _get_egress_db()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail='Egress not enabled',
+            )
+        n = db.clear_all()
+        return {'deleted': n}
+
+    @router.post('/egress/clear_uploaded')
+    async def egress_clear_uploaded():
+        '''Delete only successfully uploaded (egressed) runs.
+
+        Keeps pending and errored rows so they can still be
+        retried. Returns ``{deleted: N}``.
+        '''
+        db = _get_egress_db()
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail='Egress not enabled',
+            )
+        n = db.clear_egressed()
+        return {'deleted': n}
+
     # ---- Camera MJPEG streaming ----
 
     _camera = None
