@@ -60,8 +60,26 @@ setup_env() {
     echo "Syncing environment with uv..."
     cd "$PROJECT_DIR"
     UV_NO_PROGRESS=1 NO_COLOR=1 \
-        uv sync --frozen 2>&1 || \
-        UV_NO_PROGRESS=1 NO_COLOR=1 uv sync 2>&1
+        uv sync \
+        --upgrade-package analysis-tools \
+        --upgrade-package dollopclient 2>&1
+
+    # OpenCV: prefer system apt package, fall back to pip
+    if ! "$VENV_DIR/bin/python" -c "import cv2" 2>/dev/null; then
+        echo "Installing OpenCV into venv..."
+        SITE_CV2=$(python3 -c \
+            "import cv2; print(cv2.__file__)" 2>/dev/null || true)
+        if [ -n "$SITE_CV2" ]; then
+            SITE_DIR=$(dirname "$SITE_CV2")
+            VENV_SP=$("$VENV_DIR/bin/python" -c \
+                "import site; print(site.getsitepackages()[0])")
+            ln -sfn "$SITE_DIR" "$VENV_SP/cv2"
+            echo "Linked system cv2 -> $VENV_SP/cv2"
+        else
+            "$VENV_DIR/bin/pip" install \
+                opencv-python-headless 2>&1
+        fi
+    fi
     echo "Environment ready."
 }
 
