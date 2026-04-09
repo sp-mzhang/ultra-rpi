@@ -461,13 +461,15 @@ class EgressDB:
         ]
 
     def clear_all(self) -> int:
-        '''Delete all rows from the egress table.
+        '''Mark all rows as egressed so the startup scan
+        does not re-queue them.
 
         Returns:
-            Number of rows deleted.
+            Number of rows updated.
         '''
         cur = self.con.execute(
-            f'DELETE FROM {self.TBL_EGRESS}',
+            f'UPDATE {self.TBL_EGRESS} SET is_egressed=1 '
+            'WHERE is_egressed=0',
         )
         self.con.commit()
         return cur.rowcount

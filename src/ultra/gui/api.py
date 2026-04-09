@@ -364,11 +364,11 @@ def create_api_router(
 
     @router.post('/egress/clear')
     async def egress_clear():
-        '''Delete all rows from the egress database.
+        '''Mark all pending runs as egressed.
 
-        Returns ``{deleted: N}`` with the count of removed
-        rows. The egress service will re-discover runs on
-        the next restart if the startup scan is enabled.
+        Prevents the startup scan from re-queuing cleared
+        runs. Returns ``{cleared: N}`` with the count of
+        rows that were marked.
         '''
         db = _get_egress_db()
         if db is None:
@@ -377,7 +377,7 @@ def create_api_router(
                 detail='Egress not enabled',
             )
         n = db.clear_all()
-        return {'deleted': n}
+        return {'cleared': n}
 
     @router.post('/egress/clear_uploaded')
     async def egress_clear_uploaded():
