@@ -2720,10 +2720,11 @@
       });
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
-        updateFlashUI(
-          'error', 0,
-          e.detail || 'Request failed', [],
-        );
+        let detail = e.detail || 'Request failed';
+        if (typeof detail !== 'string') {
+          detail = JSON.stringify(detail);
+        }
+        updateFlashUI('error', 0, detail, []);
         document.querySelectorAll('.fw-flash-btn')
           .forEach((b) => { b.disabled = false; });
         return;
@@ -2782,7 +2783,8 @@
 
     stateEl.textContent = state.toUpperCase();
     stateEl.className = 'fw-state fw-state-' + state;
-    msgEl.textContent = msg;
+    msgEl.textContent = typeof msg === 'string'
+      ? msg : JSON.stringify(msg);
     fillEl.style.width = progress + '%';
     pctEl.textContent = progress + '%';
 

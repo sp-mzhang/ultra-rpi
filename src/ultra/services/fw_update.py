@@ -76,7 +76,7 @@ def _set_status(
     '''Update the flash status dict.'''
     _flash_status['state'] = state
     _flash_status['progress'] = progress
-    _flash_status['message'] = message
+    _flash_status['message'] = str(message)
 
 
 def get_status(log_offset: int = 0) -> dict:
