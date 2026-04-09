@@ -1880,10 +1880,22 @@
     if (!r) return;
     $('#eng-cfuge-status').textContent =
       JSON.stringify(r, null, 2);
-    if (r.angle_001deg != null) {
+    const actualEl = $('#eng-cfuge-actual');
+    if (r.angle_001deg != null && actualEl) {
       const deg = r.angle_001deg / 100.0;
-      $('#eng-cfuge-actual').textContent =
-        deg.toFixed(1);
+      actualEl.textContent = deg.toFixed(1);
+      const tgt = parseFloat(
+        $('#eng-cfuge-angle').value,
+      ) || 0;
+      let err = Math.abs(deg - tgt);
+      if (err > 180) err = 360 - err;
+      if (err <= 3) {
+        actualEl.style.color = 'var(--green)';
+      } else if (err <= 5) {
+        actualEl.style.color = '#f0ad4e';
+      } else {
+        actualEl.style.color = 'var(--red)';
+      }
     }
     const led = $('#eng-cfuge-pwr-led');
     if (led) {
@@ -2135,39 +2147,71 @@
         $('#eng-cart-rpm').value,
       ),
     });
+    async function cartRefreshAngle(targetDeg) {
+      const r = await engCmd(
+        'centrifuge_status', {}, false, 3,
+      );
+      const actEl = $('#eng-cart-actual');
+      const errEl = $('#eng-cart-error');
+      if (!r || r.angle_001deg == null) return;
+      const deg = r.angle_001deg / 100.0;
+      actEl.textContent = deg.toFixed(1);
+      if (targetDeg != null) {
+        let err = Math.abs(deg - targetDeg);
+        if (err > 180) err = 360 - err;
+        errEl.textContent = err.toFixed(1);
+        if (err <= 3) {
+          errEl.style.color = 'var(--green)';
+        } else if (err <= 5) {
+          errEl.style.color = '#f0ad4e';
+        } else {
+          errEl.style.color = 'var(--red)';
+        }
+      }
+    }
+
+    const gotoParams = () => ({
+      angle_open_initial_deg: parseInt(
+        $('#eng-cart-open-init').value,
+      ),
+      move_rpm: parseInt(
+        $('#eng-cart-rpm').value,
+      ),
+    });
+
     $('#eng-cart-unlock').onclick = () =>
       engCmd('centrifuge_unlock', seqP());
     $('#eng-cart-lock').onclick = () =>
       engCmd('centrifuge_lock', seqP());
     $('#eng-cart-reverse').onclick = () =>
       engCmd('centrifuge_reverse', seqP());
-    $('#eng-cart-goto-serum').onclick = () =>
-      engCmd('centrifuge_goto_serum', {
-        angle_open_initial_deg: parseInt(
-          $('#eng-cart-open-init').value,
-        ),
-        move_rpm: parseInt(
-          $('#eng-cart-rpm').value,
-        ),
-      });
-    $('#eng-cart-goto-pipette').onclick = () =>
-      engCmd('centrifuge_goto_pipette', {
-        angle_open_initial_deg: parseInt(
-          $('#eng-cart-open-init').value,
-        ),
-        move_rpm: parseInt(
-          $('#eng-cart-rpm').value,
-        ),
-      });
-    $('#eng-cart-goto-blister').onclick = () =>
-      engCmd('centrifuge_goto_blister', {
-        angle_open_initial_deg: parseInt(
-          $('#eng-cart-open-init').value,
-        ),
-        move_rpm: parseInt(
-          $('#eng-cart-rpm').value,
-        ),
-      });
+    $('#eng-cart-goto-serum').onclick = async () => {
+      const tgt = parseInt(
+        $('#eng-cart-open-init').value,
+      );
+      await engCmd(
+        'centrifuge_goto_serum', gotoParams(),
+      );
+      cartRefreshAngle(tgt);
+    };
+    $('#eng-cart-goto-pipette').onclick = async () => {
+      const tgt = parseInt(
+        $('#eng-cart-open-init').value,
+      );
+      await engCmd(
+        'centrifuge_goto_pipette', gotoParams(),
+      );
+      cartRefreshAngle(tgt);
+    };
+    $('#eng-cart-goto-blister').onclick = async () => {
+      const tgt = parseInt(
+        $('#eng-cart-open-init').value,
+      );
+      await engCmd(
+        'centrifuge_goto_blister', gotoParams(),
+      );
+      cartRefreshAngle(tgt);
+    };
   }
 
   /* ---- CAMERA wiring ---- */
@@ -2338,8 +2382,35 @@
         duty_pct: parseInt(fanSl.value),
       });
     };
-    $('#eng-ah-ctrl-start').onclick = () => {
-      engCmd('air_heater_set_ctrl', {
+    let ahPollId = null;
+
+    async function ahRefreshStatus() {
+      const r = await engCmd(
+        'air_heater_get_status', {}, false, 3,
+      );
+      if (!r) return;
+      const s = (k) => r[k] != null ? r[k] : '--';
+      $('#eng-ah-ntc1').textContent =
+        s('prim_temp_c');
+      $('#eng-ah-ntc2').textContent =
+        s('sec_temp_c');
+      $('#eng-ah-st-heat').textContent =
+        s('heater_duty');
+      $('#eng-ah-st-fan').textContent =
+        s('fan_duty');
+      $('#eng-ah-st-en').textContent =
+        s('heater_en');
+      const ctrlOn = r.ctrl_enabled;
+      $('#eng-ah-st-ctrl').textContent =
+        ctrlOn ? 'ON' : 'OFF';
+      $('#eng-ah-ctrl-state').textContent =
+        ctrlOn
+          ? (r.ctrl_heating ? 'HEATING' : 'IDLE')
+          : 'OFF';
+    }
+
+    $('#eng-ah-ctrl-start').onclick = async () => {
+      await engCmd('air_heater_set_ctrl', {
         enable: true,
         setpoint_c: parseFloat(
           $('#eng-ah-setpoint').value,
@@ -2354,34 +2425,25 @@
           $('#eng-ah-ctrl-fan').value,
         ),
       });
+      ahRefreshStatus();
+      if (!ahPollId) {
+        ahPollId = setInterval(ahRefreshStatus, 2000);
+      }
     };
-    $('#eng-ah-ctrl-stop').onclick = () => {
-      engCmd('air_heater_set_ctrl', {
+    $('#eng-ah-ctrl-stop').onclick = async () => {
+      await engCmd('air_heater_set_ctrl', {
         enable: false,
         setpoint_c: 0, hysteresis_c: 0,
         heater_duty: 0, fan_duty: 0,
       });
-    };
-    $('#eng-ah-get-status').onclick = async () => {
-      const r = await engCmd(
-        'air_heater_get_status', {}, false, 3,
-      );
-      if (r) {
-        const s = (k) => r[k] != null ? r[k] : '--';
-        $('#eng-ah-ntc1').textContent =
-          s('prim_temp_c');
-        $('#eng-ah-ntc2').textContent =
-          s('sec_temp_c');
-        $('#eng-ah-st-heat').textContent =
-          s('heater_duty');
-        $('#eng-ah-st-fan').textContent =
-          s('fan_duty');
-        $('#eng-ah-st-en').textContent =
-          s('heater_en');
-        $('#eng-ah-st-ctrl').textContent =
-          r.ctrl_enabled ? 'ON' : 'OFF';
+      if (ahPollId) {
+        clearInterval(ahPollId);
+        ahPollId = null;
       }
+      ahRefreshStatus();
     };
+    $('#eng-ah-get-status').onclick = () =>
+      ahRefreshStatus();
   }
 
   /* ---- FANS wiring ---- */

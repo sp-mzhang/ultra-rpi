@@ -937,7 +937,15 @@
       <button id="eng-cart-goto-blister"
         class="eng-cmd-btn">Goto Blister</button>
     </div>
-    <span id="eng-cart-status-lbl"></span>
+    <div class="eng-row">
+      <span id="eng-cart-status-lbl"></span>
+      <label>Actual (&deg;):</label>
+      <span id="eng-cart-actual"
+        class="eng-pos-val">--</span>
+      <label>Error (&deg;):</label>
+      <span id="eng-cart-error"
+        class="eng-pos-val">--</span>
+    </div>
   </div>
 
   <!-- ===== CAMERA ===== -->
@@ -1040,78 +1048,86 @@
 
   <!-- ===== LED CONTROL ===== -->
   <div class="eng-pane" id="eng-leds" hidden>
-    <div class="eng-section">
-      <h3>Single LED</h3>
-      <div class="eng-row">
-        <label>LED #:</label>
-        <input type="number" id="eng-led-idx"
-          value="0" min="0" max="4" class="eng-spin-xs">
+    <div class="eng-2col">
+
+      <fieldset class="eng-inner-fs">
+        <legend>Single LED</legend>
+        <div class="eng-form-grid">
+          <label>LED #:</label>
+          <input type="number" id="eng-led-idx"
+            value="0" min="0" max="4"
+            class="eng-spin-xs">
+        </div>
+        <div class="eng-led-sliders">
+          <label>R:</label>
+          <input type="range" id="eng-led-r"
+            min="0" max="255" value="0">
+          <span id="eng-led-r-val">0</span>
+          <label>G:</label>
+          <input type="range" id="eng-led-g"
+            min="0" max="255" value="0">
+          <span id="eng-led-g-val">0</span>
+          <label>B:</label>
+          <input type="range" id="eng-led-b"
+            min="0" max="255" value="0">
+          <span id="eng-led-b-val">0</span>
+          <label>W:</label>
+          <input type="range" id="eng-led-w"
+            min="0" max="255" value="0">
+          <span id="eng-led-w-val">0</span>
+        </div>
+        <div class="eng-btn-row">
+          <button id="eng-led-set"
+            class="eng-cmd-btn">Set</button>
+          <button id="eng-led-off"
+            class="eng-cmd-btn">Off</button>
+          <button id="eng-led-all-same"
+            class="eng-cmd-btn">All Same</button>
+          <button class="eng-cmd-btn"
+            data-cmd="led_set_all_off">All Off</button>
+        </div>
+      </fieldset>
+
+      <div>
+        <fieldset class="eng-inner-fs">
+          <legend>LED Patterns</legend>
+          <div class="eng-form-grid">
+            <label>Duration (s):</label>
+            <input type="number" id="eng-led-dur"
+              value="10" min="1" max="300"
+              class="eng-spin-sm">
+            <label>Stage:</label>
+            <input type="number" id="eng-led-stage"
+              value="1" min="1" max="5"
+              class="eng-spin-xs">
+          </div>
+          <div class="eng-btn-row">
+            <button class="eng-led-pat-btn"
+              data-pat="1">Waiting</button>
+            <button class="eng-led-pat-btn"
+              data-pat="2">Ready</button>
+            <button class="eng-led-pat-btn"
+              data-pat="3">Error</button>
+            <button class="eng-led-pat-btn"
+              data-pat="5">Scanning</button>
+          </div>
+          <div class="eng-btn-row">
+            <button id="eng-led-progress"
+              class="eng-cmd-btn">Progress</button>
+            <button id="eng-led-pat-stop"
+              class="eng-cmd-btn">Stop</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="eng-inner-fs">
+          <legend>Button LED</legend>
+          <div class="eng-row">
+            <label><input type="checkbox"
+              id="eng-btn-led"> Door Button LED On</label>
+          </div>
+        </fieldset>
       </div>
-      <div class="eng-row eng-slider-row">
-        <label>R:</label>
-        <input type="range" id="eng-led-r"
-          min="0" max="255" value="0">
-        <span id="eng-led-r-val">0</span>
-        <label>G:</label>
-        <input type="range" id="eng-led-g"
-          min="0" max="255" value="0">
-        <span id="eng-led-g-val">0</span>
-      </div>
-      <div class="eng-row eng-slider-row">
-        <label>B:</label>
-        <input type="range" id="eng-led-b"
-          min="0" max="255" value="0">
-        <span id="eng-led-b-val">0</span>
-        <label>W:</label>
-        <input type="range" id="eng-led-w"
-          min="0" max="255" value="0">
-        <span id="eng-led-w-val">0</span>
-      </div>
-      <div class="eng-btn-row">
-        <button id="eng-led-set"
-          class="eng-cmd-btn">Set</button>
-        <button id="eng-led-off"
-          class="eng-cmd-btn">Off</button>
-        <button id="eng-led-all-same"
-          class="eng-cmd-btn">All Same</button>
-        <button class="eng-cmd-btn"
-          data-cmd="led_set_all_off">All Off</button>
-      </div>
-    </div>
-    <div class="eng-section">
-      <h3>LED Patterns</h3>
-      <div class="eng-row">
-        <label>Duration (s):</label>
-        <input type="number" id="eng-led-dur"
-          value="10" min="1" max="300"
-          class="eng-spin-sm">
-      </div>
-      <div class="eng-btn-row">
-        <button class="eng-led-pat-btn"
-          data-pat="1">Waiting</button>
-        <button class="eng-led-pat-btn"
-          data-pat="2">Ready</button>
-        <button class="eng-led-pat-btn"
-          data-pat="3">Error</button>
-        <button class="eng-led-pat-btn"
-          data-pat="5">Scanning</button>
-      </div>
-      <div class="eng-row">
-        <label>Stage:</label>
-        <input type="number" id="eng-led-stage"
-          value="1" min="1" max="5" class="eng-spin-xs">
-        <button id="eng-led-progress"
-          class="eng-cmd-btn">Progress</button>
-        <button id="eng-led-pat-stop"
-          class="eng-cmd-btn">Stop</button>
-      </div>
-    </div>
-    <div class="eng-section">
-      <h3>Button LED</h3>
-      <div class="eng-row">
-        <label><input type="checkbox"
-          id="eng-btn-led"> Door Button LED On</label>
-      </div>
+
     </div>
   </div>
 

@@ -1299,9 +1299,10 @@ textarea {
 /* --- Form-grid utilities for engineering panels --- */
 .eng-form-grid {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto auto;
   gap: 4px 8px;
   align-items: center;
+  justify-content: start;
 }
 .eng-form-grid label {
   text-align: right;
@@ -1326,6 +1327,27 @@ textarea {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 8px;
   align-items: start;
+}
+
+/* --- LED slider grid (label / range / value) --- */
+.eng-led-sliders {
+  display: grid;
+  grid-template-columns: 20px 1fr 30px;
+  gap: 4px 6px;
+  align-items: center;
+  margin: 6px 0;
+}
+.eng-led-sliders label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-align: right;
+}
+.eng-led-sliders span {
+  font-size: 0.72rem;
+  font-family: monospace;
+  color: var(--text-dim);
+  text-align: right;
 }
 
 /* --- Responsive fallback --- */
