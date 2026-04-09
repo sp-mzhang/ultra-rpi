@@ -341,88 +341,86 @@ def _gpio_get(pin: int) -> str:
         return '(unknown)'
 
 
-def _sync_bootloader() -> bool:
-    '''Poll STM32 bootloader with 0x7F until ACK.
-
-    The H735 system bootloader enumerates all interfaces
-    (USB, SPI, I2C, USARTs) before listening. This polls
-    USART2 with the sync byte until the bootloader responds.
-
-    Returns:
-        True if the bootloader ACKed.
-    '''
-    import serial as _serial
-    _log('Syncing bootloader on UART...')
-    ser = _serial.Serial(
-        UART_PORT, FLASH_BAUD, timeout=0.5,
-        parity=_serial.PARITY_EVEN,
-        stopbits=_serial.STOPBITS_ONE,
-        bytesize=_serial.EIGHTBITS,
-        rtscts=False,
-    )
-    ser.reset_input_buffer()
-
-    for i in range(20):
-        ser.write(b'\x7f')
-        resp = ser.read(1)
-        if resp == b'\x79':
-            _log(f'  ACK on poll {i + 1}')
-            ser.close()
-            return True
-        if resp == b'\x1f':
-            _log(f'  NACK on poll {i + 1} (already synced)')
-            ser.close()
-            return True
-        if resp:
-            _log(f'  0x{resp.hex()} on poll {i + 1}')
-
-    ser.close()
-    _log('  No bootloader response after 20 polls')
-    return False
+BOOTLOADER_CONDITIONING_CYCLES = 3
 
 
-def _enter_bootloader() -> None:
-    '''Enter STM32 system bootloader via BOOT0 + nRST.
-
-    1. Configure GPIOs as outputs (BOOT0 LOW, nRST HIGH).
-    2. Reset MCU in app mode to get to a known state.
-    3. Set BOOT0 HIGH, pulse nRST to enter bootloader.
-    4. Poll bootloader with 0x7F sync byte until ACK.
-    '''
-    _log('Initializing GPIOs as outputs')
-    _gpio_set(GPIO_BOOT0, 0)
-    _gpio_set(GPIO_NRST, 1)
-    time.sleep(0.1)
-
-    _log('Resetting STM32 (app mode)')
-    _gpio_set(GPIO_NRST, 0)
-    time.sleep(0.5)
-    _gpio_set(GPIO_NRST, 1)
-    time.sleep(0.5)
-
-    _log('Setting BOOT0=HIGH, pulsing nRST')
+def _boot_cycle() -> None:
+    '''Run one BOOT0-HIGH + nRST pulse cycle.'''
     _gpio_set(GPIO_BOOT0, 1)
     time.sleep(0.05)
     _gpio_set(GPIO_NRST, 0)
-    time.sleep(0.5)
+    time.sleep(0.15)
     _gpio_set(GPIO_NRST, 1)
-    time.sleep(0.5)
-
-    if not _sync_bootloader():
-        raise RuntimeError(
-            'STM32 bootloader not responding on UART'
-        )
-    _log('Bootloader ready')
+    time.sleep(1.0)
 
 
-def _exit_bootloader() -> None:
-    '''Return to normal boot: BOOT0=LOW, then reset.'''
-    _log('Exiting bootloader (BOOT0=LOW, nRST pulse)')
+def _reset_cycle() -> None:
+    '''Run one BOOT0-LOW + nRST pulse cycle (app mode).'''
     _gpio_set(GPIO_BOOT0, 0)
     time.sleep(0.05)
     _gpio_set(GPIO_NRST, 0)
     time.sleep(0.15)
     _gpio_set(GPIO_NRST, 1)
+    time.sleep(0.2)
+
+
+def _stm32flash_probe() -> bool:
+    '''Open stm32flash in query mode to condition the UART.
+
+    Returns:
+        True if the bootloader responded.
+    '''
+    result = subprocess.run(
+        ['stm32flash', '-b', str(FLASH_BAUD), UART_PORT],
+        capture_output=True, text=True, timeout=15,
+    )
+    return result.returncode == 0
+
+
+def _enter_bootloader() -> None:
+    '''Enter STM32 system bootloader via BOOT0 + nRST.
+
+    The H735 requires multiple GPIO reset cycles with UART
+    activity between them before the bootloader responds on
+    USART2. This runs the full conditioning sequence:
+
+    For each cycle:
+      1. Enter bootloader (BOOT0=HIGH, nRST pulse)
+      2. Probe via stm32flash (opens UART, sends sync byte)
+      3. Exit bootloader (BOOT0=LOW, nRST pulse)
+
+    The final cycle enters bootloader and verifies the probe
+    succeeds before proceeding to flash.
+    '''
+    _log('Initializing GPIOs')
+    _gpio_set(GPIO_BOOT0, 0)
+    _gpio_set(GPIO_NRST, 1)
+    time.sleep(0.1)
+
+    n = BOOTLOADER_CONDITIONING_CYCLES
+    for cycle in range(1, n + 1):
+        _log(
+            f'Bootloader entry cycle {cycle}/{n}',
+        )
+        _boot_cycle()
+
+        if _stm32flash_probe():
+            _log('Bootloader responding')
+            return
+
+        if cycle < n:
+            _reset_cycle()
+
+    raise RuntimeError(
+        'STM32 bootloader not responding after '
+        f'{n} conditioning cycles'
+    )
+
+
+def _exit_bootloader() -> None:
+    '''Return to normal boot: BOOT0=LOW, then reset.'''
+    _log('Exiting bootloader (BOOT0=LOW, nRST pulse)')
+    _reset_cycle()
     _log('STM32 reset to application mode')
 
 
@@ -442,8 +440,8 @@ def flash_firmware(bin_path: str) -> bool:
     try:
         _enter_bootloader()
     except Exception as exc:
-        _log(f'GPIO error: {exc}')
-        _set_status('error', 0, f'GPIO error: {exc}')
+        _log(f'Bootloader error: {exc}')
+        _set_status('error', 0, str(exc))
         return False
 
     _set_status('flashing', 40, 'Flashing...')
@@ -455,7 +453,6 @@ def flash_firmware(bin_path: str) -> bool:
 
     cmd = [
         'stm32flash',
-        '-c',
         '-w', bin_path,
         '-v',
         '-g', '0x08000000',
