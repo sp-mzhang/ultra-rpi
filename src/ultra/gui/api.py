@@ -33,6 +33,11 @@ class RestartRequest(BaseModel):
     step_index: int
 
 
+class FirmwareFlashRequest(BaseModel):
+    '''Request body for flashing firmware.'''
+    key: str
+
+
 class SMRequest(BaseModel):
     '''Request body for state machine control.'''
     action: str = 'start'
@@ -728,10 +733,6 @@ def create_api_router(
                 detail=f'S3 error: {exc}',
             )
         return builds
-
-    class FirmwareFlashRequest(BaseModel):
-        '''Request body for flashing firmware.'''
-        key: str
 
     @router.post('/firmware/flash')
     async def firmware_flash(req: FirmwareFlashRequest):
