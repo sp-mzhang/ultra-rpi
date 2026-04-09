@@ -1443,7 +1443,10 @@
       $('#eng-fw-version').textContent =
         `Firmware: ${fw}`;
       setEngControls(true);
-      startEngPolling();
+      const autoCb = $('#eng-auto-update');
+      if (autoCb && autoCb.checked) {
+        startEngPolling();
+      }
       engLog('Connected to STM32');
     } catch (e) {
       alert(`Connect error: ${e}`);
