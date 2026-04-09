@@ -705,4 +705,100 @@ def create_api_router(
             ),
         )
 
+    # -------------------------------------------------------
+    # Firmware OTA update
+    # -------------------------------------------------------
+
+    @router.get('/firmware/list')
+    async def firmware_list():
+        '''List available firmware builds from S3.
+
+        Returns a JSON array of version objects with
+        version, key, size, date, and is_latest fields.
+        '''
+        from ultra.services import fw_update
+        loop = asyncio.get_running_loop()
+        try:
+            builds = await loop.run_in_executor(
+                None, fw_update.list_firmware,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f'S3 error: {exc}',
+            )
+        return builds
+
+    class FirmwareFlashRequest(BaseModel):
+        '''Request body for flashing firmware.'''
+        key: str
+
+    @router.post('/firmware/flash')
+    async def firmware_flash(req: FirmwareFlashRequest):
+        '''Download and flash a firmware binary.
+
+        Stops the STM32 monitor and engineering interface
+        to free the UART, then runs the download + flash
+        sequence in a background thread.
+        '''
+        from ultra.services import fw_update
+
+        status = fw_update.get_status()
+        if status['state'] in (
+            'downloading', 'flashing',
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail='Flash already in progress',
+            )
+
+        runner = app.get_runner()
+        if runner.is_running:
+            raise HTTPException(
+                status_code=409,
+                detail='Protocol running',
+            )
+
+        from ultra.hw.stm32_monitor import (
+            STM32StatusMonitor,
+        )
+        STM32StatusMonitor.stop_active()
+
+        stm32 = _eng_stm32.get('iface')
+        if stm32 is not None:
+            try:
+                stm32.disconnect()
+            except Exception:
+                pass
+            _eng_stm32['iface'] = None
+
+        if app._monitor:
+            app._monitor.stop()
+        await asyncio.sleep(0.5)
+
+        import threading
+        t = threading.Thread(
+            target=fw_update.download_and_flash,
+            args=(req.key,),
+            daemon=True,
+        )
+        t.start()
+
+        return {'ok': True, 'message': 'Flash started'}
+
+    @router.get('/firmware/status')
+    async def firmware_status(log_offset: int = 0):
+        '''Return current firmware flash status.
+
+        Args:
+            log_offset: Only return log lines from this
+                index onward.
+
+        Returns:
+            Dict with state, progress, message, log,
+            log_total.
+        '''
+        from ultra.services import fw_update
+        return fw_update.get_status(log_offset)
+
     return router

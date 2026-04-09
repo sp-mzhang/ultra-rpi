@@ -1408,3 +1408,170 @@ textarea {
     grid-template-columns: repeat(8, 1fr);
   }
 }
+
+/* ==================================================
+ * FIRMWARE TAB
+ * ================================================== */
+
+#fw-view {
+  padding: 16px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.fw-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.fw-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.fw-header-row h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.fw-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.fw-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.fw-table thead {
+  background: var(--surface);
+}
+.fw-table th {
+  text-align: left;
+  padding: 8px 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+.fw-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid
+    rgba(255, 255, 255, 0.04);
+}
+.fw-table tbody tr:hover {
+  background: rgba(79, 125, 249, 0.05);
+}
+.fw-latest {
+  background: rgba(46, 164, 79, 0.08);
+}
+.fw-latest:hover {
+  background: rgba(46, 164, 79, 0.14) !important;
+}
+.fw-ver {
+  font-family: monospace;
+  font-weight: 600;
+}
+.fw-empty {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 24px 12px !important;
+}
+.fw-flash-btn {
+  background: rgba(79, 125, 249, 0.12);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 3px 12px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.fw-flash-btn:hover {
+  background: rgba(79, 125, 249, 0.25);
+}
+.fw-flash-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.fw-flash-status {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  background: var(--surface);
+}
+.fw-flash-status legend {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0 6px;
+}
+
+.fw-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.fw-state {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.fw-state-idle { color: var(--text-dim); }
+.fw-state-downloading { color: var(--blue); }
+.fw-state-flashing { color: var(--yellow); }
+.fw-state-done { color: var(--green); }
+.fw-state-error { color: var(--red); }
+.fw-message {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.fw-progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.fw-progress-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.fw-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.fw-progress-pct {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  min-width: 32px;
+  text-align: right;
+}
+
+.fw-log {
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: monospace;
+  font-size: 0.68rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+}

@@ -89,6 +89,9 @@
     <button class="app-tab" data-view="engineering">
       Engineering
     </button>
+    <button class="app-tab" data-view="firmware">
+      Firmware
+    </button>
   </nav>
 
   <div id="run-view">
@@ -1332,6 +1335,57 @@
       </div><!-- eng-right-col -->
     </div><!-- eng-main-cols -->
   </div><!-- #eng-view -->
+
+  <!-- ============= FIRMWARE VIEW ============= -->
+  <div id="fw-view" hidden>
+    <div class="fw-container">
+      <div class="fw-header-row">
+        <h2>STM32 Firmware Update</h2>
+        <button id="fw-refresh"
+          class="btn btn-sm">Refresh List</button>
+      </div>
+
+      <div class="fw-table-wrap">
+        <table id="fw-table" class="fw-table">
+          <thead>
+            <tr>
+              <th>Version</th>
+              <th>Date</th>
+              <th>Size</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="fw-tbody">
+            <tr>
+              <td colspan="4" class="fw-empty">
+                Click Refresh to load firmware list
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <fieldset class="fw-flash-status">
+        <legend>Flash Status</legend>
+        <div class="fw-status-row">
+          <span id="fw-state" class="fw-state">IDLE</span>
+          <span id="fw-message" class="fw-message">
+            No flash in progress
+          </span>
+        </div>
+        <div class="fw-progress-wrap">
+          <div class="fw-progress-bar">
+            <div id="fw-progress-fill"
+              class="fw-progress-fill"
+              style="width:0%"></div>
+          </div>
+          <span id="fw-progress-pct"
+            class="fw-progress-pct">0%</span>
+        </div>
+        <pre id="fw-log" class="fw-log"></pre>
+      </fieldset>
+    </div>
+  </div><!-- #fw-view -->
 
   <script src="/static/app.js"></script>
 </body>
