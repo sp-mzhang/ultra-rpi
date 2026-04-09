@@ -33,6 +33,7 @@ CMD_GET_POSITION    = 0x8005
 CMD_GET_SENSORS     = 0x8006
 CMD_RESET           = 0x8007
 CMD_SET_LOG_LEVEL   = 0x8008
+CMD_ENTER_BOOTLOADER = 0x8009
 
 # State control (0x81xx)
 CMD_SET_STATE       = 0x8101
@@ -262,6 +263,7 @@ CMD_NAME_TO_ID = {
     'get_sensors':          CMD_GET_SENSORS,
     'reset':                CMD_RESET,
     'set_log_level':        CMD_SET_LOG_LEVEL,
+    'enter_bootloader':     CMD_ENTER_BOOTLOADER,
     'set_state':            CMD_SET_STATE,
     'set_control_mode':     CMD_SET_CTRL_MODE,
     'start_protocol':       CMD_START_PROTOCOL,

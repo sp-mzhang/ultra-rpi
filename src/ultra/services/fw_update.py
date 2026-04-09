@@ -1,8 +1,8 @@
 '''ultra.services.fw_update -- STM32 firmware OTA update.
 
 Lists firmware builds from S3, downloads a selected binary,
-and flashes it to the STM32H735 over UART3 using the system
-bootloader (BOOT0/nRST via GPIO + stm32flash).
+and flashes it to the STM32H735 over UART using the custom
+UART bootloader (ENTER_BOOTLOADER cmd + chunked transfer).
 
 S3 bucket layout (set by ultra-firmware/rpi/upload.sh):
   siphox-ultra-firmware/
@@ -12,12 +12,12 @@ S3 bucket layout (set by ultra-firmware/rpi/upload.sh):
 '''
 from __future__ import annotations
 
+import binascii
 import hashlib
 import json
 import logging
 import os
-import re
-import subprocess
+import struct
 import threading
 import time
 from typing import Any
@@ -29,14 +29,16 @@ FW_REGION = 'us-east-1'
 DOWNLOAD_DIR = '/tmp/ultra_fw'
 
 UART_PORT = '/dev/ttyAMA3'
-FLASH_BAUD = 115200
-GPIO_CHIPS = ['4', '0']
-GPIO_BOOT0 = 22
-GPIO_NRST = 26
+APP_BAUD = 921600
+BL_BAUD = 115200
+
+ACK = 0x79
+NACK = 0x1F
+READY = 0x7F
+CHUNK_SZ = 1024
+MAX_APP_SIZE = 7 * 128 * 1024
 
 _s3_client: Any = None
-_gpio_method: str | None = None
-_gpio_chip: str | None = None
 _flash_lock = threading.Lock()
 _flash_status: dict[str, Any] = {
     'state': 'idle',
@@ -232,402 +234,287 @@ def download_firmware(s3_key: str) -> str:
 
 
 # -------------------------------------------------------
-# GPIO + stm32flash
+# Custom UART bootloader protocol
 # -------------------------------------------------------
 
-def _has_pinctrl() -> bool:
-    '''Check whether the pinctrl command is available.'''
-    try:
-        subprocess.run(
-            ['pinctrl', '-h'],
-            capture_output=True, timeout=3,
-        )
-        return True
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+def _send_enter_bootloader(skip_reset: bool = False):
+    '''Send ENTER_BOOTLOADER (0x8009) to the running app.
 
-
-def _detect_gpio_method() -> tuple[str, str | None]:
-    '''Detect the best GPIO control method.
-
-    Prefers ``pinctrl`` (RPi-native, set-and-exit).
-    Falls back to ``gpioset`` with the correct chip number.
-
-    Returns:
-        Tuple of (method, chip) where method is 'pinctrl',
-        'gpioset_v2', or 'gpioset_v1', and chip is None
-        for pinctrl.
-    '''
-    global _gpio_method, _gpio_chip
-    if _gpio_method:
-        return _gpio_method, _gpio_chip
-
-    if _has_pinctrl():
-        _gpio_method = 'pinctrl'
-        _gpio_chip = None
-        LOG.info('GPIO method: pinctrl')
-        return _gpio_method, _gpio_chip
-
-    for chip in GPIO_CHIPS:
-        for method, cmd in [
-            (
-                'gpioset_v1',
-                ['gpioset', chip, f'{GPIO_BOOT0}=0'],
-            ),
-        ]:
-            try:
-                subprocess.run(
-                    cmd, check=True, timeout=2,
-                    capture_output=True,
-                )
-                _gpio_method, _gpio_chip = method, chip
-                LOG.info(
-                    'GPIO method: %s chip=%s',
-                    method, chip,
-                )
-                return method, chip
-            except (
-                subprocess.CalledProcessError,
-                subprocess.TimeoutExpired,
-                FileNotFoundError,
-            ):
-                continue
-
-    raise RuntimeError(
-        'No working GPIO method found. '
-        'Install pinctrl (RPi OS) or libgpiod v1.'
-    )
-
-
-def _gpio_set(pin: int, value: int) -> None:
-    '''Set a GPIO pin to a value (set-and-exit).
-
-    Uses ``pinctrl`` on RPi OS (recommended), or
-    ``gpioset`` v1 as a fallback.
+    Opens the UART at the application baud rate (921600 8N1,
+    rtscts=True to match the running firmware), sends the
+    framed command, then waits for the MCU to reset into the
+    custom bootloader.
 
     Args:
-        pin: BCM GPIO pin number.
-        value: 0 or 1.
+        skip_reset: If True, skip sending the command
+            (assumes MCU is already in bootloader mode).
     '''
-    method, chip = _detect_gpio_method()
-    if method == 'pinctrl':
-        drive = 'dh' if value else 'dl'
-        subprocess.run(
-            ['pinctrl', 'set', str(pin), 'op', drive],
-            check=True, timeout=5,
-        )
-    elif method == 'gpioset_v1':
-        subprocess.run(
-            ['gpioset', chip, f'{pin}={value}'],
-            check=True, timeout=5,
-        )
-    else:
-        raise RuntimeError(f'Unknown GPIO method: {method}')
+    if skip_reset:
+        _log('Skipping ENTER_BOOTLOADER (--skip-reset)')
+        return
 
+    import serial
 
-APP_BAUD = 921600
-
-
-def _send_app_reset() -> None:
-    '''Send CMD_RESET to the STM32 application over UART.
-
-    Opens the port at the application baud rate (921600 8N1),
-    builds a proper frame for CMD_RESET (0x8007), sends it,
-    and closes. The STM32 application will perform a software
-    reset — if BOOT0 is HIGH at that moment, the MCU enters
-    the system bootloader.
-    '''
-    import serial as _serial
     from ultra.hw import frame_protocol as fp
 
-    _log('Sending CMD_RESET via app UART...')
+    _log(
+        f'[1/5] Sending ENTER_BOOTLOADER '
+        f'to {UART_PORT} @ {APP_BAUD}',
+    )
+    _set_status('flashing', 32, 'Entering bootloader...')
+
     try:
-        ser = _serial.Serial(
+        ser = serial.Serial(
             UART_PORT, APP_BAUD, timeout=0.5,
-            parity=_serial.PARITY_NONE,
-            bytesize=_serial.EIGHTBITS,
-            stopbits=_serial.STOPBITS_ONE,
-            rtscts=False,
+            parity=serial.PARITY_NONE,
+            bytesize=serial.EIGHTBITS,
+            stopbits=serial.STOPBITS_ONE,
+            rtscts=True,
         )
         payload = fp.pack_seq(0)
         frame = fp.build_frame(
-            command=fp.CMD_RESET, data=payload,
+            command=fp.CMD_ENTER_BOOTLOADER,
+            data=payload,
         )
         ser.write(frame)
         ser.flush()
         time.sleep(0.1)
+
+        resp = ser.read(64)
         ser.close()
-        _log('  Reset command sent')
-    except Exception as exc:
-        _log(f'  App reset warning: {exc}')
 
-
-def _enter_bootloader() -> None:
-    '''Enter STM32 system bootloader.
-
-    Sets BOOT0 HIGH, then sends CMD_RESET via the application
-    UART to trigger a software reset. The STM32 samples
-    BOOT0=HIGH on reset and enters the system bootloader.
-
-    Does NOT pulse nRST — the GPIO nRST signal through the
-    series resistor does not reliably reach the STM32.
-    '''
-    _log('Setting BOOT0=HIGH')
-    _gpio_set(GPIO_BOOT0, 1)
-    time.sleep(0.05)
-
-    _send_app_reset()
-    time.sleep(2.0)
-    _log('Bootloader ready')
-
-
-def _exit_bootloader() -> None:
-    '''Return to normal boot: BOOT0=LOW, then jump to app.
-
-    Sets BOOT0 LOW, then uses stm32flash -g to tell the
-    bootloader to jump to the application at 0x08000000.
-    This avoids nRST which is unreliable on this hardware.
-    '''
-    _log('Setting BOOT0=LOW')
-    _gpio_set(GPIO_BOOT0, 0)
-    time.sleep(0.05)
-
-    _log('Jumping to application via stm32flash -g')
-    try:
-        proc = subprocess.run(
-            [
-                'stm32flash',
-                '-g', '0x08000000',
-                '-b', str(FLASH_BAUD),
-                UART_PORT,
-            ],
-            capture_output=True, text=True, timeout=10,
-        )
-        if proc.returncode == 0:
-            _log('  Jump command sent')
-        else:
-            out = (proc.stdout + proc.stderr).strip()
-            _log(f'  stm32flash -g exit {proc.returncode}')
-            if out:
-                _log(f'  {out[:200]}')
-    except Exception as exc:
-        _log(f'  stm32flash -g warning: {exc}')
-
-    time.sleep(2.0)
-    _log('STM32 should be in application mode')
-
-
-FLASH_ATTEMPTS = 3
-
-
-def _configure_uart() -> None:
-    '''Reset UART port settings for bootloader.'''
-    try:
-        subprocess.run(
-            [
-                'stty', '-F', UART_PORT,
-                str(FLASH_BAUD), 'raw',
-                '-crtscts', '-clocal', 'cs8',
-                '-parenb', '-cstopb',
-            ],
-            check=True, timeout=5,
-        )
-        _log(f'Configured {UART_PORT} for bootloader')
-    except Exception as exc:
-        _log(f'stty warning: {exc}')
-
-
-def _diagnose_uart() -> None:
-    '''Check if UART port is free and if STM32 responds.
-
-    Tests bootloader mode (8E1, 0x7F sync) and application
-    mode (8N1, SOH frame) to determine what state the STM32
-    is actually in.
-    '''
-    import serial as _serial
-
-    try:
-        r = subprocess.run(
-            ['fuser', UART_PORT],
-            capture_output=True, text=True, timeout=3,
-        )
-        pids = r.stdout.strip()
-        if pids:
-            _log(f'WARNING: {UART_PORT} held by PID {pids}')
-        else:
-            _log(f'{UART_PORT} is free')
-    except Exception:
-        pass
-
-    _log('Testing bootloader (8E1, 0x7F)...')
-    try:
-        ser = _serial.Serial(
-            UART_PORT, FLASH_BAUD, timeout=1.0,
-            parity=_serial.PARITY_EVEN,
-            bytesize=_serial.EIGHTBITS,
-            stopbits=_serial.STOPBITS_ONE,
-            rtscts=False,
-        )
-        ser.reset_input_buffer()
-        ser.write(b'\x7f')
-        resp = ser.read(1)
-        if resp == b'\x79':
-            _log('  -> Bootloader ACK!')
-        elif resp == b'\x1f':
-            _log('  -> Bootloader NACK (already synced)')
-        elif resp:
-            _log(f'  -> Got 0x{resp.hex()}')
-        else:
-            _log('  -> No response (timeout)')
-        ser.close()
-    except Exception as exc:
-        _log(f'  -> Error: {exc}')
-
-    _log('Testing application (8N1, get_version)...')
-    try:
-        ser = _serial.Serial(
-            UART_PORT, 921600, timeout=0.5,
-            parity=_serial.PARITY_NONE,
-            bytesize=_serial.EIGHTBITS,
-            stopbits=_serial.STOPBITS_ONE,
-            rtscts=False,
-        )
-        ser.reset_input_buffer()
-        # SOH + cmd 0x8001 (get_version) minimal frame
-        ser.write(b'\x01')
-        resp = ser.read(32)
         if resp:
-            _log(
-                f'  -> App responded: '
-                f'{resp[:16].hex()}...'
-            )
-            _log('  -> STM32 is in APPLICATION mode!')
+            _log(f'  App responded ({len(resp)} bytes)')
         else:
-            _log('  -> No app response')
-        ser.close()
+            _log(
+                '  No app response '
+                '(may already be in bootloader)',
+            )
     except Exception as exc:
-        _log(f'  -> Error: {exc}')
+        _log(f'  ENTER_BOOTLOADER warning: {exc}')
+
+    _log('  Waiting for STM32 reset...')
+    time.sleep(2.0)
 
 
-def flash_firmware(bin_path: str) -> bool:
-    '''Flash a .bin file to the STM32 via stm32flash.
+def _wait_for_sync(ser, timeout: float = 30.0) -> bool:
+    '''Wait for READY (0x7F) from bootloader, send SYNC.
+
+    The custom bootloader sends 0x7F every 500 ms until a
+    host responds with 0x7F.  On successful sync the
+    bootloader replies 0x79 (ACK).
+
+    Args:
+        ser: Open serial.Serial at bootloader baud rate.
+        timeout: Maximum seconds to wait.
+
+    Returns:
+        True if sync succeeded, False on timeout.
+    '''
+    _log('[2/5] Waiting for bootloader READY...')
+    _set_status('flashing', 35, 'Syncing bootloader...')
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        data = ser.read(1)
+        if data and data[0] == READY:
+            ser.write(bytes([READY]))
+            ser.flush()
+            ack = ser.read(1)
+            if ack and ack[0] == ACK:
+                _log('  Bootloader synced')
+                return True
+            _log(
+                f'  Unexpected sync reply: '
+                f'{ack.hex() if ack else "timeout"}',
+            )
+    return False
+
+
+def _send_info(
+        ser,
+        fw_size: int,
+        fw_crc: int,
+) -> bool:
+    '''Send firmware size + CRC-32 and wait for erase ACK.
+
+    Args:
+        ser: Open serial.Serial at bootloader baud rate.
+        fw_size: Firmware binary size in bytes.
+        fw_crc: IEEE 802.3 CRC-32 of the binary.
+
+    Returns:
+        True if erase succeeded, False on NACK/timeout.
+    '''
+    _log(
+        f'[3/5] Sending info: size={fw_size}, '
+        f'crc=0x{fw_crc:08X}',
+    )
+    _set_status('flashing', 38, 'Erasing flash...')
+
+    info = struct.pack('<II', fw_size, fw_crc)
+    ser.write(info)
+    ser.flush()
+
+    _log('  Erasing flash sectors...')
+    ack = ser.read(1)
+    if not ack or ack[0] != ACK:
+        tag = ack.hex() if ack else 'timeout'
+        _log(f'  Erase NACK: {tag}')
+        return False
+    _log('  Erase OK')
+    return True
+
+
+def _stream_firmware(ser, fw_data: bytes) -> bool:
+    '''Stream firmware in CHUNK_SZ blocks with per-block ACK.
+
+    Args:
+        ser: Open serial.Serial at bootloader baud rate.
+        fw_data: Raw firmware binary bytes.
+
+    Returns:
+        True if all chunks were ACKed, False on failure.
+    '''
+    total = len(fw_data)
+    sent = 0
+    _log(f'[4/5] Streaming {total} bytes...')
+
+    while sent < total:
+        end = min(sent + CHUNK_SZ, total)
+        chunk = fw_data[sent:end]
+        ser.write(chunk)
+        ser.flush()
+
+        ack = ser.read(1)
+        if not ack or ack[0] != ACK:
+            _log(f'  Write NACK at offset 0x{sent:06X}')
+            return False
+
+        sent = end
+        pct = 100 * sent // total
+        scaled = 40 + int(pct * 0.55)
+        _set_status(
+            'flashing', scaled, f'Flashing... {pct}%',
+        )
+
+    _log(f'  Streamed {sent} bytes')
+    return True
+
+
+def _verify(ser) -> bool:
+    '''Wait for bootloader CRC-32 verification result.
+
+    Args:
+        ser: Open serial.Serial at bootloader baud rate.
+
+    Returns:
+        True if CRC matched (ACK), False on NACK/timeout.
+    '''
+    _log('[5/5] Verifying CRC-32...')
+    _set_status('flashing', 96, 'Verifying...')
+
+    ack = ser.read(1)
+    if ack and ack[0] == ACK:
+        _log('  CRC OK')
+        return True
+    tag = ack.hex() if ack else 'timeout'
+    _log(f'  CRC FAILED: {tag}')
+    return False
+
+
+def flash_firmware(
+        bin_path: str,
+        skip_reset: bool = False,
+) -> bool:
+    '''Flash a .bin file via the custom UART bootloader.
 
     Must be called with the UART port free (no active
     STM32Interface or StatusMonitor).
 
-    Each attempt does a full exit/enter/configure cycle
-    then runs stm32flash -w directly. The repeated GPIO
-    and UART activity conditions the H735 bootloader's
-    USART2 interface.
+    Protocol:
+      1. Send ENTER_BOOTLOADER (0x8009) at 921600 8N1
+      2. Sync with bootloader at 115200 8N1
+      3. Send size + CRC-32, wait for erase ACK
+      4. Stream 1024-byte chunks with per-block ACK
+      5. Wait for CRC verification ACK
 
     Args:
         bin_path: Path to the .bin firmware file.
+        skip_reset: If True, skip sending
+            ENTER_BOOTLOADER (MCU already in bootloader).
 
     Returns:
         True on success, False on failure.
     '''
-    cmd = [
-        'stm32flash',
-        '-w', bin_path,
-        '-v',
-        '-g', '0x08000000',
-        '-b', str(FLASH_BAUD),
-        UART_PORT,
-    ]
+    import serial
 
-    for attempt in range(1, FLASH_ATTEMPTS + 1):
+    with open(bin_path, 'rb') as f:
+        fw_data = f.read()
+
+    fw_size = len(fw_data)
+    fw_crc = binascii.crc32(fw_data) & 0xFFFFFFFF
+
+    _log(f'Firmware: {bin_path}')
+    _log(f'  Size : {fw_size} bytes '
+         f'({fw_size / 1024:.1f} KB)')
+    _log(f'  CRC  : 0x{fw_crc:08X}')
+
+    if fw_size > MAX_APP_SIZE:
         _log(
-            f'--- Attempt {attempt}/{FLASH_ATTEMPTS} ---',
+            f'ERROR: firmware too large '
+            f'(max {MAX_APP_SIZE} bytes)',
         )
-        _set_status(
-            'flashing', 35,
-            f'Entering bootloader '
-            f'(attempt {attempt})...',
-        )
+        _set_status('error', 0, 'Firmware too large')
+        return False
+    if fw_size == 0:
+        _log('ERROR: firmware file is empty')
+        _set_status('error', 0, 'Firmware file is empty')
+        return False
 
-        if attempt > 1:
-            _log('Resetting for retry...')
-            _exit_bootloader()
-            time.sleep(1.0)
+    _send_enter_bootloader(skip_reset=skip_reset)
 
-        try:
-            _enter_bootloader()
-        except Exception as exc:
-            _log(f'GPIO error: {exc}')
+    _log(f'Opening {UART_PORT} @ {BL_BAUD} 8N1')
+    ser = serial.Serial(
+        UART_PORT, BL_BAUD, timeout=5.0,
+        parity=serial.PARITY_NONE,
+        bytesize=serial.EIGHTBITS,
+        stopbits=serial.STOPBITS_ONE,
+        rtscts=False,
+    )
+    ser.reset_input_buffer()
+
+    try:
+        if not _wait_for_sync(ser, timeout=30.0):
+            _log('ERROR: bootloader did not respond')
             _set_status(
-                'error', 0, f'GPIO error: {exc}',
+                'error', 0,
+                'Bootloader did not respond',
             )
             return False
 
-        if attempt == 1:
-            _diagnose_uart()
+        if not _send_info(ser, fw_size, fw_crc):
+            _set_status('error', 0, 'Flash erase failed')
+            return False
 
-        _configure_uart()
+        ser.timeout = 10.0
+        if not _stream_firmware(ser, fw_data):
+            _set_status('error', 0, 'Write failed')
+            return False
 
-        _set_status('flashing', 40, 'Flashing...')
-        _log(f'$ {" ".join(cmd)}')
+        ser.timeout = 5.0
+        if not _verify(ser):
+            _set_status('error', 0, 'CRC verification failed')
+            return False
 
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-            progress_re = re.compile(r'(\d+)%')
-            for line in proc.stdout:
-                line = line.rstrip('\n')
-                _log(line)
-                m = progress_re.search(line)
-                if m:
-                    pct = int(m.group(1))
-                    scaled = 40 + int(pct * 0.55)
-                    _set_status(
-                        'flashing', scaled,
-                        f'Flashing... {pct}%',
-                    )
+    finally:
+        ser.close()
 
-            proc.wait(timeout=120)
-            if proc.returncode == 0:
-                _set_status(
-                    'flashing', 97, 'Resetting MCU...',
-                )
-                try:
-                    _exit_bootloader()
-                except Exception as exc:
-                    _log(f'GPIO reset warning: {exc}')
-
-                name = os.path.basename(bin_path)
-                ver = name.replace(
-                    '_ultra_mcu.bin', '',
-                )
-                _log(
-                    f'Flash complete! Firmware: {ver}',
-                )
-                _set_status(
-                    'done', 100, f'Flashed {ver}',
-                )
-                return True
-
-            _log(
-                f'stm32flash exited with code '
-                f'{proc.returncode}',
-            )
-
-        except Exception as exc:
-            _log(f'stm32flash error: {exc}')
-
-    _log('All attempts failed')
-    _set_status(
-        'error', 0,
-        f'Flash failed after {FLASH_ATTEMPTS} attempts',
-    )
-    try:
-        _exit_bootloader()
-    except Exception:
-        pass
-    return False
+    name = os.path.basename(bin_path)
+    ver = name.replace('_ultra_mcu.bin', '')
+    _log(f'Flash complete! Firmware: {ver}')
+    _set_status('done', 100, f'Flashed {ver}')
+    return True
 
 
 # -------------------------------------------------------
