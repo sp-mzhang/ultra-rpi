@@ -38,6 +38,14 @@ class SMRequest(BaseModel):
     action: str = 'start'
 
 
+class Stm32CmdRequest(BaseModel):
+    '''Request body for a raw STM32 command.'''
+    cmd: str
+    params: dict[str, Any] = {}
+    timeout_s: float = 30.0
+    wait_done: bool = True
+
+
 def create_api_router(
         app: 'Application',
         broadcaster: 'WebSocketBroadcaster',
@@ -378,6 +386,165 @@ def create_api_router(
             )
         n = db.clear_egressed()
         return {'deleted': n}
+
+    # ---- STM32 engineering endpoints ----
+
+    def _get_or_connect_stm32():
+        '''Return the STM32 interface, connecting if needed.'''
+        stm32 = app._stm32
+        if stm32 is not None:
+            return stm32
+        from ultra.hw.stm32_interface import (
+            STM32Interface,
+        )
+        stm32_cfg = app.config.get('stm32', {})
+        stm32 = STM32Interface(
+            port=stm32_cfg.get(
+                'port', '/dev/ttyAMA3',
+            ),
+            baud=stm32_cfg.get('baud', 921600),
+        )
+        if not stm32.connect():
+            return None
+        return stm32
+
+    @router.post('/stm32/command')
+    async def stm32_command(req: Stm32CmdRequest):
+        '''Send an arbitrary command to the STM32.
+
+        Validates the command name against the firmware
+        vocabulary and rejects requests while a protocol
+        is actively running (except ``abort``).
+        '''
+        from ultra.hw.frame_protocol import (
+            CMD_NAME_TO_ID,
+        )
+        if req.cmd not in CMD_NAME_TO_ID:
+            raise HTTPException(
+                status_code=400,
+                detail=f'Unknown command: {req.cmd}',
+            )
+        runner = app.get_runner()
+        if runner.is_running and req.cmd != 'abort':
+            raise HTTPException(
+                status_code=409,
+                detail='Protocol running -- only abort '
+                       'allowed',
+            )
+        stm32 = _get_or_connect_stm32()
+        if stm32 is None:
+            raise HTTPException(
+                status_code=500,
+                detail='STM32 not connected',
+            )
+        cmd_dict: dict[str, Any] = {'cmd': req.cmd}
+        cmd_dict.update(req.params)
+
+        loop = asyncio.get_running_loop()
+        try:
+            if req.wait_done:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: stm32.send_command_wait_done(
+                        cmd=cmd_dict,
+                        timeout_s=req.timeout_s,
+                    ),
+                )
+            else:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: stm32.send_command(
+                        cmd=cmd_dict,
+                        timeout_s=req.timeout_s,
+                    ),
+                )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f'Command error: {exc}',
+            )
+        return {
+            'ok': result is not None,
+            'response': result or {},
+        }
+
+    @router.get('/stm32/status')
+    async def stm32_status():
+        '''Return combined hardware status.
+
+        Queries gantry position, door, lift, pump, and
+        centrifuge status in one call for the engineering
+        UI position display.
+        '''
+        stm32 = _get_or_connect_stm32()
+        if stm32 is None:
+            raise HTTPException(
+                status_code=500,
+                detail='STM32 not connected',
+            )
+        loop = asyncio.get_running_loop()
+
+        def _query():
+            out: dict[str, Any] = {}
+            try:
+                r = stm32.send_command(
+                    {'cmd': 'get_gantry_status'},
+                    timeout_s=2.0,
+                )
+                if r:
+                    out['gantry'] = r
+            except Exception:
+                pass
+            try:
+                r = stm32.send_command(
+                    {'cmd': 'door_status'},
+                    timeout_s=2.0,
+                )
+                if r:
+                    out['door'] = r
+            except Exception:
+                pass
+            try:
+                r = stm32.send_command(
+                    {'cmd': 'lift_status'},
+                    timeout_s=2.0,
+                )
+                if r:
+                    out['lift'] = r
+            except Exception:
+                pass
+            try:
+                r = stm32.send_command(
+                    {'cmd': 'pump_get_status'},
+                    timeout_s=2.0,
+                )
+                if r:
+                    out['pump'] = r
+            except Exception:
+                pass
+            try:
+                r = stm32.send_command(
+                    {'cmd': 'centrifuge_status'},
+                    timeout_s=2.0,
+                )
+                if r:
+                    out['centrifuge'] = r
+            except Exception:
+                pass
+            return out
+
+        result = await loop.run_in_executor(
+            None, _query,
+        )
+        return result
+
+    @router.get('/stm32/commands')
+    async def stm32_commands():
+        '''Return list of valid STM32 command names.'''
+        from ultra.hw.frame_protocol import (
+            CMD_NAME_TO_ID,
+        )
+        return sorted(CMD_NAME_TO_ID.keys())
 
     # ---- Logs ----
 

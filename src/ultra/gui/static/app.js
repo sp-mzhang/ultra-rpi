@@ -1287,6 +1287,589 @@
       method: 'POST',
     });
 
+  /* ================================================
+   * ENGINEERING TAB
+   * ================================================ */
+
+  const LOCATION_NAMES = [
+    'Pipette Tip 1','Pipette Tip 2','Pipette Tip 3',
+    'Pipette Tip 4','Pipette Tip 5','Pipette Tip 6',
+    'Pipette Tip 7','Pipette Tip 8',
+    'Pipette Port 1','Pipette Port 2','Pipette Port 3',
+    'Pipette Port 4','Pipette Port 5','Pipette Port 6',
+    'Pipette Port 7','Pipette Port 8',
+    'Locked Collar Height','Unlocked Collar Height',
+    'Serum Port',
+    'Well-L1','Well-L2',
+    'Well-S1','Well-S2','Well-S3','Well-S4',
+    'Well-S5','Well-S6','Well-S7','Well-S8',
+    'Well-S9','Well-S10','Well-S11','Well-S12',
+    'Well-M1','Well-M2','Well-M3','Well-M4',
+    'Well-M5','Well-M6','Well-M7','Well-M8',
+    'Well-M9','Well-M10','Well-M11','Well-M12',
+    'Well-M13','Well-M14','Well-M15','Well-M16',
+    'Well-M17','Well-M18',
+    'Blister-B1','Blister-B2','Blister-B3',
+    'Lid Notch-Closed Position',
+    'Lid Notch-Open Position',
+    'Tip Removal - Position 1',
+    'Tip Removal - Position 2',
+  ];
+
+  let engPosTimer = null;
+
+  function initEngineering() {
+    initAppTabs();
+    initEngTabs();
+    populateLocationSelects();
+    wireEngMotion();
+    wireEngPump();
+    wireEngCentrifuge();
+    wireEngCartridge();
+    wireEngLocations();
+    wireEngLeds();
+    wireEngEnvironment();
+    wireEngDoor();
+    wireEngConsole();
+    wireSimpleCommandButtons();
+  }
+
+  /* -- App-level Run / Engineering tabs -- */
+  function initAppTabs() {
+    document.querySelectorAll('.app-tab').forEach(
+      (btn) => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.app-tab')
+            .forEach(
+              (b) => b.classList.remove('active'),
+            );
+          btn.classList.add('active');
+          const v = btn.dataset.view;
+          const runV = $('#run-view');
+          const engV = $('#eng-view');
+          if (v === 'engineering') {
+            runV.hidden = true;
+            engV.hidden = false;
+            startEngPolling();
+          } else {
+            runV.hidden = false;
+            engV.hidden = true;
+            stopEngPolling();
+          }
+        });
+      },
+    );
+  }
+
+  /* -- Engineering sub-tabs -- */
+  function initEngTabs() {
+    document.querySelectorAll('.eng-tab').forEach(
+      (btn) => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.eng-tab')
+            .forEach(
+              (b) => b.classList.remove('active'),
+            );
+          btn.classList.add('active');
+          const id = btn.dataset.eng;
+          document.querySelectorAll('.eng-pane')
+            .forEach((p) => {
+              p.hidden = (
+                p.id !== `eng-${id}`
+              );
+            });
+        });
+      },
+    );
+  }
+
+  function populateLocationSelects() {
+    const opts = LOCATION_NAMES.map(
+      (n, i) => `<option value="${i}">${n}</option>`,
+    ).join('');
+    document.querySelectorAll('.eng-loc-sel')
+      .forEach((sel) => { sel.innerHTML = opts; });
+  }
+
+  /* -- STM32 command helper -- */
+  async function engCmd(
+    cmd, params = {}, waitDone = true,
+    timeout = 30,
+  ) {
+    try {
+      const res = await fetch(
+        '/api/stm32/command', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            cmd, params,
+            wait_done: waitDone,
+            timeout_s: timeout,
+          }),
+        },
+      );
+      const j = await res.json();
+      if (!res.ok) {
+        engLog(`ERR ${cmd}: ${j.detail || res.status}`);
+        return null;
+      }
+      engLog(
+        `${cmd}: ${JSON.stringify(j.response)}`,
+      );
+      return j.response;
+    } catch (e) {
+      engLog(`ERR ${cmd}: ${e}`);
+      return null;
+    }
+  }
+
+  function engLog(msg) {
+    const el = $('#eng-con-log');
+    if (!el) return;
+    const ts = new Date().toLocaleTimeString();
+    el.textContent += `[${ts}] ${msg}\n`;
+    el.scrollTop = el.scrollHeight;
+  }
+
+  /* -- Position polling -- */
+  function startEngPolling() {
+    if (engPosTimer) return;
+    pollEngPosition();
+    engPosTimer = setInterval(
+      pollEngPosition, 1000,
+    );
+  }
+  function stopEngPolling() {
+    if (engPosTimer) {
+      clearInterval(engPosTimer);
+      engPosTimer = null;
+    }
+  }
+  async function pollEngPosition() {
+    try {
+      const r = await fetch('/api/stm32/status');
+      if (!r.ok) return;
+      const d = await r.json();
+      const g = d.gantry || {};
+      const setV = (id, v) => {
+        const el = $(`#eng-pos-${id}`);
+        if (el) {
+          el.textContent = (
+            v != null ? Number(v).toFixed(2) : '--'
+          );
+        }
+      };
+      setV('x', g.x_mm);
+      setV('y', g.y_mm);
+      setV('z', g.z_mm);
+      const lift = d.lift || {};
+      setV('lift', lift.position_mm);
+    } catch (_) { /* ignore */ }
+  }
+
+  /* ---- MOTION wiring ---- */
+  function wireEngMotion() {
+    document.querySelectorAll('.eng-jog-btn')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const axis = btn.dataset.axis;
+          const dir = parseInt(btn.dataset.dir);
+          const step = parseFloat(
+            $('#eng-jog-step').value,
+          );
+          const speed = parseFloat(
+            $('#eng-jog-speed').value,
+          );
+          const dist = step * dir;
+          const um = Math.round(dist * 1000);
+          const sp = Math.round(speed * 10);
+          const p = {};
+          p[`${axis}_um`] = um;
+          p[`${axis}_speed_01mms`] = sp;
+          p.relative = 1;
+          engCmd('move_gantry', p);
+        });
+      });
+
+    $('#eng-goto-btn').addEventListener(
+      'click', () => {
+        const x = parseFloat(
+          $('#eng-goto-x').value,
+        );
+        const y = parseFloat(
+          $('#eng-goto-y').value,
+        );
+        const z = parseFloat(
+          $('#eng-goto-z').value,
+        );
+        engCmd('move_gantry', {
+          x_um: Math.round(x * 1000),
+          y_um: Math.round(y * 1000),
+          z_um: Math.round(z * 1000),
+        });
+      },
+    );
+
+    $('#eng-estop').addEventListener(
+      'click', () => engCmd('abort', {}, false, 5),
+    );
+  }
+
+  /* ---- PUMP wiring ---- */
+  function wireEngPump() {
+    $('#eng-tip-pickup').onclick = () => {
+      const id = parseInt($('#eng-tip-id').value);
+      engCmd('move_to_location', {
+        location_id: id, speed_01mms: 200,
+      });
+    };
+    $('#eng-tip-return').onclick = () => {
+      const id = parseInt($('#eng-tip-id').value);
+      engCmd('move_to_location', {
+        location_id: id, speed_01mms: 200,
+      });
+    };
+    $('#eng-tip-swap').onclick = () => {
+      const id = parseInt($('#eng-tip-id').value);
+      engCmd('gantry_tip_swap', { tip_id: id });
+    };
+    $('#eng-pump-aspirate').onclick = () => {
+      const vol = parseInt($('#eng-pump-vol').value);
+      const spd = parseInt($('#eng-pump-speed').value);
+      engCmd('pump_aspirate', {
+        volume_ul: vol, speed: spd,
+      });
+    };
+    $('#eng-pump-dispense').onclick = () => {
+      const vol = parseInt($('#eng-pump-vol').value);
+      const spd = parseInt($('#eng-pump-speed').value);
+      engCmd('pump_dispense', {
+        volume_ul: vol, speed: spd,
+      });
+    };
+    $('#eng-pump-blowout').onclick = () => {
+      engCmd('pump_blowout');
+    };
+    $('#eng-sa-go').onclick = () => {
+      const loc = parseInt($('#eng-sa-loc').value);
+      const vol = parseInt($('#eng-sa-vol').value);
+      engCmd('smart_aspirate', {
+        location_id: loc, volume_ul: vol,
+      });
+    };
+    $('#eng-well-dispense').onclick = () => {
+      const src = parseInt($('#eng-wc-src').value);
+      const dst = parseInt($('#eng-wc-dst').value);
+      const vol = parseInt($('#eng-wc-vol').value);
+      const spd = parseInt($('#eng-wc-speed').value);
+      engCmd('well_dispense', {
+        src_location: src, dst_location: dst,
+        volume_ul: vol, speed: spd,
+      });
+    };
+    $('#eng-cart-dispense').onclick = () => {
+      const src = parseInt($('#eng-wc-src').value);
+      const dst = parseInt($('#eng-wc-dst').value);
+      const vol = parseInt($('#eng-wc-vol').value);
+      const spd = parseInt($('#eng-wc-speed').value);
+      engCmd('cart_dispense', {
+        src_location: src, dst_location: dst,
+        volume_ul: vol, speed: spd,
+      });
+    };
+    $('#eng-cart-bf').onclick = () => {
+      const src = parseInt($('#eng-wc-src').value);
+      const dst = parseInt($('#eng-wc-dst').value);
+      const vol = parseInt($('#eng-wc-vol').value);
+      const spd = parseInt($('#eng-wc-speed').value);
+      const cyc = parseInt($('#eng-wc-cycles').value);
+      engCmd('cart_dispense_bf', {
+        src_location: src, dst_location: dst,
+        volume_ul: vol, speed: spd, cycles: cyc,
+      });
+    };
+    $('#eng-tip-mix').onclick = () => {
+      const loc = parseInt($('#eng-wc-src').value);
+      const vol = parseInt($('#eng-wc-vol').value);
+      const spd = parseInt($('#eng-wc-speed').value);
+      const cyc = parseInt($('#eng-wc-cycles').value);
+      engCmd('tip_mix', {
+        location_id: loc,
+        volume_ul: vol, speed: spd, cycles: cyc,
+      });
+    };
+  }
+
+  /* ---- CENTRIFUGE wiring ---- */
+  function wireEngCentrifuge() {
+    $('#eng-cfuge-start').onclick = () => {
+      const rpm = parseInt(
+        $('#eng-cfuge-rpm').value,
+      );
+      const dur = parseInt(
+        $('#eng-cfuge-dur').value,
+      );
+      engCmd('centrifuge_start', {
+        rpm, duration_s: dur,
+      });
+    };
+    $('#eng-cfuge-angle-go').onclick = () => {
+      const ang = parseInt(
+        $('#eng-cfuge-angle').value,
+      );
+      engCmd('centrifuge_move_angle', {
+        angle_deg: ang,
+      });
+    };
+    $('#eng-cfuge-refresh').onclick = async () => {
+      const r = await engCmd(
+        'centrifuge_status', {}, false, 3,
+      );
+      $('#eng-cfuge-status').textContent = (
+        r ? JSON.stringify(r, null, 2) : 'Error'
+      );
+    };
+  }
+
+  /* ---- CARTRIDGE wiring ---- */
+  function wireEngCartridge() {
+    /* uses simple data-cmd buttons */
+  }
+
+  /* ---- LOCATIONS wiring ---- */
+  function wireEngLocations() {
+    $('#eng-loc-go').onclick = () => {
+      const locId = parseInt(
+        $('#eng-loc-select').value,
+      );
+      const speed = parseFloat(
+        $('#eng-loc-speed').value,
+      );
+      const sp = Math.max(
+        0, Math.round(speed * 10),
+      );
+      engCmd('move_to_location', {
+        location_id: locId, speed_01mms: sp,
+      });
+    };
+    $('#eng-ctr-go').onclick = () => {
+      const x = parseFloat($('#eng-ctr-x').value);
+      const y = parseFloat($('#eng-ctr-y').value);
+      const z = parseFloat($('#eng-ctr-z').value);
+      engCmd('set_loc_centre', {
+        x_um: Math.round(x * 1000),
+        y_um: Math.round(y * 1000),
+        z_um: Math.round(z * 1000),
+      });
+    };
+    $('#eng-off-go').onclick = () => {
+      const x = parseFloat($('#eng-off-x').value);
+      const y = parseFloat($('#eng-off-y').value);
+      const z = parseFloat($('#eng-off-z').value);
+      engCmd('set_loc_offset', {
+        dx_um: Math.round(x * 1000),
+        dy_um: Math.round(y * 1000),
+        dz_um: Math.round(z * 1000),
+      });
+    };
+  }
+
+  /* ---- LEDs wiring ---- */
+  function wireEngLeds() {
+    ['r', 'g', 'b', 'w'].forEach((c) => {
+      const sl = $(`#eng-led-${c}`);
+      const sp = $(`#eng-led-${c}-val`);
+      sl.oninput = () => { sp.textContent = sl.value; };
+    });
+    const ledVals = () => ({
+      r: parseInt($('#eng-led-r').value),
+      g: parseInt($('#eng-led-g').value),
+      b: parseInt($('#eng-led-b').value),
+      w: parseInt($('#eng-led-w').value),
+    });
+    $('#eng-led-set').onclick = () => {
+      const idx = parseInt($('#eng-led-idx').value);
+      const c = ledVals();
+      engCmd('led_set_pixel', {
+        index: idx, ...c,
+      }, false);
+    };
+    $('#eng-led-off').onclick = () => {
+      const idx = parseInt($('#eng-led-idx').value);
+      engCmd('led_set_pixel_off', {
+        index: idx,
+      }, false);
+    };
+    $('#eng-led-all-same').onclick = () => {
+      const c = ledVals();
+      for (let i = 0; i < 5; i++) {
+        engCmd('led_set_pixel', {
+          index: i, ...c,
+        }, false);
+      }
+    };
+    $('#eng-led-pat-start').onclick = () => {
+      const pat = parseInt(
+        $('#eng-led-pattern').value,
+      );
+      const dur = parseInt($('#eng-led-dur').value);
+      const stg = parseInt(
+        $('#eng-led-stage').value,
+      );
+      engCmd('led_set_pattern', {
+        pattern: pat,
+        duration_s: dur,
+        stage: stg,
+      }, false);
+    };
+    $('#eng-led-pat-stop').onclick = () => {
+      engCmd('led_set_pattern', {
+        pattern: 0, duration_s: 0, stage: 0,
+      }, false);
+    };
+  }
+
+  /* ---- ENVIRONMENT wiring ---- */
+  function wireEngEnvironment() {
+    $('#eng-heat-duty-set').onclick = () => {
+      const d = parseInt(
+        $('#eng-heat-duty').value,
+      );
+      engCmd('air_heater_set_duty', {
+        duty_pct: d,
+      }, false);
+    };
+    $('#eng-heat-status').onclick = async () => {
+      const r = await engCmd(
+        'air_heater_get_status', {}, false, 3,
+      );
+      $('#eng-heat-status-box').textContent = (
+        r ? JSON.stringify(r, null, 2) : 'Error'
+      );
+    };
+    $('#eng-fan-duty-set').onclick = () => {
+      const d = parseInt($('#eng-fan-duty').value);
+      engCmd('fan_set_duty', {
+        duty_pct: d,
+      }, false);
+    };
+    $('#eng-fan-status').onclick = async () => {
+      const r = await engCmd(
+        'fan_get_status', {}, false, 3,
+      );
+      $('#eng-fan-status-box').textContent = (
+        r ? JSON.stringify(r, null, 2) : 'Error'
+      );
+    };
+    $('#eng-temp-status').onclick = async () => {
+      const r = await engCmd(
+        'temp_get_status', {}, false, 3,
+      );
+      $('#eng-temp-status-box').textContent = (
+        r ? JSON.stringify(r, null, 2) : 'Error'
+      );
+    };
+    $('#eng-accel-status').onclick = async () => {
+      const r = await engCmd(
+        'accel_get_status', {}, false, 3,
+      );
+      $('#eng-accel-status-box').textContent = (
+        r ? JSON.stringify(r, null, 2) : 'Error'
+      );
+    };
+  }
+
+  /* ---- DOOR / LID wiring ---- */
+  function wireEngDoor() {
+    $('#eng-door-status').onclick = async () => {
+      const r = await engCmd(
+        'door_status', {}, false, 3,
+      );
+      $('#eng-door-status-box').textContent = (
+        r ? JSON.stringify(r, null, 2) : 'Error'
+      );
+    };
+    $('#eng-lid-open').onclick = () => {
+      const z = parseFloat($('#eng-lid-z').value);
+      const extra = parseFloat(
+        $('#eng-lid-extra').value,
+      );
+      engCmd('lid_move', {
+        open: 1,
+        z_engage_um: Math.round(z * 1000),
+        extra_x_um: Math.round(extra * 1000),
+      });
+    };
+    $('#eng-lid-close').onclick = () => {
+      const z = parseFloat($('#eng-lid-z').value);
+      const extra = parseFloat(
+        $('#eng-lid-extra').value,
+      );
+      engCmd('lid_move', {
+        open: 0,
+        z_engage_um: Math.round(z * 1000),
+        extra_x_um: Math.round(extra * 1000),
+      });
+    };
+  }
+
+  /* ---- CONSOLE wiring ---- */
+  function wireEngConsole() {
+    fetch('/api/stm32/commands').then(
+      (r) => r.json(),
+    ).then((cmds) => {
+      const dl = $('#eng-cmd-list');
+      cmds.forEach((c) => {
+        const o = document.createElement('option');
+        o.value = c;
+        dl.appendChild(o);
+      });
+    }).catch(() => {});
+
+    const send = () => {
+      const cmd = $('#eng-con-cmd').value.trim();
+      if (!cmd) return;
+      let params = {};
+      const pStr = $('#eng-con-params').value.trim();
+      if (pStr) {
+        try { params = JSON.parse(pStr); }
+        catch (e) {
+          engLog(`Invalid JSON: ${e}`);
+          return;
+        }
+      }
+      const wait = $('#eng-con-wait').checked;
+      engCmd(cmd, params, wait);
+    };
+    $('#eng-con-send').onclick = send;
+    $('#eng-con-cmd').addEventListener(
+      'keydown', (e) => {
+        if (e.key === 'Enter') send();
+      },
+    );
+  }
+
+  /* -- Wire all simple data-cmd buttons -- */
+  function wireSimpleCommandButtons() {
+    document.querySelectorAll(
+      '.eng-cmd-btn[data-cmd]',
+    ).forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const cmd = btn.dataset.cmd;
+        let params = {};
+        if (btn.dataset.params) {
+          try {
+            params = JSON.parse(btn.dataset.params);
+          } catch (_) { /* ignore */ }
+        }
+        engCmd(cmd, params);
+      });
+    });
+  }
+
   /* ---- Boot ---- */
   init();
+  initEngineering();
 })();
