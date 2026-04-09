@@ -581,6 +581,8 @@ def create_api_router(
             )
         loop = asyncio.get_running_loop()
 
+        LIFT_USTEPS_PER_MM = 16.0 / 0.0254
+
         def _query():
             out: dict[str, Any] = {}
             try:
@@ -589,6 +591,15 @@ def create_api_router(
                     timeout_s=2.0,
                 )
                 if r:
+                    r['x_mm'] = round(
+                        r.get('x', 0) / 1000.0, 3,
+                    )
+                    r['y_mm'] = round(
+                        r.get('y', 0) / 1000.0, 3,
+                    )
+                    r['z_mm'] = round(
+                        r.get('z', 0) / 1000.0, 3,
+                    )
                     out['gantry'] = r
             except Exception:
                 pass
@@ -607,6 +618,13 @@ def create_api_router(
                     timeout_s=2.0,
                 )
                 if r:
+                    steps = r.get('position_steps', 0)
+                    r['position_mm'] = round(
+                        steps / LIFT_USTEPS_PER_MM, 2,
+                    )
+                    r['homed'] = r.get(
+                        'is_homed', False,
+                    )
                     out['lift'] = r
             except Exception:
                 pass
