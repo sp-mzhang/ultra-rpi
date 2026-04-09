@@ -364,17 +364,48 @@ def _reset_cycle() -> None:
     time.sleep(0.2)
 
 
+def _configure_uart() -> None:
+    '''Configure UART port settings for bootloader.'''
+    try:
+        subprocess.run(
+            [
+                'stty', '-F', UART_PORT,
+                str(FLASH_BAUD), 'raw',
+                '-crtscts', '-clocal', 'cs8',
+                '-parenb', '-cstopb',
+            ],
+            check=True, timeout=5,
+        )
+    except Exception as exc:
+        _log(f'stty warning: {exc}')
+
+
 def _stm32flash_probe() -> bool:
     '''Open stm32flash in query mode to condition the UART.
 
     Returns:
         True if the bootloader responded.
     '''
-    result = subprocess.run(
-        ['stm32flash', '-b', str(FLASH_BAUD), UART_PORT],
-        capture_output=True, text=True, timeout=15,
-    )
-    return result.returncode == 0
+    _log('  Probing with stm32flash...')
+    try:
+        result = subprocess.run(
+            [
+                'stm32flash',
+                '-b', str(FLASH_BAUD),
+                UART_PORT,
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        output = (result.stdout + result.stderr).strip()
+        for line in output.splitlines():
+            _log(f'    {line}')
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        _log('    stm32flash probe timed out')
+        return False
+    except Exception as exc:
+        _log(f'    probe error: {exc}')
+        return False
 
 
 def _enter_bootloader() -> None:
@@ -385,12 +416,10 @@ def _enter_bootloader() -> None:
     USART2. This runs the full conditioning sequence:
 
     For each cycle:
-      1. Enter bootloader (BOOT0=HIGH, nRST pulse)
-      2. Probe via stm32flash (opens UART, sends sync byte)
-      3. Exit bootloader (BOOT0=LOW, nRST pulse)
-
-    The final cycle enters bootloader and verifies the probe
-    succeeds before proceeding to flash.
+      1. Exit to app mode (BOOT0=LOW, nRST pulse)
+      2. Configure UART with stty
+      3. Enter bootloader (BOOT0=HIGH, nRST pulse)
+      4. Probe via stm32flash (opens UART, sends sync)
     '''
     _log('Initializing GPIOs')
     _gpio_set(GPIO_BOOT0, 0)
@@ -402,14 +431,13 @@ def _enter_bootloader() -> None:
         _log(
             f'Bootloader entry cycle {cycle}/{n}',
         )
+        _reset_cycle()
+        _configure_uart()
         _boot_cycle()
 
         if _stm32flash_probe():
             _log('Bootloader responding')
             return
-
-        if cycle < n:
-            _reset_cycle()
 
     raise RuntimeError(
         'STM32 bootloader not responding after '
