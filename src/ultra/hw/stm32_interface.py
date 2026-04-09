@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import struct
+import threading
 import time
 from typing import Optional
 
@@ -68,6 +69,7 @@ class STM32Interface:
         self._ser: Optional[serial.Serial] = None
         self._seq = 0
         self._parser = fp.FrameParser()
+        self._lock = threading.Lock()
         LOG.info(
             f'STM32Interface created: '
             f'{port=} {baud=}',
@@ -187,6 +189,9 @@ class STM32Interface:
         it, and waits for a matching response. Async messages
         (status, pressure, events) are consumed silently.
 
+        Thread-safe: acquires _lock for the entire
+        send/receive cycle.
+
         Args:
             cmd: Command dict (e.g. {'cmd': 'ping'}).
             timeout_s: Timeout in seconds.
@@ -200,6 +205,18 @@ class STM32Interface:
             LOG.error('Not connected')
             return None
 
+        with self._lock:
+            return self._send_command_inner(
+                cmd, timeout_s, collect_pressure,
+            )
+
+    def _send_command_inner(
+            self,
+            cmd: dict,
+            timeout_s: float = 30.0,
+            collect_pressure: bool = False,
+    ) -> Optional[dict]:
+        '''Inner send_command (caller must hold _lock).'''
         self._drain_rx()
 
         cmd_name = cmd.get('cmd', '')
@@ -317,6 +334,9 @@ class STM32Interface:
             gantry_tip_swap, move_*) -> MSG_GANTRY_DONE
             (0xA008)
 
+        Thread-safe: acquires _lock for the entire
+        send/ACK/DONE cycle.
+
         Args:
             cmd: Command dict (e.g. {'cmd': 'home_all'}).
             timeout_s: Total timeout covering both phases.
@@ -338,6 +358,18 @@ class STM32Interface:
             LOG.error('Not connected')
             return None
 
+        with self._lock:
+            return self._send_command_wait_done_inner(
+                cmd, timeout_s, collect_pressure,
+            )
+
+    def _send_command_wait_done_inner(
+            self,
+            cmd: dict,
+            timeout_s: float = 120.0,
+            collect_pressure: bool = False,
+    ) -> Optional[dict]:
+        '''Inner wait_done (caller must hold _lock).'''
         self._drain_rx()
 
         cmd_name = cmd.get('cmd', '')

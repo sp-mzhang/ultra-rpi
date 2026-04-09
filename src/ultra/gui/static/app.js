@@ -1494,7 +1494,6 @@
     'tip_mix', 'lld_perform',
     'gantry_tip_swap', 'lid_move',
     'centrifuge_start', 'centrifuge_move_angle',
-    'centrifuge_home',
     'centrifuge_unlock', 'centrifuge_lock',
     'centrifuge_reverse',
     'centrifuge_goto_serum', 'centrifuge_goto_pipette',
