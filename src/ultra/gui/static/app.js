@@ -1886,9 +1886,16 @@
       if (r) {
         $('#eng-cfuge-status').textContent =
           JSON.stringify(r, null, 2);
-        if (r.angle_deg != null) {
+        if (r.angle_001deg != null) {
+          const deg = r.angle_001deg / 100.0;
           $('#eng-cfuge-actual').textContent =
-            Number(r.angle_deg).toFixed(1);
+            deg.toFixed(1);
+        }
+        const led = $('#eng-cfuge-pwr-led');
+        if (led) {
+          const on = r.driver_online;
+          led.classList.toggle('green', !!on);
+          led.classList.toggle('red', !on);
         }
       }
     };
