@@ -30,11 +30,13 @@ DOWNLOAD_DIR = '/tmp/ultra_fw'
 
 UART_PORT = '/dev/ttyAMA3'
 FLASH_BAUD = 115200
-GPIO_CHIP = '4'
+GPIO_CHIPS = ['4', '0']
 GPIO_BOOT0 = 22
 GPIO_NRST = 26
 
 _s3_client: Any = None
+_gpio_mode: str | None = None
+_gpio_chip: str | None = None
 _flash_lock = threading.Lock()
 _flash_status: dict[str, Any] = {
     'state': 'idle',
@@ -233,12 +235,53 @@ def download_firmware(s3_key: str) -> str:
 # GPIO + stm32flash
 # -------------------------------------------------------
 
-def _gpioset(pin: int, value: int) -> None:
-    '''Set a GPIO pin via gpioset.'''
-    subprocess.run(
-        ['gpioset', GPIO_CHIP, f'{pin}={value}'],
-        check=True, timeout=5,
+def _detect_gpioset() -> tuple[str, str]:
+    '''Auto-detect gpioset CLI syntax and chip number.
+
+    Tries libgpiod v2 syntax (-c flag) first, then v1
+    positional syntax, against each candidate chip.
+
+    Returns:
+        Tuple of (mode, chip) where mode is 'v2' or 'v1'.
+
+    Raises:
+        RuntimeError: If no working combination is found.
+    '''
+    global _gpio_mode, _gpio_chip
+    if _gpio_mode and _gpio_chip:
+        return _gpio_mode, _gpio_chip
+
+    for chip in GPIO_CHIPS:
+        for mode, cmd in [
+            ('v2', ['gpioset', '-c', chip, f'{GPIO_BOOT0}=0']),
+            ('v1', ['gpioset', chip, f'{GPIO_BOOT0}=0']),
+        ]:
+            try:
+                subprocess.run(
+                    cmd, check=True, timeout=5,
+                    capture_output=True,
+                )
+                _gpio_mode, _gpio_chip = mode, chip
+                LOG.info(
+                    'gpioset: mode=%s chip=%s', mode, chip,
+                )
+                return mode, chip
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                continue
+    raise RuntimeError(
+        'gpioset: no working chip/syntax found. '
+        f'Tried chips {GPIO_CHIPS} with v1 and v2 syntax.'
     )
+
+
+def _gpioset(pin: int, value: int) -> None:
+    '''Set a GPIO pin via gpioset (auto-detect syntax).'''
+    mode, chip = _detect_gpioset()
+    if mode == 'v2':
+        cmd = ['gpioset', '-c', chip, f'{pin}={value}']
+    else:
+        cmd = ['gpioset', chip, f'{pin}={value}']
+    subprocess.run(cmd, check=True, timeout=5)
 
 
 def _enter_bootloader() -> None:
