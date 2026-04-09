@@ -1856,6 +1856,27 @@
   }
 
   /* ---- CENTRIFUGE wiring ---- */
+
+  async function cfugeRefreshStatus() {
+    const r = await engCmd(
+      'centrifuge_status', {}, false, 3,
+    );
+    if (!r) return;
+    $('#eng-cfuge-status').textContent =
+      JSON.stringify(r, null, 2);
+    if (r.angle_001deg != null) {
+      const deg = r.angle_001deg / 100.0;
+      $('#eng-cfuge-actual').textContent =
+        deg.toFixed(1);
+    }
+    const led = $('#eng-cfuge-pwr-led');
+    if (led) {
+      const on = r.driver_online;
+      led.classList.toggle('green', !!on);
+      led.classList.toggle('red', !on);
+    }
+  }
+
   function wireEngCentrifuge() {
     $('#eng-cfuge-start').onclick = () => {
       const dur = parseInt(
@@ -1866,8 +1887,8 @@
         duration: dur,
       }, true, dur + 30);
     };
-    $('#eng-cfuge-angle-go').onclick = () => {
-      engCmd('centrifuge_move_angle', {
+    $('#eng-cfuge-angle-go').onclick = async () => {
+      await engCmd('centrifuge_move_angle', {
         angle_001deg: Math.round(
           parseFloat(
             $('#eng-cfuge-angle').value,
@@ -1877,36 +1898,38 @@
           $('#eng-cfuge-move-rpm').value,
         ),
       });
+      cfugeRefreshStatus();
     };
-    $('#eng-cfuge-refresh').onclick = async () => {
-      const r = await engCmd(
-        'centrifuge_status', {}, false, 3,
-      );
-      if (r) {
-        $('#eng-cfuge-status').textContent =
-          JSON.stringify(r, null, 2);
-        if (r.angle_001deg != null) {
-          const deg = r.angle_001deg / 100.0;
-          $('#eng-cfuge-actual').textContent =
-            deg.toFixed(1);
-        }
-        const led = $('#eng-cfuge-pwr-led');
-        if (led) {
-          const on = r.driver_online;
-          led.classList.toggle('green', !!on);
-          led.classList.toggle('red', !on);
-        }
-      }
+    $('#eng-cfuge-refresh').onclick = () =>
+      cfugeRefreshStatus();
+
+    $('#eng-cfuge-pwr-on').onclick = async () => {
+      await engCmd('centrifuge_power', {
+        enable: true,
+      });
+      cfugeRefreshStatus();
     };
-    $('#eng-cfuge-enc-align').onclick = () => {
-      engCmd('centrifuge_bldc_cmd', {
+    $('#eng-cfuge-pwr-off').onclick = async () => {
+      await engCmd('centrifuge_power', {
+        enable: false,
+      });
+      cfugeRefreshStatus();
+    };
+    $('#eng-cfuge-home').onclick = async () => {
+      await engCmd('centrifuge_home', {});
+      cfugeRefreshStatus();
+    };
+    $('#eng-cfuge-enc-align').onclick = async () => {
+      await engCmd('centrifuge_bldc_cmd', {
         bldc_cmd: 0x0013,
       }, false, 10);
+      cfugeRefreshStatus();
     };
-    $('#eng-cfuge-clear-err').onclick = () => {
-      engCmd('centrifuge_bldc_cmd', {
+    $('#eng-cfuge-clear-err').onclick = async () => {
+      await engCmd('centrifuge_bldc_cmd', {
         bldc_cmd: 0x0006,
       }, false, 5);
+      cfugeRefreshStatus();
     };
 
     $('#eng-trig-enable').onclick = () => {

@@ -739,17 +739,15 @@
       <label>24V Power:</label>
       <span id="eng-cfuge-pwr-led"
         class="eng-pos-led red"></span>
-      <button class="eng-cmd-btn"
-        data-cmd="centrifuge_power"
-        data-params='{"enable":true}'>Power ON</button>
-      <button class="eng-cmd-btn eng-red-btn"
-        data-cmd="centrifuge_power"
-        data-params='{"enable":false}'>Power OFF</button>
+      <button id="eng-cfuge-pwr-on"
+        class="eng-cmd-btn">Power ON</button>
+      <button id="eng-cfuge-pwr-off"
+        class="eng-cmd-btn eng-red-btn">Power OFF</button>
     </div>
 
     <div class="eng-btn-row">
-      <button class="eng-cmd-btn"
-        data-cmd="centrifuge_home">Home</button>
+      <button id="eng-cfuge-home"
+        class="eng-cmd-btn">Home</button>
       <button id="eng-cfuge-enc-align"
         class="eng-cmd-btn">Encoder Align</button>
       <button id="eng-cfuge-refresh"
