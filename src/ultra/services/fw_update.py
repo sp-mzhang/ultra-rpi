@@ -325,16 +325,61 @@ def _gpio_set(pin: int, value: int) -> None:
         raise RuntimeError(f'Unknown GPIO method: {method}')
 
 
-def _enter_bootloader() -> None:
-    '''Enter STM32 system bootloader via BOOT0 + nRST.
+APP_BAUD = 921600
 
-    Sequence: set BOOT0 HIGH, hold nRST LOW for 100 ms,
-    release nRST, wait for bootloader to initialize.
-    The STM32 samples BOOT0 on the rising edge of nRST.
+
+def _send_app_reset() -> None:
+    '''Send CMD_RESET to the STM32 application over UART.
+
+    Opens the port at the application baud rate (921600 8N1),
+    builds a proper frame for CMD_RESET (0x8007), sends it,
+    and closes. The STM32 application will perform a software
+    reset — if BOOT0 is HIGH at that moment, the MCU enters
+    the system bootloader.
     '''
-    _log('Entering bootloader (BOOT0=HIGH, nRST pulse)')
+    import serial as _serial
+    from ultra.hw import frame_protocol as fp
+
+    _log('Sending CMD_RESET via app UART...')
+    try:
+        ser = _serial.Serial(
+            UART_PORT, APP_BAUD, timeout=0.5,
+            parity=_serial.PARITY_NONE,
+            bytesize=_serial.EIGHTBITS,
+            stopbits=_serial.STOPBITS_ONE,
+            rtscts=False,
+        )
+        frame = fp.build_frame(command=0x8007, data=b'')
+        ser.write(frame)
+        ser.flush()
+        time.sleep(0.1)
+        ser.close()
+        _log('  Reset command sent')
+    except Exception as exc:
+        _log(f'  App reset warning: {exc}')
+
+
+def _enter_bootloader() -> None:
+    '''Enter STM32 system bootloader.
+
+    Uses a two-pronged approach:
+    1. Set BOOT0 HIGH via GPIO.
+    2. Send CMD_RESET via application UART (software reset).
+    3. Also pulse nRST via GPIO (hardware reset fallback).
+    4. Wait for bootloader to initialize.
+
+    The software reset is more reliable than GPIO nRST alone
+    because it goes through the proven UART path, while the
+    nRST GPIO signal may be attenuated by the series resistor.
+    '''
+    _log('Setting BOOT0=HIGH')
     _gpio_set(GPIO_BOOT0, 1)
     time.sleep(0.05)
+
+    _send_app_reset()
+    time.sleep(0.3)
+
+    _log('Pulsing nRST (hardware reset fallback)')
     _gpio_set(GPIO_NRST, 0)
     time.sleep(0.15)
     _gpio_set(GPIO_NRST, 1)
