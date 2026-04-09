@@ -353,11 +353,11 @@ def _exit_bootloader() -> None:
     _log('STM32 reset to application mode')
 
 
-FLASH_MAX_RETRIES = 3
+FLASH_ATTEMPTS = 5
 
 
 def _configure_uart() -> None:
-    '''Reset UART port settings for bootloader communication.'''
+    '''Reset UART port settings for bootloader.'''
     try:
         subprocess.run(
             [
@@ -373,39 +373,16 @@ def _configure_uart() -> None:
         _log(f'stty warning: {exc}')
 
 
-def _probe_bootloader() -> bool:
-    '''Test if the STM32 bootloader is responding.
-
-    Runs stm32flash without -w to just query the chip.
-
-    Returns:
-        True if the bootloader responded.
-    '''
-    _log('Probing bootloader...')
-    try:
-        result = subprocess.run(
-            [
-                'stm32flash',
-                '-b', str(FLASH_BAUD),
-                UART_PORT,
-            ],
-            capture_output=True, text=True, timeout=10,
-        )
-        output = result.stdout + result.stderr
-        for line in output.splitlines():
-            _log(f'  {line}')
-        return result.returncode == 0
-    except Exception as exc:
-        _log(f'  probe error: {exc}')
-        return False
-
-
 def flash_firmware(bin_path: str) -> bool:
     '''Flash a .bin file to the STM32 via stm32flash.
 
     Must be called with the UART port free (no active
-    STM32Interface or StatusMonitor). Retries bootloader
-    entry up to FLASH_MAX_RETRIES times.
+    STM32Interface or StatusMonitor).
+
+    Each attempt does a full exit/enter/configure cycle
+    then runs stm32flash -w directly. The repeated GPIO
+    and UART activity conditions the H735 bootloader's
+    USART2 interface.
 
     Args:
         bin_path: Path to the .bin firmware file.
@@ -413,14 +390,25 @@ def flash_firmware(bin_path: str) -> bool:
     Returns:
         True on success, False on failure.
     '''
-    for attempt in range(1, FLASH_MAX_RETRIES + 1):
+    cmd = [
+        'stm32flash',
+        '-w', bin_path,
+        '-v',
+        '-g', '0x08000000',
+        '-b', str(FLASH_BAUD),
+        UART_PORT,
+    ]
+
+    for attempt in range(1, FLASH_ATTEMPTS + 1):
         _log(
-            f'--- Attempt {attempt}/{FLASH_MAX_RETRIES} ---',
+            f'--- Attempt {attempt}/{FLASH_ATTEMPTS} ---',
         )
         _set_status(
             'flashing', 35,
-            f'Entering bootloader (attempt {attempt})...',
+            f'Entering bootloader '
+            f'(attempt {attempt})...',
         )
+
         try:
             _exit_bootloader()
             time.sleep(0.2)
@@ -438,25 +426,7 @@ def flash_firmware(bin_path: str) -> bool:
 
         _configure_uart()
 
-        if not _probe_bootloader():
-            _log('Bootloader not responding, retrying...')
-            continue
-
         _set_status('flashing', 40, 'Flashing...')
-        _log(
-            f'Running stm32flash on {UART_PORT} '
-            f'@ {FLASH_BAUD} baud',
-        )
-        _log(f'Binary: {bin_path}')
-
-        cmd = [
-            'stm32flash',
-            '-w', bin_path,
-            '-v',
-            '-g', '0x08000000',
-            '-b', str(FLASH_BAUD),
-            UART_PORT,
-        ]
         _log(f'$ {" ".join(cmd)}')
 
         try:
@@ -482,49 +452,44 @@ def flash_firmware(bin_path: str) -> bool:
 
             proc.wait(timeout=120)
             if proc.returncode == 0:
-                break
+                _set_status(
+                    'flashing', 97, 'Resetting MCU...',
+                )
+                try:
+                    _exit_bootloader()
+                except Exception as exc:
+                    _log(f'GPIO reset warning: {exc}')
+
+                name = os.path.basename(bin_path)
+                ver = name.replace(
+                    '_ultra_mcu.bin', '',
+                )
+                _log(
+                    f'Flash complete! Firmware: {ver}',
+                )
+                _set_status(
+                    'done', 100, f'Flashed {ver}',
+                )
+                return True
 
             _log(
                 f'stm32flash exited with code '
                 f'{proc.returncode}',
             )
-            if attempt < FLASH_MAX_RETRIES:
-                _log('Retrying...')
-                continue
-
-            _set_status(
-                'error', 0,
-                f'stm32flash failed (rc='
-                f'{proc.returncode})',
-            )
-            _exit_bootloader()
-            return False
 
         except Exception as exc:
             _log(f'stm32flash error: {exc}')
-            if attempt < FLASH_MAX_RETRIES:
-                _log('Retrying...')
-                continue
-            _set_status(
-                'error', 0, f'Flash error: {exc}',
-            )
-            try:
-                _exit_bootloader()
-            except Exception:
-                pass
-            return False
 
-    _set_status('flashing', 97, 'Resetting MCU...')
+    _log('All attempts failed')
+    _set_status(
+        'error', 0,
+        f'Flash failed after {FLASH_ATTEMPTS} attempts',
+    )
     try:
         _exit_bootloader()
-    except Exception as exc:
-        _log(f'GPIO reset warning: {exc}')
-
-    name = os.path.basename(bin_path)
-    ver = name.replace('_ultra_mcu.bin', '')
-    _log(f'Flash complete! Firmware: {ver}')
-    _set_status('done', 100, f'Flashed {ver}')
-    return True
+    except Exception:
+        pass
+    return False
 
 
 # -------------------------------------------------------
