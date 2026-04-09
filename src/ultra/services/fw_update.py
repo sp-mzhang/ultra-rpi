@@ -325,6 +325,22 @@ def _gpio_set(pin: int, value: int) -> None:
         raise RuntimeError(f'Unknown GPIO method: {method}')
 
 
+def _gpio_get(pin: int) -> str:
+    '''Read back a GPIO pin's current state via pinctrl.
+
+    Returns:
+        The pinctrl status line for the pin.
+    '''
+    try:
+        r = subprocess.run(
+            ['pinctrl', 'get', str(pin)],
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.stdout.strip()
+    except Exception:
+        return '(unknown)'
+
+
 def _flush_uart() -> None:
     '''Flush any stale bytes from the UART receive buffer.'''
     import serial as _serial
@@ -345,14 +361,20 @@ def _flush_uart() -> None:
 def _enter_bootloader() -> None:
     '''Enter STM32 system bootloader via BOOT0 + nRST.
 
-    First resets to a known state (BOOT0 LOW, nRST hold,
-    settle), then sets BOOT0 HIGH and pulses nRST so the
-    STM32 samples BOOT0=HIGH on the rising edge and enters
-    the system bootloader. Finally flushes the UART to
-    discard any leftover application data.
+    1. Configure GPIOs as outputs (BOOT0 LOW, nRST HIGH).
+    2. Reset MCU in app mode to get to a known state.
+    3. Flush UART to discard application data.
+    4. Set BOOT0 HIGH, pulse nRST to enter bootloader.
+    5. Verify GPIO states and flush UART again.
     '''
-    _log('Resetting STM32 to known state')
+    _log('Initializing GPIOs as outputs')
     _gpio_set(GPIO_BOOT0, 0)
+    _gpio_set(GPIO_NRST, 1)
+    time.sleep(0.1)
+    _log(f'  BOOT0: {_gpio_get(GPIO_BOOT0)}')
+    _log(f'  nRST:  {_gpio_get(GPIO_NRST)}')
+
+    _log('Resetting STM32 (app mode)')
     _gpio_set(GPIO_NRST, 0)
     time.sleep(0.5)
     _gpio_set(GPIO_NRST, 1)
@@ -360,29 +382,20 @@ def _enter_bootloader() -> None:
 
     _flush_uart()
 
-    _log('Entering bootloader (BOOT0=HIGH, nRST pulse)')
+    _log('Setting BOOT0=HIGH')
     _gpio_set(GPIO_BOOT0, 1)
-    time.sleep(0.05)
+    time.sleep(0.1)
+    _log(f'  BOOT0: {_gpio_get(GPIO_BOOT0)}')
+
+    _log('Pulsing nRST (entering bootloader)')
     _gpio_set(GPIO_NRST, 0)
     time.sleep(0.5)
     _gpio_set(GPIO_NRST, 1)
-    time.sleep(1.5)
+    time.sleep(2.0)
+    _log(f'  BOOT0: {_gpio_get(GPIO_BOOT0)}')
+    _log(f'  nRST:  {_gpio_get(GPIO_NRST)}')
 
     _flush_uart()
-
-    try:
-        subprocess.run(
-            [
-                'stty', '-F', UART_PORT,
-                str(FLASH_BAUD), 'raw',
-                '-crtscts', '-clocal', 'cs8',
-                '-parenb', '-cstopb',
-            ],
-            check=True, timeout=5,
-        )
-    except Exception as exc:
-        _log(f'stty warning: {exc}')
-
     _log('Bootloader ready')
 
 
