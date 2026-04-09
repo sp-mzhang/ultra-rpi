@@ -366,6 +366,18 @@ def flash_firmware(bin_path: str) -> bool:
         _set_status('error', 0, f'GPIO error: {exc}')
         return False
 
+    _set_status('flashing', 38, 'Configuring UART...')
+    try:
+        subprocess.run(
+            ['stty', '-F', UART_PORT, '-crtscts'],
+            check=True, timeout=5,
+        )
+        _log(
+            f'Disabled HW flow control on {UART_PORT}',
+        )
+    except Exception as exc:
+        _log(f'stty warning: {exc}')
+
     _set_status('flashing', 40, 'Flashing...')
     _log(
         f'Running stm32flash on {UART_PORT} '
