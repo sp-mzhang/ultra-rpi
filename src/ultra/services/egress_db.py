@@ -208,19 +208,23 @@ class EgressDB:
             self,
             prev_rowid: int | None = None,
     ) -> EgressTuple | None:
-        '''Fetch the next run that needs egress.'''
+        '''Fetch the next run that needs egress.
+
+        Skips rows with run_id = -1 (incomplete metadata).
+        '''
         if prev_rowid is None:
             cur = self.con.execute(
                 f'SELECT rowid, * FROM {self.TBL_EGRESS} '
-                'WHERE is_egressed=0 AND egress_errors<=? '
+                'WHERE is_egressed=0 AND run_id!=-1 '
+                'AND egress_errors<=? '
                 'ORDER BY ROWID ASC LIMIT 1',
                 (self.max_retries,),
             )
         else:
             cur = self.con.execute(
                 f'SELECT rowid, * FROM {self.TBL_EGRESS} '
-                'WHERE is_egressed=0 AND ROWID>? '
-                'AND egress_errors<=? '
+                'WHERE is_egressed=0 AND run_id!=-1 '
+                'AND ROWID>? AND egress_errors<=? '
                 'ORDER BY ROWID ASC LIMIT 1',
                 (prev_rowid, self.max_retries),
             )
@@ -446,14 +450,32 @@ class EgressDB:
     # listing / summary
     # ----------------------------------------------------------
 
+    def get_all_uuids(self) -> set[str]:
+        '''Return the set of all run UUIDs in the table.
+
+        Includes every row regardless of run_id or egress
+        state. Used by the startup scan to avoid re-inserting
+        runs that are already tracked.
+
+        Returns:
+            Set of run_uuid strings.
+        '''
+        cur = self.con.execute(
+            f'SELECT run_uuid FROM {self.TBL_EGRESS}',
+        )
+        return {row[0] for row in cur.fetchall()}
+
     def get_all_runs(self) -> list[EgressTuple]:
         '''Return all runs ordered newest first.
+
+        Excludes rows with run_id = -1 (incomplete metadata).
 
         Returns:
             List of EgressTuple rows from egresstable.
         '''
         cur = self.con.execute(
             f'SELECT rowid, * FROM {self.TBL_EGRESS} '
+            'WHERE run_id != -1 '
             'ORDER BY ROWID DESC',
         )
         return [

@@ -136,10 +136,7 @@ class EgressService:
         missing from the egress DB so recent runs appear in
         the UI without flooding it with old history.
         '''
-        known = {
-            r.run_uuid
-            for r in self._db.get_all_runs()
-        }
+        known = self._db.get_all_uuids()
         data_dir = self._data_dir
         if not op.isdir(data_dir):
             return
