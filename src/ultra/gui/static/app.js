@@ -1622,17 +1622,19 @@
           const speed = parseFloat(
             velEl ? velEl.value : 20,
           );
+          const curEl = $(`#eng-pos-${axis}`);
+          const cur = curEl
+            ? (parseFloat(curEl.textContent) || 0)
+            : 0;
           if (axis === 'lift') {
             engCmd('lift_move', {
-              target_mm: step * dir,
+              target_mm: cur + step * dir,
               speed: speed,
-              relative: true,
             });
           } else {
             const p = {};
-            p[`${axis}_mm`] = step * dir;
+            p[`${axis}_mm`] = cur + step * dir;
             p.speed = speed;
-            p.relative = true;
             engCmd('move_gantry', p);
           }
         });

@@ -571,6 +571,9 @@ class STM32Interface:
                 target_mm=float(
                     cmd.get('target_mm', 0.0),
                 ),
+                speed=float(
+                    cmd.get('speed', 0.0),
+                ),
             )
         if cmd_name == 'move_to_well':
             return fp.pack_move_to_well(
@@ -785,13 +788,6 @@ class STM32Interface:
                     inner = bytes.fromhex(inner)
             return fp.pack_centrifuge_bldc_cmd(
                 seq, bldc_cmd, inner,
-            )
-        if cmd_name == 'lift_move':
-            return fp.pack_lift_move(
-                seq=seq,
-                target_mm=float(
-                    cmd.get('target_mm', 0.0),
-                ),
             )
         if cmd_name in (
             'centrifuge_goto_serum',
@@ -1108,6 +1104,19 @@ class STM32Interface:
             result['position_steps'] = d.get(
                 'position_steps', 0,
             )
+            if cmd_name == 'lift_status':
+                result['is_homed'] = d.get(
+                    'is_homed', False,
+                )
+                result['at_home'] = d.get(
+                    'at_home', False,
+                )
+                result['at_top'] = d.get(
+                    'at_top', False,
+                )
+                result['current_pct'] = d.get(
+                    'current_pct', 0,
+                )
         elif cmd_name == 'lift_home':
             d = fp.unpack_rsp_lift_home(data)
             result['error_code'] = d.get(
