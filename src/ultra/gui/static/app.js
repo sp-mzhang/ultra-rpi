@@ -4,6 +4,13 @@
 
   const $ = (sel) => document.querySelector(sel);
 
+  function hexDV(hex) {
+    const b = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < b.length; i++)
+      b[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return new DataView(b.buffer);
+  }
+
   /* ---- State ---- */
   let ws = null;
   let wellDefs = {};
@@ -1985,26 +1992,38 @@
           bldc_cmd: 0x0022,
         }, false, 5,
       );
-      if (r) {
-        engLog(`PID: ${JSON.stringify(r)}`);
+      if (r && r.data && r.data.length >= 16) {
+        const dv = hexDV(r.data);
+        $('#eng-pid-p-gain').value =
+          dv.getInt16(0, true);
+        $('#eng-pid-p-shift').value =
+          dv.getUint16(2, true);
+        $('#eng-pid-i-gain').value =
+          dv.getInt16(4, true);
+        $('#eng-pid-i-shift').value =
+          dv.getUint16(6, true);
       }
+      if (r) engLog(`PID: ${JSON.stringify(r)}`);
     };
-    $('#eng-pid-set').onclick = () => {
-      engCmd('centrifuge_bldc_cmd', {
-        bldc_cmd: 0x0023,
-        p_gain: parseInt(
-          $('#eng-pid-p-gain').value,
-        ),
-        p_shift: parseInt(
-          $('#eng-pid-p-shift').value,
-        ),
-        i_gain: parseInt(
-          $('#eng-pid-i-gain').value,
-        ),
-        i_shift: parseInt(
-          $('#eng-pid-i-shift').value,
-        ),
-      }, false, 5);
+    $('#eng-pid-set').onclick = async () => {
+      const r = await engCmd(
+        'centrifuge_bldc_cmd', {
+          bldc_cmd: 0x0023,
+          p_gain: parseInt(
+            $('#eng-pid-p-gain').value,
+          ),
+          p_shift: parseInt(
+            $('#eng-pid-p-shift').value,
+          ),
+          i_gain: parseInt(
+            $('#eng-pid-i-gain').value,
+          ),
+          i_shift: parseInt(
+            $('#eng-pid-i-shift').value,
+          ),
+        }, false, 5,
+      );
+      engLog(`Set PID: ${JSON.stringify(r)}`);
     };
 
     const thGetCmds = [
@@ -2024,47 +2043,76 @@
             bldc_cmd: thGetCmds[i],
           }, false, 5,
         );
+        if (r && r.data && r.data.length >= 8) {
+          $(thFields[i]).value =
+            hexDV(r.data).getUint32(0, true);
+        }
         engLog(
           `Thresh[${i}]: ${JSON.stringify(r)}`,
         );
       }
     };
-    $('#eng-th-set').onclick = () => {
+    $('#eng-th-set').onclick = async () => {
       for (let i = 0; i < thSetCmds.length; i++) {
-        engCmd('centrifuge_bldc_cmd', {
-          bldc_cmd: thSetCmds[i],
-          data_u32: parseInt(
-            $(thFields[i]).value,
-          ),
-        }, false, 5);
+        const r = await engCmd(
+          'centrifuge_bldc_cmd', {
+            bldc_cmd: thSetCmds[i],
+            data_u32: parseInt(
+              $(thFields[i]).value,
+            ),
+          }, false, 5,
+        );
+        engLog(
+          `Set Thresh[${i}]: ${JSON.stringify(r)}`,
+        );
       }
     };
 
-    $('#eng-curr-soft-get').onclick = () => {
-      engCmd('centrifuge_bldc_cmd', {
-        bldc_cmd: 0x001A,
-      }, false, 5);
+    $('#eng-curr-soft-get').onclick = async () => {
+      const r = await engCmd(
+        'centrifuge_bldc_cmd', {
+          bldc_cmd: 0x001A,
+        }, false, 5,
+      );
+      if (r && r.data && r.data.length >= 4) {
+        $('#eng-curr-soft').value =
+          hexDV(r.data).getUint16(0, true);
+      }
+      engLog(`Soft OC: ${JSON.stringify(r)}`);
     };
-    $('#eng-curr-soft-set').onclick = () => {
-      engCmd('centrifuge_bldc_cmd', {
-        bldc_cmd: 0x001B,
-        data_u16: parseInt(
-          $('#eng-curr-soft').value,
-        ),
-      }, false, 5);
+    $('#eng-curr-soft-set').onclick = async () => {
+      const r = await engCmd(
+        'centrifuge_bldc_cmd', {
+          bldc_cmd: 0x001B,
+          data_u16: parseInt(
+            $('#eng-curr-soft').value,
+          ),
+        }, false, 5,
+      );
+      engLog(`Set Soft OC: ${JSON.stringify(r)}`);
     };
-    $('#eng-curr-max-get').onclick = () => {
-      engCmd('centrifuge_bldc_cmd', {
-        bldc_cmd: 0x0050,
-      }, false, 5);
+    $('#eng-curr-max-get').onclick = async () => {
+      const r = await engCmd(
+        'centrifuge_bldc_cmd', {
+          bldc_cmd: 0x0050,
+        }, false, 5,
+      );
+      if (r && r.data && r.data.length >= 4) {
+        $('#eng-curr-max').value =
+          hexDV(r.data).getUint16(0, true);
+      }
+      engLog(`Max Out: ${JSON.stringify(r)}`);
     };
-    $('#eng-curr-max-set').onclick = () => {
-      engCmd('centrifuge_bldc_cmd', {
-        bldc_cmd: 0x0051,
-        data_u16: parseInt(
-          $('#eng-curr-max').value,
-        ),
-      }, false, 5);
+    $('#eng-curr-max-set').onclick = async () => {
+      const r = await engCmd(
+        'centrifuge_bldc_cmd', {
+          bldc_cmd: 0x0051,
+          data_u16: parseInt(
+            $('#eng-curr-max').value,
+          ),
+        }, false, 5,
+      );
+      engLog(`Set Max Out: ${JSON.stringify(r)}`);
     };
   }
 
