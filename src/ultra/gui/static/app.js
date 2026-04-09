@@ -1618,7 +1618,7 @@
   function wireEngMotion() {
     document.querySelectorAll('.eng-jog-btn')
       .forEach((btn) => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
           const axis = btn.dataset.axis;
           const dir = parseInt(btn.dataset.dir);
           const stepEl = $(`#eng-step-${axis}`);
@@ -1633,16 +1633,19 @@
           const cur = curEl
             ? (parseFloat(curEl.textContent) || 0)
             : 0;
+          const target = cur + step * dir;
           if (axis === 'lift') {
-            engCmd('lift_move', {
-              target_mm: cur + step * dir,
-              speed: speed,
+            await engCmd('lift_move', {
+              target_mm: target, speed: speed,
             });
           } else {
             const p = {};
-            p[`${axis}_mm`] = cur + step * dir;
+            p[`${axis}_mm`] = target;
             p.speed = speed;
-            engCmd('move_gantry', p);
+            await engCmd('move_gantry', p);
+          }
+          if (curEl) {
+            curEl.textContent = target.toFixed(2);
           }
         });
       });
@@ -1763,19 +1766,19 @@
 
     $('#eng-aspirate').onclick = () => {
       engCmd('pump_aspirate', {
-        volume_ul: parseFloat(
+        volume: parseFloat(
           $('#eng-asp-vol').value,
         ),
-        speed_ul_s: pumpSpd(),
+        speed: pumpSpd(),
       });
     };
     $('#eng-llf-aspirate').onclick = () => {
       const wt = $('#eng-well-type').value;
       engCmd('smart_aspirate', {
-        volume_ul: parseFloat(
+        volume: parseFloat(
           $('#eng-asp-vol').value,
         ),
-        pump_speed_ul_s: pumpSpd(),
+        speed: pumpSpd(),
         well_id: wt === 'large' ? 1 : 0,
         air_slug_ul: parseFloat(
           $('#eng-air-slug').value,
@@ -1784,10 +1787,10 @@
     };
     $('#eng-dispense').onclick = () => {
       engCmd('pump_dispense', {
-        volume_ul: parseFloat(
+        volume: parseFloat(
           $('#eng-disp-vol').value,
         ),
-        speed_ul_s: pumpSpd(),
+        speed: pumpSpd(),
       });
     };
 
@@ -1796,10 +1799,10 @@
         z_depth_mm: parseFloat(
           $('#eng-wd-depth').value,
         ),
-        volume_ul: parseFloat(
+        volume: parseFloat(
           $('#eng-wd-vol').value,
         ),
-        speed_ul_s: parseFloat(
+        speed: parseFloat(
           $('#eng-wd-speed').value,
         ),
         z_retract_mm: parseFloat(
@@ -1811,13 +1814,13 @@
     };
     $('#eng-cd-go').onclick = () => {
       engCmd('cart_dispense', {
-        volume_ul: parseFloat(
+        volume: parseFloat(
           $('#eng-cd-vol').value,
         ),
-        vel_ul_s: parseFloat(
+        vel: parseFloat(
           $('#eng-cd-vel').value,
         ),
-        reasp_ul: parseFloat(
+        reasp: parseFloat(
           $('#eng-cd-reasp').value,
         ),
         sleep_s: parseFloat(
@@ -1833,16 +1836,16 @@
         duration_s: parseFloat(
           $('#eng-cb-dur').value,
         ),
-        vel_ul_s: parseFloat(
+        vel: parseFloat(
           $('#eng-cb-vel').value,
         ),
-        for_vol_ul: parseFloat(
+        for_vol: parseFloat(
           $('#eng-cb-fwd').value,
         ),
-        back_vol_ul: parseFloat(
+        back_vol: parseFloat(
           $('#eng-cb-bak').value,
         ),
-        reasp_ul: parseFloat(
+        reasp: parseFloat(
           $('#eng-cb-reasp').value,
         ),
         sleep_s: parseFloat(
@@ -1855,16 +1858,16 @@
     };
     $('#eng-tm-go').onclick = () => {
       engCmd('tip_mix', {
-        mix_vol_ul: parseFloat(
+        mix_vol: parseFloat(
           $('#eng-tm-vol').value,
         ),
-        speed_ul_s: parseFloat(
+        speed: parseFloat(
           $('#eng-tm-speed').value,
         ),
         cycles: parseInt(
           $('#eng-tm-cycles').value,
         ),
-        pull_vol_ul: parseFloat(
+        pull_vol: parseFloat(
           $('#eng-tm-pull').value,
         ),
       });
@@ -2186,31 +2189,31 @@
     $('#eng-cart-reverse').onclick = () =>
       engCmd('centrifuge_reverse', seqP());
     $('#eng-cart-goto-serum').onclick = async () => {
-      const tgt = parseInt(
+      const init = parseInt(
         $('#eng-cart-open-init').value,
       );
       await engCmd(
         'centrifuge_goto_serum', gotoParams(),
       );
-      cartRefreshAngle(tgt);
+      cartRefreshAngle((init - 180 + 360) % 360);
     };
     $('#eng-cart-goto-pipette').onclick = async () => {
-      const tgt = parseInt(
+      const init = parseInt(
         $('#eng-cart-open-init').value,
       );
       await engCmd(
         'centrifuge_goto_pipette', gotoParams(),
       );
-      cartRefreshAngle(tgt);
+      cartRefreshAngle((init - 90 + 360) % 360);
     };
     $('#eng-cart-goto-blister').onclick = async () => {
-      const tgt = parseInt(
+      const init = parseInt(
         $('#eng-cart-open-init').value,
       );
       await engCmd(
         'centrifuge_goto_blister', gotoParams(),
       );
-      cartRefreshAngle(tgt);
+      cartRefreshAngle((init - 270 + 360) % 360);
     };
   }
 
