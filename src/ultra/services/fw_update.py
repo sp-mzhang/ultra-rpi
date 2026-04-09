@@ -35,7 +35,7 @@ GPIO_BOOT0 = 22
 GPIO_NRST = 26
 
 _s3_client: Any = None
-_gpio_mode: str | None = None
+_gpio_method: str | None = None
 _gpio_chip: str | None = None
 _flash_lock = threading.Lock()
 _flash_status: dict[str, Any] = {
@@ -235,62 +235,103 @@ def download_firmware(s3_key: str) -> str:
 # GPIO + stm32flash
 # -------------------------------------------------------
 
-def _detect_gpioset() -> tuple[str, str]:
-    '''Auto-detect gpioset CLI syntax and chip number.
+def _has_pinctrl() -> bool:
+    '''Check whether the pinctrl command is available.'''
+    try:
+        subprocess.run(
+            ['pinctrl', '-h'],
+            capture_output=True, timeout=3,
+        )
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
 
-    Tries libgpiod v2 syntax (-c flag) first, then v1
-    positional syntax, against each candidate chip.
+
+def _detect_gpio_method() -> tuple[str, str | None]:
+    '''Detect the best GPIO control method.
+
+    Prefers ``pinctrl`` (RPi-native, set-and-exit).
+    Falls back to ``gpioset`` with the correct chip number.
 
     Returns:
-        Tuple of (mode, chip) where mode is 'v2' or 'v1'.
-
-    Raises:
-        RuntimeError: If no working combination is found.
+        Tuple of (method, chip) where method is 'pinctrl',
+        'gpioset_v2', or 'gpioset_v1', and chip is None
+        for pinctrl.
     '''
-    global _gpio_mode, _gpio_chip
-    if _gpio_mode and _gpio_chip:
-        return _gpio_mode, _gpio_chip
+    global _gpio_method, _gpio_chip
+    if _gpio_method:
+        return _gpio_method, _gpio_chip
+
+    if _has_pinctrl():
+        _gpio_method = 'pinctrl'
+        _gpio_chip = None
+        LOG.info('GPIO method: pinctrl')
+        return _gpio_method, _gpio_chip
 
     for chip in GPIO_CHIPS:
-        for mode, cmd in [
-            ('v2', ['gpioset', '-c', chip, f'{GPIO_BOOT0}=0']),
-            ('v1', ['gpioset', chip, f'{GPIO_BOOT0}=0']),
+        for method, cmd in [
+            (
+                'gpioset_v1',
+                ['gpioset', chip, f'{GPIO_BOOT0}=0'],
+            ),
         ]:
             try:
                 subprocess.run(
-                    cmd, check=True, timeout=5,
+                    cmd, check=True, timeout=2,
                     capture_output=True,
                 )
-                _gpio_mode, _gpio_chip = mode, chip
+                _gpio_method, _gpio_chip = method, chip
                 LOG.info(
-                    'gpioset: mode=%s chip=%s', mode, chip,
+                    'GPIO method: %s chip=%s',
+                    method, chip,
                 )
-                return mode, chip
-            except (subprocess.CalledProcessError, FileNotFoundError):
+                return method, chip
+            except (
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+                FileNotFoundError,
+            ):
                 continue
+
     raise RuntimeError(
-        'gpioset: no working chip/syntax found. '
-        f'Tried chips {GPIO_CHIPS} with v1 and v2 syntax.'
+        'No working GPIO method found. '
+        'Install pinctrl (RPi OS) or libgpiod v1.'
     )
 
 
-def _gpioset(pin: int, value: int) -> None:
-    '''Set a GPIO pin via gpioset (auto-detect syntax).'''
-    mode, chip = _detect_gpioset()
-    if mode == 'v2':
-        cmd = ['gpioset', '-c', chip, f'{pin}={value}']
+def _gpio_set(pin: int, value: int) -> None:
+    '''Set a GPIO pin to a value (set-and-exit).
+
+    Uses ``pinctrl`` on RPi OS (recommended), or
+    ``gpioset`` v1 as a fallback.
+
+    Args:
+        pin: BCM GPIO pin number.
+        value: 0 or 1.
+    '''
+    method, chip = _detect_gpio_method()
+    if method == 'pinctrl':
+        drive = 'dh' if value else 'dl'
+        subprocess.run(
+            ['pinctrl', 'set', str(pin), 'op', drive],
+            check=True, timeout=5,
+        )
+    elif method == 'gpioset_v1':
+        subprocess.run(
+            ['gpioset', chip, f'{pin}={value}'],
+            check=True, timeout=5,
+        )
     else:
-        cmd = ['gpioset', chip, f'{pin}={value}']
-    subprocess.run(cmd, check=True, timeout=5)
+        raise RuntimeError(f'Unknown GPIO method: {method}')
 
 
 def _enter_bootloader() -> None:
     '''Enter STM32 system bootloader via BOOT0 + nRST.'''
     _log('Entering bootloader (BOOT0=HIGH, nRST pulse)')
-    _gpioset(GPIO_BOOT0, 1)
-    _gpioset(GPIO_NRST, 0)
+    _gpio_set(GPIO_BOOT0, 1)
+    _gpio_set(GPIO_NRST, 0)
     time.sleep(0.1)
-    _gpioset(GPIO_NRST, 1)
+    _gpio_set(GPIO_NRST, 1)
     time.sleep(0.5)
     _log('Bootloader ready')
 
@@ -298,10 +339,10 @@ def _enter_bootloader() -> None:
 def _exit_bootloader() -> None:
     '''Return to normal boot: BOOT0=LOW, then reset.'''
     _log('Exiting bootloader (BOOT0=LOW, nRST pulse)')
-    _gpioset(GPIO_BOOT0, 0)
-    _gpioset(GPIO_NRST, 0)
+    _gpio_set(GPIO_BOOT0, 0)
+    _gpio_set(GPIO_NRST, 0)
     time.sleep(0.1)
-    _gpioset(GPIO_NRST, 1)
+    _gpio_set(GPIO_NRST, 1)
     _log('STM32 reset to application mode')
 
 
