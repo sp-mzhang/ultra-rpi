@@ -373,6 +373,78 @@ def _configure_uart() -> None:
         _log(f'stty warning: {exc}')
 
 
+def _diagnose_uart() -> None:
+    '''Check if UART port is free and if STM32 responds.
+
+    Tests bootloader mode (8E1, 0x7F sync) and application
+    mode (8N1, SOH frame) to determine what state the STM32
+    is actually in.
+    '''
+    import serial as _serial
+
+    try:
+        r = subprocess.run(
+            ['fuser', UART_PORT],
+            capture_output=True, text=True, timeout=3,
+        )
+        pids = r.stdout.strip()
+        if pids:
+            _log(f'WARNING: {UART_PORT} held by PID {pids}')
+        else:
+            _log(f'{UART_PORT} is free')
+    except Exception:
+        pass
+
+    _log('Testing bootloader (8E1, 0x7F)...')
+    try:
+        ser = _serial.Serial(
+            UART_PORT, FLASH_BAUD, timeout=1.0,
+            parity=_serial.PARITY_EVEN,
+            bytesize=_serial.EIGHTBITS,
+            stopbits=_serial.STOPBITS_ONE,
+            rtscts=False,
+        )
+        ser.reset_input_buffer()
+        ser.write(b'\x7f')
+        resp = ser.read(1)
+        if resp == b'\x79':
+            _log('  -> Bootloader ACK!')
+        elif resp == b'\x1f':
+            _log('  -> Bootloader NACK (already synced)')
+        elif resp:
+            _log(f'  -> Got 0x{resp.hex()}')
+        else:
+            _log('  -> No response (timeout)')
+        ser.close()
+    except Exception as exc:
+        _log(f'  -> Error: {exc}')
+
+    _log('Testing application (8N1, get_version)...')
+    try:
+        ser = _serial.Serial(
+            UART_PORT, 921600, timeout=0.5,
+            parity=_serial.PARITY_NONE,
+            bytesize=_serial.EIGHTBITS,
+            stopbits=_serial.STOPBITS_ONE,
+            rtscts=False,
+        )
+        ser.reset_input_buffer()
+        # SOH + cmd 0x8001 (get_version) minimal frame
+        ser.write(b'\x01')
+        resp = ser.read(32)
+        if resp:
+            _log(
+                f'  -> App responded: '
+                f'{resp[:16].hex()}...'
+            )
+            _log('  -> STM32 is in APPLICATION mode!')
+        else:
+            _log('  -> No app response')
+        ser.close()
+    except Exception as exc:
+        _log(f'  -> Error: {exc}')
+
+
 def flash_firmware(bin_path: str) -> bool:
     '''Flash a .bin file to the STM32 via stm32flash.
 
@@ -423,6 +495,9 @@ def flash_firmware(bin_path: str) -> bool:
                 'error', 0, f'GPIO error: {exc}',
             )
             return False
+
+        if attempt == 1:
+            _diagnose_uart()
 
         _configure_uart()
 
