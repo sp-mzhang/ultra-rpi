@@ -10,6 +10,7 @@ dependencies removed.
 from __future__ import annotations
 
 import logging
+import struct
 import time
 from typing import Optional
 
@@ -502,11 +503,13 @@ class STM32Interface:
                 'z_axis_test_gpio', 'pump_init',
                 'pump_get_status', 'pump_test_move',
                 'pump_lld_stop', 'pump_piston_reset',
-                'centrifuge_stop', 'door_open',
-                'door_close',
+                'centrifuge_stop', 'centrifuge_home',
+                'door_open', 'door_close',
+                'door_status',
                 'lift_home', 'lift_stop',
                 'lift_move_top',
                 'led_set_all_off',
+                'accel_get_status',
                 'test_init_flags', 'test_get_flags',
         ):
             return fp.pack_seq(seq)
@@ -581,6 +584,18 @@ class STM32Interface:
             return fp.pack_lid_move(
                 seq=seq,
                 open=bool(cmd.get('open', True)),
+                z_engage_um=int(
+                    cmd.get('z_engage_um', 0),
+                ),
+                xy_speed_01mms=int(
+                    cmd.get('xy_speed_01mms', 250),
+                ),
+                z_speed_01mms=int(
+                    cmd.get('z_speed_01mms', 60),
+                ),
+                x_open_extra_um=int(
+                    cmd.get('x_open_extra_um', 0),
+                ),
             )
         if cmd_name in (
                 'pump_aspirate', 'pump_dispense',
@@ -690,6 +705,55 @@ class STM32Interface:
                     cmd.get('move_rpm', 500),
                 ),
             )
+        if cmd_name == 'centrifuge_bldc_cmd':
+            bldc_cmd = int(cmd.get('bldc_cmd', 0))
+            if bldc_cmd == fp.BLDC_SET_POS_PID:
+                return fp.pack_bldc_pos_pid(
+                    seq,
+                    p_gain=int(
+                        cmd.get('p_gain', 0),
+                    ),
+                    p_shift=int(
+                        cmd.get('p_shift', 0),
+                    ),
+                    i_gain=int(
+                        cmd.get('i_gain', 0),
+                    ),
+                    i_shift=int(
+                        cmd.get('i_shift', 0),
+                    ),
+                )
+            if bldc_cmd == fp.BLDC_SET_SOFT_CURR_LIMIT:
+                return fp.pack_bldc_set_soft_curr_limit(
+                    seq,
+                    limit_01a=int(
+                        cmd.get('data_u16', 0),
+                    ),
+                )
+            if bldc_cmd == fp.BLDC_SET_MAX_CURRENT:
+                return fp.pack_bldc_set_max_current(
+                    seq,
+                    max_01a=int(
+                        cmd.get('data_u16', 0),
+                    ),
+                )
+            data_u16 = cmd.get('data_u16')
+            data_u32 = cmd.get('data_u32')
+            if data_u32 is not None:
+                inner = struct.pack(
+                    '<I', int(data_u32),
+                )
+            elif data_u16 is not None:
+                inner = struct.pack(
+                    '<H', int(data_u16),
+                )
+            else:
+                inner = cmd.get('data', b'')
+                if isinstance(inner, str):
+                    inner = bytes.fromhex(inner)
+            return fp.pack_centrifuge_bldc_cmd(
+                seq, bldc_cmd, inner,
+            )
         if cmd_name == 'lift_move':
             return fp.pack_lift_move(
                 seq=seq,
@@ -700,6 +764,7 @@ class STM32Interface:
         if cmd_name in (
             'centrifuge_goto_serum',
             'centrifuge_goto_pipette',
+            'centrifuge_goto_blister',
         ):
             return fp.pack_centrifuge_goto(
                 seq=seq,
@@ -845,6 +910,42 @@ class STM32Interface:
                 seq=seq,
                 pattern=cmd.get('pattern', 0),
                 stage=cmd.get('stage', 0),
+            )
+        if cmd_name == 'air_heater_set_duty':
+            return fp.pack_air_heater_set_duty(
+                seq=seq,
+                pct=int(cmd.get('duty_pct', 0)),
+            )
+        if cmd_name == 'air_heater_set_en':
+            return fp.pack_air_heater_set_en(
+                seq=seq,
+                enable=bool(cmd.get('enable', False)),
+            )
+        if cmd_name == 'air_heater_set_fan':
+            return fp.pack_air_heater_set_fan(
+                seq=seq,
+                pct=int(cmd.get('duty_pct', 0)),
+            )
+        if cmd_name == 'air_heater_get_status':
+            return fp.pack_air_heater_get_status(seq)
+        if cmd_name == 'air_heater_set_ctrl':
+            return fp.pack_air_heater_set_ctrl(
+                seq=seq,
+                setpoint_c=float(
+                    cmd.get('setpoint_c', 37.0),
+                ),
+                hysteresis_c=float(
+                    cmd.get('hysteresis_c', 1.0),
+                ),
+                heater_duty=int(
+                    cmd.get('heater_duty', 100),
+                ),
+                fan_duty=int(
+                    cmd.get('fan_duty', 100),
+                ),
+                enable=bool(
+                    cmd.get('enable', False),
+                ),
             )
         if cmd_name == 'test_set_flag':
             return fp.pack_test_set_flag(
@@ -996,6 +1097,7 @@ class STM32Interface:
             'centrifuge_reverse',
             'centrifuge_goto_serum',
             'centrifuge_goto_pipette',
+            'centrifuge_goto_blister',
         ):
             d = fp.unpack_rsp_centrifuge_sequence(data)
             result['error_code'] = d.get(
@@ -1004,8 +1106,14 @@ class STM32Interface:
             result['status'] = (
                 'OK' if d.get('ok') else 'ERROR'
             )
+        elif cmd_name == 'air_heater_get_status':
+            d = fp.unpack_air_heater_status(data)
+            result.update(d)
         elif cmd_name == 'fan_get_status':
             d = fp.unpack_fan_status(data)
+            result.update(d)
+        elif cmd_name == 'accel_get_status':
+            d = fp.unpack_accel_status(data)
             result.update(d)
         elif cmd_name == 'temp_get_status':
             d = fp.unpack_temp_status(data)
@@ -1013,6 +1121,14 @@ class STM32Interface:
         elif cmd_name == 'read_z_drv':
             d = fp.unpack_rsp_read_z_drv(data)
             result.update(d)
+        elif cmd_name == 'centrifuge_bldc_cmd':
+            d = fp.unpack_rsp_centrifuge_bldc(data)
+            result['error_code'] = d.get('error', 0xFF)
+            result['status'] = (
+                'OK' if d.get('ok') else 'ERROR'
+            )
+            result['bldc_cmd'] = d.get('bldc_cmd', '')
+            result['data'] = d.get('data', '')
         elif cmd_name == 'centrifuge_status':
             d = fp.unpack_rsp_centrifuge_status(data)
             result['error_code'] = d.get(

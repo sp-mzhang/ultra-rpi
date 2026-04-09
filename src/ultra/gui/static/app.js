@@ -1472,11 +1472,41 @@
     engLog('Disconnected from STM32');
   }
 
+  /* Commands that produce async DONE messages and
+     therefore need send_command_wait_done on the backend.
+     Everything else uses send_command (ACK only). */
+  const WAIT_DONE_CMDS = new Set([
+    'home_all', 'home_gantry',
+    'home_x_axis', 'home_y_axis', 'home_z_axis',
+    'move_gantry', 'move_z_axis', 'move_to_location',
+    'move_to_well',
+    'lift_home', 'lift_move', 'lift_move_top',
+    'lift_stop',
+    'pump_init', 'pump_aspirate', 'pump_dispense',
+    'pump_prime', 'pump_blowout',
+    'pump_piston_reset', 'pump_lld_start',
+    'pump_move_absolute', 'pump_wait_idle',
+    'smart_aspirate', 'well_dispense',
+    'cart_dispense', 'cart_dispense_bf',
+    'tip_mix', 'lld_perform',
+    'gantry_tip_swap', 'lid_move',
+    'centrifuge_start', 'centrifuge_move_angle',
+    'centrifuge_home',
+    'centrifuge_unlock', 'centrifuge_lock',
+    'centrifuge_reverse',
+    'centrifuge_goto_serum', 'centrifuge_goto_pipette',
+    'centrifuge_goto_blister',
+  ]);
+
   /* -- STM32 command helper -- */
   async function engCmd(
-    cmd, params = {}, waitDone = true,
+    cmd, params = {},
+    waitDone = undefined,
     timeout = 30,
   ) {
+    if (waitDone === undefined) {
+      waitDone = WAIT_DONE_CMDS.has(cmd);
+    }
     try {
       const res = await fetch(
         '/api/stm32/command', {
@@ -1826,19 +1856,22 @@
   /* ---- CENTRIFUGE wiring ---- */
   function wireEngCentrifuge() {
     $('#eng-cfuge-start').onclick = () => {
+      const dur = parseInt(
+        $('#eng-cfuge-dur').value,
+      );
       engCmd('centrifuge_start', {
         rpm: parseInt($('#eng-cfuge-rpm').value),
-        duration_s: parseInt(
-          $('#eng-cfuge-dur').value,
-        ),
-      });
+        duration: dur,
+      }, true, dur + 30);
     };
     $('#eng-cfuge-angle-go').onclick = () => {
       engCmd('centrifuge_move_angle', {
-        angle_deg: parseFloat(
-          $('#eng-cfuge-angle').value,
+        angle_001deg: Math.round(
+          parseFloat(
+            $('#eng-cfuge-angle').value,
+          ) * 100,
         ),
-        rpm: parseInt(
+        move_rpm: parseInt(
           $('#eng-cfuge-move-rpm').value,
         ),
       });
@@ -1859,7 +1892,7 @@
     $('#eng-cfuge-enc-align').onclick = () => {
       engCmd('centrifuge_bldc_cmd', {
         bldc_cmd: 0x0013,
-      }, true, 10);
+      }, false, 10);
     };
     $('#eng-cfuge-clear-err').onclick = () => {
       engCmd('centrifuge_bldc_cmd', {
@@ -2127,23 +2160,21 @@
         $('#eng-led-idx').value,
       );
       engCmd('led_set_pixel', {
-        index: idx, ...ledVals(),
-      }, false);
+        idx, ...ledVals(),
+      });
     };
     $('#eng-led-off').onclick = () => {
       const idx = parseInt(
         $('#eng-led-idx').value,
       );
-      engCmd('led_set_pixel_off', {
-        index: idx,
-      }, false);
+      engCmd('led_set_pixel_off', { idx });
     };
     $('#eng-led-all-same').onclick = () => {
       const c = ledVals();
       for (let i = 0; i < 5; i++) {
         engCmd('led_set_pixel', {
-          index: i, ...c,
-        }, false);
+          idx: i, ...c,
+        });
       }
     };
 
@@ -2156,7 +2187,7 @@
           );
           engCmd('led_set_pattern', {
             pattern: pat, duration_s: dur, stage: 0,
-          }, false);
+          });
         };
       });
     $('#eng-led-progress').onclick = () => {
@@ -2168,12 +2199,12 @@
       );
       engCmd('led_set_pattern', {
         pattern: 4, duration_s: dur, stage: stg,
-      }, false);
+      });
     };
     $('#eng-led-pat-stop').onclick = () => {
       engCmd('led_set_pattern', {
         pattern: 0, duration_s: 0, stage: 0,
-      }, false);
+      });
     };
 
     const btnLed = $('#eng-btn-led');
@@ -2181,7 +2212,7 @@
       btnLed.onchange = () => {
         engCmd('led_set_button', {
           on: btnLed.checked ? 1 : 0,
-        }, false);
+        });
       };
     }
   }
@@ -2206,17 +2237,17 @@
     $('#eng-ah-enable').onchange = () => {
       engCmd('air_heater_set_en', {
         enable: $('#eng-ah-enable').checked ? 1 : 0,
-      }, false);
+      });
     };
     $('#eng-ah-heat-set').onclick = () => {
       engCmd('air_heater_set_duty', {
         duty_pct: parseInt(heatSl.value),
-      }, false);
+      });
     };
     $('#eng-ah-fan-set').onclick = () => {
       engCmd('air_heater_set_fan', {
         duty_pct: parseInt(fanSl.value),
-      }, false);
+      });
     };
     $('#eng-ah-ctrl-start').onclick = () => {
       engCmd('air_heater_set_ctrl', {
@@ -2224,23 +2255,23 @@
         setpoint_c: parseFloat(
           $('#eng-ah-setpoint').value,
         ),
-        hysteresis: parseFloat(
+        hysteresis_c: parseFloat(
           $('#eng-ah-hyst').value,
         ),
-        heater_duty_pct: parseInt(
+        heater_duty: parseInt(
           $('#eng-ah-ctrl-heat').value,
         ),
-        fan_duty_pct: parseInt(
+        fan_duty: parseInt(
           $('#eng-ah-ctrl-fan').value,
         ),
-      }, false);
+      });
     };
     $('#eng-ah-ctrl-stop').onclick = () => {
       engCmd('air_heater_set_ctrl', {
         enable: false,
-        setpoint_c: 0, hysteresis: 0,
-        heater_duty_pct: 0, fan_duty_pct: 0,
-      }, false);
+        setpoint_c: 0, hysteresis_c: 0,
+        heater_duty: 0, fan_duty: 0,
+      });
     };
     $('#eng-ah-get-status').onclick = async () => {
       const r = await engCmd(
@@ -2266,10 +2297,10 @@
   function wireEngFans() {
     $('#eng-fan-duty-set').onclick = () => {
       engCmd('fan_set_duty', {
-        duty_pct: parseInt(
+        pct: parseInt(
           $('#eng-fan-duty').value,
         ),
-      }, false);
+      });
     };
     $('#eng-fan-status').onclick = async () => {
       const r = await engCmd(
@@ -2331,7 +2362,7 @@
       doorLed.onchange = () => {
         engCmd('led_set_button', {
           on: doorLed.checked ? 1 : 0,
-        }, false);
+        });
       };
     }
     $('#eng-lid-open').onclick = () => {
