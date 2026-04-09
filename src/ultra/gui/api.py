@@ -133,6 +133,14 @@ def create_api_router(
                 ),
             )
 
+        eng = _eng_stm32['iface']
+        if eng is not None:
+            try:
+                eng.disconnect()
+            except Exception:
+                pass
+            _eng_stm32['iface'] = None
+
         from ultra.hw.stm32_monitor import (
             STM32StatusMonitor,
         )
@@ -389,11 +397,41 @@ def create_api_router(
 
     # ---- STM32 engineering endpoints ----
 
-    def _get_or_connect_stm32():
-        '''Return the STM32 interface, connecting if needed.'''
-        stm32 = app._stm32
-        if stm32 is not None:
-            return stm32
+    _eng_stm32 = {'iface': None}
+
+    def _get_eng_stm32():
+        '''Return the engineering STM32 interface.
+
+        Only available after POST /api/stm32/connect.
+        Returns None when not connected.
+        '''
+        return _eng_stm32['iface']
+
+    @router.post('/stm32/connect')
+    async def stm32_connect():
+        '''Connect the engineering STM32 interface.
+
+        Stops the STM32StatusMonitor so the UART is
+        free, then creates and connects an STM32Interface.
+        Returns firmware version on success.
+        '''
+        if _eng_stm32['iface'] is not None:
+            return {'ok': True, 'detail': 'already connected'}
+
+        runner = app.get_runner()
+        if runner.is_running:
+            raise HTTPException(
+                status_code=409,
+                detail='Protocol running -- cannot '
+                       'connect engineering',
+            )
+
+        from ultra.hw.stm32_monitor import (
+            STM32StatusMonitor,
+        )
+        STM32StatusMonitor.stop_active()
+        await asyncio.sleep(0.3)
+
         from ultra.hw.stm32_interface import (
             STM32Interface,
         )
@@ -404,9 +442,67 @@ def create_api_router(
             ),
             baud=stm32_cfg.get('baud', 921600),
         )
-        if not stm32.connect():
-            return None
-        return stm32
+        loop = asyncio.get_running_loop()
+        ok = await loop.run_in_executor(
+            None, stm32.connect,
+        )
+        if not ok:
+            if app._monitor:
+                app._monitor.start()
+            raise HTTPException(
+                status_code=500,
+                detail='Failed to connect to STM32',
+            )
+        _eng_stm32['iface'] = stm32
+
+        version_str = '--'
+        try:
+            r = await loop.run_in_executor(
+                None,
+                lambda: stm32.send_command(
+                    {'cmd': 'get_version'},
+                    timeout_s=3.0,
+                ),
+            )
+            if r:
+                version_str = r.get(
+                    'version', str(r),
+                )
+        except Exception:
+            pass
+
+        LOG.info('Engineering STM32 connected')
+        return {
+            'ok': True,
+            'firmware': version_str,
+        }
+
+    @router.post('/stm32/disconnect')
+    async def stm32_disconnect():
+        '''Disconnect engineering STM32 and restart monitor.
+
+        Releases the UART and resumes the background
+        STM32StatusMonitor for door/sensor listening.
+        '''
+        stm32 = _eng_stm32['iface']
+        if stm32 is not None:
+            try:
+                stm32.disconnect()
+            except Exception:
+                pass
+            _eng_stm32['iface'] = None
+            LOG.info('Engineering STM32 disconnected')
+
+        if app._monitor:
+            app._monitor.start()
+        return {'ok': True}
+
+    @router.get('/stm32/connected')
+    async def stm32_connected():
+        '''Check if engineering STM32 is connected.'''
+        return {
+            'connected': _eng_stm32['iface'] is not None,
+        }
 
     @router.post('/stm32/command')
     async def stm32_command(req: Stm32CmdRequest):
@@ -431,11 +527,12 @@ def create_api_router(
                 detail='Protocol running -- only abort '
                        'allowed',
             )
-        stm32 = _get_or_connect_stm32()
+        stm32 = _get_eng_stm32()
         if stm32 is None:
             raise HTTPException(
-                status_code=500,
-                detail='STM32 not connected',
+                status_code=503,
+                detail='STM32 not connected -- click '
+                       'Connect first',
             )
         cmd_dict: dict[str, Any] = {'cmd': req.cmd}
         cmd_dict.update(req.params)
@@ -476,10 +573,10 @@ def create_api_router(
         centrifuge status in one call for the engineering
         UI position display.
         '''
-        stm32 = _get_or_connect_stm32()
+        stm32 = _get_eng_stm32()
         if stm32 is None:
             raise HTTPException(
-                status_code=500,
+                status_code=503,
                 detail='STM32 not connected',
             )
         loop = asyncio.get_running_loop()

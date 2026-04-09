@@ -238,617 +238,1000 @@
   </div><!-- end #run-view -->
 
   <div id="eng-view" hidden>
-    <div class="eng-layout">
-      <nav class="eng-sidebar">
-        <button class="eng-tab active"
-                data-eng="motion">Motion</button>
-        <button class="eng-tab"
-                data-eng="pump">Pump</button>
-        <button class="eng-tab"
-                data-eng="centrifuge">Centrifuge</button>
-        <button class="eng-tab"
-                data-eng="cartridge">Cartridge</button>
-        <button class="eng-tab"
-                data-eng="locations">Locations</button>
-        <button class="eng-tab"
-                data-eng="leds">LEDs</button>
-        <button class="eng-tab"
-                data-eng="environment">Environment</button>
-        <button class="eng-tab"
-                data-eng="door">Door / Lid</button>
-        <button class="eng-tab"
-                data-eng="console">Console</button>
-      </nav>
-      <div class="eng-content">
+    <!-- Connection Bar -->
+    <div id="eng-conn-bar" class="eng-conn-bar">
+      <label>Port:</label>
+      <select id="eng-port">
+        <option value="/dev/ttyAMA3">/dev/ttyAMA3</option>
+        <option value="/dev/ttyAMA0">/dev/ttyAMA0</option>
+      </select>
+      <label>Baud:</label>
+      <select id="eng-baud">
+        <option value="9600">9600</option>
+        <option value="115200">115200</option>
+        <option value="230400">230400</option>
+        <option value="460800">460800</option>
+        <option value="921600" selected>921600</option>
+      </select>
+      <button id="eng-connect" class="eng-conn-btn">
+        Connect
+      </button>
+      <span id="eng-conn-status" class="eng-disconnected">
+        Disconnected
+      </span>
+      <span id="eng-fw-version" class="eng-fw-lbl">
+        Firmware: --
+      </span>
+    </div>
 
-        <!-- ===== MOTION ===== -->
-        <div class="eng-pane" id="eng-motion">
-          <h2>Motion Control</h2>
-          <div class="eng-section">
-            <h3>Position</h3>
-            <div class="eng-pos-grid">
-              <span class="eng-pos-lbl">X</span>
-              <span id="eng-pos-x" class="eng-pos-val">
-                --
-              </span>
-              <span class="eng-pos-unit">mm</span>
-              <span class="eng-pos-lbl">Y</span>
-              <span id="eng-pos-y" class="eng-pos-val">
-                --
-              </span>
-              <span class="eng-pos-unit">mm</span>
-              <span class="eng-pos-lbl">Z</span>
-              <span id="eng-pos-z" class="eng-pos-val">
-                --
-              </span>
-              <span class="eng-pos-unit">mm</span>
-              <span class="eng-pos-lbl">Lift</span>
-              <span id="eng-pos-lift" class="eng-pos-val">
-                --
-              </span>
-              <span class="eng-pos-unit">mm</span>
-            </div>
+    <div class="eng-main-cols">
+      <!-- LEFT COLUMN -->
+      <div class="eng-left-col">
+
+        <!-- Position Display -->
+        <fieldset id="eng-pos-fieldset"
+                  class="eng-fieldset" disabled>
+          <legend>Position Display &mdash; mm (Live)</legend>
+          <div class="eng-pos-grid">
+            <span class="eng-pos-lbl">X:</span>
+            <span id="eng-pos-x"
+                  class="eng-pos-val">--</span>
+            <span id="eng-led-x"
+                  class="eng-pos-led red"></span>
+            <span class="eng-pos-lbl">Y:</span>
+            <span id="eng-pos-y"
+                  class="eng-pos-val">--</span>
+            <span id="eng-led-y"
+                  class="eng-pos-led red"></span>
+            <span class="eng-pos-lbl">Z:</span>
+            <span id="eng-pos-z"
+                  class="eng-pos-val">--</span>
+            <span id="eng-led-z"
+                  class="eng-pos-led red"></span>
+            <span class="eng-pos-lbl">Lift:</span>
+            <span id="eng-pos-lift"
+                  class="eng-pos-val">--</span>
+            <span id="eng-led-lift"
+                  class="eng-pos-led red"></span>
           </div>
-          <div class="eng-section">
-            <h3>Jog</h3>
-            <div class="eng-row">
-              <label>Step (mm):</label>
-              <select id="eng-jog-step">
-                <option value="0.1">0.1</option>
-                <option value="1" selected>1</option>
-                <option value="5">5</option>
-                <option value="10">10</option>
-              </select>
-              <label>Speed (mm/s):</label>
-              <input type="number" id="eng-jog-speed"
-                     value="20" min="1" max="200" step="5">
-            </div>
-            <div class="eng-jog-grid">
-              <button class="eng-jog-btn"
-                      data-axis="x" data-dir="-1">X-</button>
-              <button class="eng-jog-btn"
-                      data-axis="x" data-dir="1">X+</button>
-              <button class="eng-jog-btn"
-                      data-axis="y" data-dir="-1">Y-</button>
-              <button class="eng-jog-btn"
-                      data-axis="y" data-dir="1">Y+</button>
-              <button class="eng-jog-btn"
-                      data-axis="z" data-dir="-1">Z-</button>
-              <button class="eng-jog-btn"
-                      data-axis="z" data-dir="1">Z+</button>
-            </div>
+          <div class="eng-row eng-pos-ctrl">
+            <label><input type="checkbox"
+              id="eng-auto-update"> Auto Update</label>
+            <label>Interval ms:</label>
+            <input type="number" id="eng-update-ms"
+                   value="3000" min="500" max="30000"
+                   step="500" class="eng-spin-sm">
+            <button id="eng-update-all"
+                    class="eng-cmd-btn">Update All</button>
           </div>
-          <div class="eng-section">
-            <h3>Home</h3>
-            <div class="eng-btn-row">
-              <button class="eng-cmd-btn"
-                      data-cmd="home_all">Home All</button>
-              <button class="eng-cmd-btn"
-                      data-cmd="home_x_axis">Home X</button>
-              <button class="eng-cmd-btn"
-                      data-cmd="home_y_axis">Home Y</button>
-              <button class="eng-cmd-btn"
-                      data-cmd="home_z_axis">Home Z</button>
-              <button class="eng-cmd-btn"
-                      data-cmd="home_gantry">
-                Home Gantry
-              </button>
-              <button class="eng-cmd-btn"
-                      data-cmd="lift_home">Lift Home</button>
-              <button class="eng-cmd-btn"
-                      data-cmd="lift_move_top">
-                Lift Top
-              </button>
-            </div>
+        </fieldset>
+
+        <!-- Motor Controls -->
+        <fieldset id="eng-motor-fieldset"
+                  class="eng-fieldset" disabled>
+          <legend>Motor Controls</legend>
+          <table class="eng-motor-tbl">
+            <thead>
+              <tr>
+                <th></th><th>Step (mm)</th>
+                <th>Vel (mm/s)</th>
+                <th colspan="2"></th>
+                <th>Home</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-motor="x">
+                <td class="eng-ax-lbl">X:</td>
+                <td><input type="number" id="eng-step-x"
+                     value="1" min="0.1" max="200"
+                     step="0.1" class="eng-spin-sm"></td>
+                <td><input type="number" id="eng-vel-x"
+                     value="25" min="0.1" max="150"
+                     step="5" class="eng-spin-sm"></td>
+                <td><button class="eng-jog-btn"
+                  data-axis="x" data-dir="-1"
+                  >&larr;</button></td>
+                <td><button class="eng-jog-btn"
+                  data-axis="x" data-dir="1"
+                  >&rarr;</button></td>
+                <td><button class="eng-cmd-btn"
+                  data-cmd="home_x_axis">Home</button></td>
+                <td><button id="eng-x-end"
+                  class="eng-cmd-btn">End</button></td>
+              </tr>
+              <tr data-motor="y">
+                <td class="eng-ax-lbl">Y:</td>
+                <td><input type="number" id="eng-step-y"
+                     value="1" min="0.1" max="200"
+                     step="0.1" class="eng-spin-sm"></td>
+                <td><input type="number" id="eng-vel-y"
+                     value="25" min="0.1" max="150"
+                     step="5" class="eng-spin-sm"></td>
+                <td><button class="eng-jog-btn"
+                  data-axis="y" data-dir="-1"
+                  >&larr;</button></td>
+                <td><button class="eng-jog-btn"
+                  data-axis="y" data-dir="1"
+                  >&rarr;</button></td>
+                <td><button class="eng-cmd-btn"
+                  data-cmd="home_y_axis">Home</button></td>
+                <td><button id="eng-y-front"
+                  class="eng-cmd-btn">Front</button></td>
+              </tr>
+              <tr data-motor="z">
+                <td class="eng-ax-lbl">Z:</td>
+                <td><input type="number" id="eng-step-z"
+                     value="1" min="0.1" max="200"
+                     step="0.1" class="eng-spin-sm"></td>
+                <td><input type="number" id="eng-vel-z"
+                     value="6" min="0.1" max="18"
+                     step="1" class="eng-spin-sm"></td>
+                <td><button class="eng-jog-btn"
+                  data-axis="z" data-dir="-1"
+                  >&darr;</button></td>
+                <td><button class="eng-jog-btn"
+                  data-axis="z" data-dir="1"
+                  >&uarr;</button></td>
+                <td><button class="eng-cmd-btn"
+                  data-cmd="home_z_axis">Home</button></td>
+                <td><button id="eng-z-bottom"
+                  class="eng-cmd-btn">Bottom</button></td>
+              </tr>
+              <tr data-motor="lift">
+                <td class="eng-ax-lbl">Lift:</td>
+                <td><input type="number" id="eng-step-lift"
+                     value="2" min="0.1" max="200"
+                     step="0.5" class="eng-spin-sm"></td>
+                <td><input type="number" id="eng-vel-lift"
+                     value="10" min="0.1" max="12"
+                     step="0.5" class="eng-spin-sm"></td>
+                <td><button class="eng-jog-btn"
+                  data-axis="lift" data-dir="-1"
+                  >&darr;</button></td>
+                <td><button class="eng-jog-btn"
+                  data-axis="lift" data-dir="1"
+                  >&uarr;</button></td>
+                <td><button class="eng-cmd-btn"
+                  data-cmd="lift_home">Home</button></td>
+                <td><button class="eng-cmd-btn"
+                  data-cmd="lift_move_top">Top</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="eng-row eng-moveto-row">
+            <span class="eng-dim">Move To (mm):</span>
+            <label>X:</label>
+            <input type="number" id="eng-goto-x"
+                   value="0" step="0.1" min="0" max="72"
+                   class="eng-spin-sm">
+            <label>Y:</label>
+            <input type="number" id="eng-goto-y"
+                   value="0" step="0.1" min="-200"
+                   max="200" class="eng-spin-sm">
+            <label>Z:</label>
+            <input type="number" id="eng-goto-z"
+                   value="0" step="0.1" min="-200"
+                   max="0" class="eng-spin-sm">
+            <span class="eng-sep">|</span>
+            <label>Lift:</label>
+            <input type="number" id="eng-goto-lift"
+                   value="0" step="0.5" min="0" max="200"
+                   class="eng-spin-sm">
+            <button id="eng-lift-move-btn"
+                    class="eng-cmd-btn">Move</button>
+            <span class="eng-sep">|</span>
+            <label>Vel:</label>
+            <input type="number" id="eng-goto-vel"
+                   value="6" step="1" min="0.1" max="25"
+                   class="eng-spin-sm">
           </div>
-          <div class="eng-section">
-            <h3>Move To (mm)</h3>
-            <div class="eng-row">
-              <label>X:</label>
-              <input type="number" id="eng-goto-x"
-                     value="0" step="0.1">
-              <label>Y:</label>
-              <input type="number" id="eng-goto-y"
-                     value="0" step="0.1">
-              <label>Z:</label>
-              <input type="number" id="eng-goto-z"
-                     value="0" step="0.1">
-              <button id="eng-goto-btn"
-                      class="eng-cmd-btn">Go</button>
-            </div>
+          <div class="eng-btn-row eng-motor-bottom">
+            <button class="eng-cmd-btn"
+                    data-cmd="home_all">Home All</button>
+            <button id="eng-estop"
+                    class="eng-estop-btn">
+              EMERGENCY STOP</button>
+            <button id="eng-goto-btn"
+                    class="eng-cmd-btn">Move To</button>
           </div>
-          <div class="eng-section">
-            <button id="eng-estop" class="eng-estop-btn">
-              EMERGENCY STOP
-            </button>
+        </fieldset>
+
+        <!-- Notebook tabs -->
+        <fieldset id="eng-tabs-fieldset"
+                  class="eng-fieldset" disabled>
+          <div class="eng-tab-bar">
+            <button class="eng-tab active"
+              data-eng="pump">Pump Controls</button>
+            <button class="eng-tab"
+              data-eng="centrifuge">Centrifuge</button>
+            <button class="eng-tab"
+              data-eng="cartridge">Cartridge</button>
+            <button class="eng-tab"
+              data-eng="camera">Camera</button>
+            <button class="eng-tab"
+              data-eng="locations">Locations</button>
+            <button class="eng-tab"
+              data-eng="leds">LED Control</button>
+            <button class="eng-tab"
+              data-eng="environment">Air Heater</button>
+            <button class="eng-tab"
+              data-eng="accel">Accelerometer</button>
+            <button class="eng-tab"
+              data-eng="fans">Fans</button>
+            <button class="eng-tab"
+              data-eng="temp">Temperature</button>
           </div>
+
+  <!-- ===== PUMP ===== -->
+  <div class="eng-pane" id="eng-pump">
+    <div class="eng-row">
+      <button id="eng-pump-init"
+        class="eng-cmd-btn">Initialize Pump</button>
+      <button class="eng-cmd-btn"
+        data-cmd="pump_piston_reset">Reset Piston</button>
+      <span id="eng-pump-status-lbl"
+        class="eng-warn">Not initialized</span>
+    </div>
+    <div class="eng-row">
+      <label>Return to tip #:</label>
+      <input type="number" id="eng-tip-return-id"
+        value="0" min="0" max="8" class="eng-spin-sm">
+      <label>Pickup from tip #:</label>
+      <input type="number" id="eng-tip-pickup-id"
+        value="0" min="0" max="8" class="eng-spin-sm">
+      <button id="eng-tip-swap"
+        class="eng-cmd-btn">Swap Tip</button>
+      <button id="eng-lld-perform"
+        class="eng-cmd-btn">Perform LLD</button>
+    </div>
+
+    <fieldset class="eng-inner-fs">
+      <legend>Tip swap motion (defaults match firmware)
+      </legend>
+      <div class="eng-row">
+        <label>X offset (&micro;m, def 7500 = 7.5 mm,
+          0 = MCU def):</label>
+        <input type="number" id="eng-ts-x-ej"
+          value="7500" min="0" max="50000" step="100"
+          class="eng-spin-sm">
+        <label>Pick Z (mm, 0 = def):</label>
+        <input type="number" id="eng-ts-pick-z"
+          value="0" min="-30" max="0" step="0.5"
+          class="eng-spin-sm">
+        <label>Retract (&micro;m):</label>
+        <input type="number" id="eng-ts-retract"
+          value="1000" min="0" max="10000" step="50"
+          class="eng-spin-sm">
+      </div>
+      <div class="eng-row">
+        <label>XY speed (mm/s):</label>
+        <input type="number" id="eng-ts-xy-spd"
+          value="25" min="1" max="100" step="1"
+          class="eng-spin-sm">
+        <label>Z speed (mm/s):</label>
+        <input type="number" id="eng-ts-z-spd"
+          value="6" min="1" max="20" step="0.5"
+          class="eng-spin-sm">
+      </div>
+    </fieldset>
+
+    <div class="eng-pump-panels">
+      <div class="eng-pump-left">
+        <div class="eng-row">
+          <label>Aspirate Volume (&micro;L):</label>
+          <input type="number" id="eng-asp-vol"
+            value="250" min="0" max="10000" step="10"
+            class="eng-spin-sm">
+          <button id="eng-aspirate"
+            class="eng-cmd-btn">Aspirate</button>
+          <button id="eng-llf-aspirate"
+            class="eng-cmd-btn">LLF Aspirate</button>
+          <label>Air Slug (&micro;L):</label>
+          <input type="number" id="eng-air-slug"
+            value="0" min="0" max="500" step="5"
+            class="eng-spin-sm">
         </div>
-
-        <!-- ===== PUMP ===== -->
-        <div class="eng-pane" id="eng-pump" hidden>
-          <h2>Pump Control</h2>
-          <div class="eng-section">
-            <h3>Initialize</h3>
-            <div class="eng-btn-row">
-              <button class="eng-cmd-btn"
-                      data-cmd="pump_init">
-                Pump Init
-              </button>
-              <button class="eng-cmd-btn"
-                      data-cmd="pump_piston_reset">
-                Piston Reset
-              </button>
-            </div>
-          </div>
-          <div class="eng-section">
-            <h3>Tip Operations</h3>
-            <div class="eng-row">
-              <label>Tip ID (0-7):</label>
-              <input type="number" id="eng-tip-id"
-                     value="0" min="0" max="7">
-            </div>
-            <div class="eng-btn-row">
-              <button id="eng-tip-pickup"
-                      class="eng-cmd-btn">Tip Pickup</button>
-              <button id="eng-tip-return"
-                      class="eng-cmd-btn">Tip Return</button>
-              <button id="eng-tip-swap"
-                      class="eng-cmd-btn">Tip Swap</button>
-            </div>
-          </div>
-          <div class="eng-section">
-            <h3>LLD</h3>
-            <div class="eng-btn-row">
-              <button class="eng-cmd-btn"
-                      data-cmd="lld_perform">
-                Perform LLD
-              </button>
-            </div>
-          </div>
-          <div class="eng-section">
-            <h3>Aspirate / Dispense</h3>
-            <div class="eng-row">
-              <label>Vol (uL):</label>
-              <input type="number" id="eng-pump-vol"
-                     value="100" min="0" max="1000"
-                     step="10">
-              <label>Speed:</label>
-              <input type="number" id="eng-pump-speed"
-                     value="5" min="1" max="30">
-            </div>
-            <div class="eng-btn-row">
-              <button id="eng-pump-aspirate"
-                      class="eng-cmd-btn">Aspirate</button>
-              <button id="eng-pump-dispense"
-                      class="eng-cmd-btn">Dispense</button>
-              <button id="eng-pump-blowout"
-                      class="eng-cmd-btn">Blowout</button>
-            </div>
-          </div>
-          <div class="eng-section">
-            <h3>Smart Aspirate</h3>
-            <div class="eng-row">
-              <label>Location:</label>
-              <select id="eng-sa-loc" class="eng-loc-sel">
-              </select>
-              <label>Vol (uL):</label>
-              <input type="number" id="eng-sa-vol"
-                     value="100" min="0" step="10">
-            </div>
-            <div class="eng-btn-row">
-              <button id="eng-sa-go"
-                      class="eng-cmd-btn">
-                Smart Aspirate
-              </button>
-            </div>
-          </div>
-          <div class="eng-section">
-            <h3>Well / Cart Commands</h3>
-            <div class="eng-row">
-              <label>Src Loc:</label>
-              <select id="eng-wc-src" class="eng-loc-sel">
-              </select>
-              <label>Dst Loc:</label>
-              <select id="eng-wc-dst" class="eng-loc-sel">
-              </select>
-            </div>
-            <div class="eng-row">
-              <label>Vol (uL):</label>
-              <input type="number" id="eng-wc-vol"
-                     value="100" step="10">
-              <label>Speed:</label>
-              <input type="number" id="eng-wc-speed"
-                     value="5" min="1" max="30">
-              <label>Cycles:</label>
-              <input type="number" id="eng-wc-cycles"
-                     value="3" min="1" max="20">
-            </div>
-            <div class="eng-btn-row">
-              <button id="eng-well-dispense"
-                      class="eng-cmd-btn">
-                Well Dispense
-              </button>
-              <button id="eng-cart-dispense"
-                      class="eng-cmd-btn">
-                Cart Dispense
-              </button>
-              <button id="eng-cart-bf"
-                      class="eng-cmd-btn">
-                Cart B&amp;F
-              </button>
-              <button id="eng-tip-mix"
-                      class="eng-cmd-btn">
-                Tip Mix
-              </button>
-            </div>
-          </div>
+        <div class="eng-row">
+          <label>Dispense Volume (&micro;L):</label>
+          <input type="number" id="eng-disp-vol"
+            value="250" min="0" max="10000" step="10"
+            class="eng-spin-sm">
+          <button id="eng-dispense"
+            class="eng-cmd-btn">Dispense</button>
         </div>
-
-        <!-- ===== CENTRIFUGE ===== -->
-        <div class="eng-pane" id="eng-centrifuge" hidden>
-          <h2>Centrifuge Control</h2>
-          <div class="eng-section">
-            <h3>Run</h3>
-            <div class="eng-row">
-              <label>RPM:</label>
-              <input type="number" id="eng-cfuge-rpm"
-                     value="3000" min="0" max="10000"
-                     step="100">
-              <label>Duration (s):</label>
-              <input type="number" id="eng-cfuge-dur"
-                     value="60" min="1" step="10">
-            </div>
-            <div class="eng-btn-row">
-              <button id="eng-cfuge-start"
-                      class="eng-cmd-btn">Start</button>
-              <button class="eng-cmd-btn"
-                      data-cmd="centrifuge_stop">
-                Stop
-              </button>
-              <button class="eng-cmd-btn"
-                      data-cmd="centrifuge_home">
-                Home
-              </button>
-            </div>
-          </div>
-          <div class="eng-section">
-            <h3>Angle / Power</h3>
-            <div class="eng-row">
-              <label>Angle (deg):</label>
-              <input type="number" id="eng-cfuge-angle"
-                     value="0" step="1">
-              <button id="eng-cfuge-angle-go"
-                      class="eng-cmd-btn">Move</button>
-            </div>
-            <div class="eng-btn-row">
-              <button class="eng-cmd-btn"
-                      data-cmd="centrifuge_power"
-                      data-params='{"enable":1}'>
-                Power On
-              </button>
-              <button class="eng-cmd-btn"
-                      data-cmd="centrifuge_power"
-                      data-params='{"enable":0}'>
-                Power Off
-              </button>
-            </div>
-          </div>
-          <div class="eng-section">
-            <h3>Status</h3>
-            <pre id="eng-cfuge-status"
-                 class="eng-status-box">--</pre>
-            <button id="eng-cfuge-refresh"
-                    class="eng-cmd-btn">Refresh</button>
-          </div>
+        <div class="eng-row">
+          <label>Speed (&micro;L/s):</label>
+          <input type="number" id="eng-pump-speed"
+            value="100" min="0.1" max="1000" step="0.1"
+            class="eng-spin-sm">
+          <label>Timeout (s):</label>
+          <input type="number" id="eng-pump-timeout"
+            value="40" min="1" max="120" step="5"
+            class="eng-spin-sm">
         </div>
-
-        <!-- ===== CARTRIDGE ===== -->
-        <div class="eng-pane" id="eng-cartridge" hidden>
-          <h2>Cartridge Control</h2>
-          <div class="eng-section">
-            <h3>Unlock / Lock / Reverse</h3>
-            <div class="eng-row">
-              <label>Open angle:</label>
-              <input type="number" id="eng-cart-open-angle"
-                     value="110" step="1">
-              <label>Extra deg:</label>
-              <input type="number" id="eng-cart-extra-deg"
-                     value="15" step="1">
-            </div>
-            <div class="eng-row">
-              <label>Lift (mm):</label>
-              <input type="number" id="eng-cart-lift"
-                     value="5.0" step="0.5">
-              <label>RPM:</label>
-              <input type="number" id="eng-cart-rpm"
-                     value="200" step="10">
-            </div>
-            <div class="eng-btn-row">
-              <button class="eng-cmd-btn"
-                      data-cmd="centrifuge_unlock">
-                Unlock
-              </button>
-              <button class="eng-cmd-btn"
-                      data-cmd="centrifuge_lock">
-                Lock
-              </button>
-              <button class="eng-cmd-btn"
-                      data-cmd="centrifuge_reverse">
-                Reverse
-              </button>
-            </div>
-          </div>
-          <div class="eng-section">
-            <h3>Goto Position</h3>
-            <div class="eng-btn-row">
-              <button class="eng-cmd-btn"
-                      data-cmd="centrifuge_goto_serum">
-                Goto Serum
-              </button>
-              <button class="eng-cmd-btn"
-                      data-cmd="centrifuge_goto_pipette">
-                Goto Pipette
-              </button>
-              <button class="eng-cmd-btn"
-                      data-cmd="centrifuge_goto_blister">
-                Goto Blister
-              </button>
-            </div>
-          </div>
+        <div class="eng-row">
+          <label>Well Type:</label>
+          <select id="eng-well-type">
+            <option value="small" selected>Small</option>
+            <option value="large">Large</option>
+          </select>
         </div>
+      </div>
 
-        <!-- ===== LOCATIONS ===== -->
-        <div class="eng-pane" id="eng-locations" hidden>
-          <h2>Locations</h2>
-          <div class="eng-section">
-            <h3>Move to Location</h3>
-            <div class="eng-row">
-              <label>Location:</label>
-              <select id="eng-loc-select"
-                      class="eng-loc-sel"></select>
-            </div>
-            <div class="eng-row">
-              <label>Speed (mm/s):</label>
-              <input type="number" id="eng-loc-speed"
-                     value="20" min="0" max="150" step="5">
-              <button id="eng-loc-go"
-                      class="eng-cmd-btn">
-                Move to Location
-              </button>
-            </div>
+      <div class="eng-pump-right">
+        <fieldset class="eng-inner-fs">
+          <legend>Dispense Commands</legend>
+          <div class="eng-disp-row">
+            <b>Well:</b>
+            <label>Dep:</label>
+            <input type="number" id="eng-wd-depth"
+              value="0" min="0" max="24" step="1"
+              class="eng-spin-xs">
+            <label>Vol:</label>
+            <input type="number" id="eng-wd-vol"
+              value="50" min="0" max="2000" step="10"
+              class="eng-spin-xs">
+            <label>Spd:</label>
+            <input type="number" id="eng-wd-speed"
+              value="100" min="0.1" max="1000" step="0.1"
+              class="eng-spin-xs">
+            <label>Ret:</label>
+            <input type="number" id="eng-wd-retract"
+              value="5" min="0" max="20" step="1"
+              class="eng-spin-xs">
+            <label><input type="checkbox"
+              id="eng-wd-blowout" checked> Blow</label>
+            <button id="eng-wd-go"
+              class="eng-cmd-btn eng-btn-xs">Go</button>
           </div>
-          <div class="eng-section">
-            <h3>Set Centre (mm)</h3>
-            <div class="eng-row">
-              <label>X:</label>
-              <input type="number" id="eng-ctr-x"
-                     value="0" step="0.01">
-              <label>Y:</label>
-              <input type="number" id="eng-ctr-y"
-                     value="0" step="0.01">
-              <label>Z:</label>
-              <input type="number" id="eng-ctr-z"
-                     value="0" step="0.01">
-              <button id="eng-ctr-go"
-                      class="eng-cmd-btn">Set Centre</button>
-            </div>
-          </div>
-          <div class="eng-section">
-            <h3>Set Offset (mm)</h3>
-            <div class="eng-row">
-              <label>dX:</label>
-              <input type="number" id="eng-off-x"
-                     value="0" step="0.01">
-              <label>dY:</label>
-              <input type="number" id="eng-off-y"
-                     value="0" step="0.01">
-              <label>dZ:</label>
-              <input type="number" id="eng-off-z"
-                     value="0" step="0.01">
-              <button id="eng-off-go"
-                      class="eng-cmd-btn">Set Offset</button>
-            </div>
-          </div>
-        </div>
 
-        <!-- ===== LEDs ===== -->
-        <div class="eng-pane" id="eng-leds" hidden>
-          <h2>LED Control</h2>
-          <div class="eng-section">
-            <h3>Single LED</h3>
-            <div class="eng-row">
-              <label>LED #:</label>
-              <input type="number" id="eng-led-idx"
-                     value="0" min="0" max="4">
-            </div>
-            <div class="eng-row eng-slider-row">
-              <label>R:</label>
-              <input type="range" id="eng-led-r"
-                     min="0" max="255" value="0">
-              <span id="eng-led-r-val">0</span>
-            </div>
-            <div class="eng-row eng-slider-row">
-              <label>G:</label>
-              <input type="range" id="eng-led-g"
-                     min="0" max="255" value="0">
-              <span id="eng-led-g-val">0</span>
-            </div>
-            <div class="eng-row eng-slider-row">
-              <label>B:</label>
-              <input type="range" id="eng-led-b"
-                     min="0" max="255" value="0">
-              <span id="eng-led-b-val">0</span>
-            </div>
-            <div class="eng-row eng-slider-row">
-              <label>W:</label>
-              <input type="range" id="eng-led-w"
-                     min="0" max="255" value="0">
-              <span id="eng-led-w-val">0</span>
-            </div>
-            <div class="eng-btn-row">
-              <button id="eng-led-set"
-                      class="eng-cmd-btn">Set</button>
-              <button id="eng-led-off"
-                      class="eng-cmd-btn">Off</button>
-              <button id="eng-led-all-same"
-                      class="eng-cmd-btn">All Same</button>
-              <button class="eng-cmd-btn"
-                      data-cmd="led_set_all_off">
-                All Off
-              </button>
-            </div>
+          <div class="eng-disp-row">
+            <b>Cart:</b>
+            <label>Vol:</label>
+            <input type="number" id="eng-cd-vol"
+              value="70" min="0" max="5000" step="10"
+              class="eng-spin-xs">
+            <label>Vel:</label>
+            <input type="number" id="eng-cd-vel"
+              value="100" min="0.1" max="500" step="0.1"
+              class="eng-spin-xs">
+            <label>Reasp:</label>
+            <input type="number" id="eng-cd-reasp"
+              value="12" min="0" max="200"
+              class="eng-spin-xs">
+            <label>Slp:</label>
+            <input type="number" id="eng-cd-sleep"
+              value="0" min="0" max="120" step="5"
+              class="eng-spin-xs">
+            <label>Ret:</label>
+            <input type="number" id="eng-cd-retract"
+              value="2" min="0" max="20"
+              class="eng-spin-xs">
+            <button id="eng-cd-go"
+              class="eng-cmd-btn eng-btn-xs">Go</button>
           </div>
-          <div class="eng-section">
-            <h3>Patterns</h3>
-            <div class="eng-row">
-              <label>Pattern:</label>
-              <select id="eng-led-pattern">
-                <option value="0">Waiting</option>
-                <option value="1">Ready</option>
-                <option value="2">Error</option>
-                <option value="3">Scanning</option>
-                <option value="4">Progress</option>
-              </select>
-              <label>Duration (s):</label>
-              <input type="number" id="eng-led-dur"
-                     value="5" min="0" step="1">
-              <label>Stage:</label>
-              <input type="number" id="eng-led-stage"
-                     value="0" min="0" max="100">
-            </div>
-            <div class="eng-btn-row">
-              <button id="eng-led-pat-start"
-                      class="eng-cmd-btn">Start</button>
-              <button id="eng-led-pat-stop"
-                      class="eng-cmd-btn">Stop</button>
-            </div>
-          </div>
-        </div>
 
-        <!-- ===== ENVIRONMENT ===== -->
-        <div class="eng-pane" id="eng-environment" hidden>
-          <h2>Environment</h2>
-          <div class="eng-section">
-            <h3>Air Heater</h3>
-            <div class="eng-row">
-              <label>Duty (%):</label>
-              <input type="number" id="eng-heat-duty"
-                     value="0" min="0" max="100">
-              <button id="eng-heat-duty-set"
-                      class="eng-cmd-btn">Set Duty</button>
-            </div>
-            <div class="eng-btn-row">
-              <button class="eng-cmd-btn"
-                      data-cmd="air_heater_set_en"
-                      data-params='{"enable":1}'>
-                Enable
-              </button>
-              <button class="eng-cmd-btn"
-                      data-cmd="air_heater_set_en"
-                      data-params='{"enable":0}'>
-                Disable
-              </button>
-              <button id="eng-heat-status"
-                      class="eng-cmd-btn">Get Status</button>
-            </div>
-            <pre id="eng-heat-status-box"
-                 class="eng-status-box">--</pre>
+          <div class="eng-disp-row">
+            <b>B&amp;F:</b>
+            <label>Dur(s):</label>
+            <input type="number" id="eng-cb-dur"
+              value="170" min="0" max="600" step="10"
+              class="eng-spin-xs">
+            <label>Vel:</label>
+            <input type="number" id="eng-cb-vel"
+              value="1" min="0.1" max="500"
+              class="eng-spin-xs">
+            <label>Fwd:</label>
+            <input type="number" id="eng-cb-fwd"
+              value="60" min="1" max="500" step="5"
+              class="eng-spin-xs">
+            <label>Bak:</label>
+            <input type="number" id="eng-cb-bak"
+              value="30" min="0" max="500"
+              class="eng-spin-xs">
           </div>
-          <div class="eng-section">
-            <h3>Fans</h3>
-            <div class="eng-row">
-              <label>Duty (%):</label>
-              <input type="number" id="eng-fan-duty"
-                     value="50" min="0" max="100">
-              <button id="eng-fan-duty-set"
-                      class="eng-cmd-btn">Set Duty</button>
-              <button id="eng-fan-status"
-                      class="eng-cmd-btn">Get Status</button>
-            </div>
-            <pre id="eng-fan-status-box"
-                 class="eng-status-box">--</pre>
+          <div class="eng-disp-row">
+            <span class="eng-disp-spacer"></span>
+            <label>Reasp:</label>
+            <input type="number" id="eng-cb-reasp"
+              value="12" min="0" max="200"
+              class="eng-spin-xs">
+            <label>Slp:</label>
+            <input type="number" id="eng-cb-sleep"
+              value="30" min="0" max="120"
+              class="eng-spin-xs">
+            <label>Ret:</label>
+            <input type="number" id="eng-cb-retract"
+              value="2" min="0" max="20"
+              class="eng-spin-xs">
+            <button id="eng-cb-go"
+              class="eng-cmd-btn eng-btn-xs">Go</button>
           </div>
-          <div class="eng-section">
-            <h3>Temperature</h3>
-            <button id="eng-temp-status"
-                    class="eng-cmd-btn">Get Status</button>
-            <pre id="eng-temp-status-box"
-                 class="eng-status-box">--</pre>
-          </div>
-          <div class="eng-section">
-            <h3>Accelerometer</h3>
-            <button id="eng-accel-status"
-                    class="eng-cmd-btn">Get Status</button>
-            <pre id="eng-accel-status-box"
-                 class="eng-status-box">--</pre>
-          </div>
-        </div>
 
-        <!-- ===== DOOR / LID ===== -->
-        <div class="eng-pane" id="eng-door" hidden>
-          <h2>Door / Lid</h2>
+          <div class="eng-disp-row">
+            <b>Mix:</b>
+            <label>Vol:</label>
+            <input type="number" id="eng-tm-vol"
+              value="150" min="1" max="1000" step="10"
+              class="eng-spin-xs">
+            <label>Spd:</label>
+            <input type="number" id="eng-tm-speed"
+              value="100" min="0.1" max="1000" step="1"
+              class="eng-spin-xs">
+            <label>Cyc:</label>
+            <input type="number" id="eng-tm-cycles"
+              value="4" min="1" max="50"
+              class="eng-spin-xs">
+            <label>Pull:</label>
+            <input type="number" id="eng-tm-pull"
+              value="0" min="0" max="500" step="10"
+              class="eng-spin-xs">
+            <button id="eng-tm-go"
+              class="eng-cmd-btn eng-btn-xs">Go</button>
+          </div>
+        </fieldset>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== CENTRIFUGE ===== -->
+  <div class="eng-pane" id="eng-centrifuge" hidden>
+    <div class="eng-section">
+      <div class="eng-row">
+        <label>RPM:</label>
+        <input type="number" id="eng-cfuge-rpm"
+          value="3000" min="100" max="6000" step="100"
+          class="eng-spin-sm">
+        <label>Duration (s):</label>
+        <input type="number" id="eng-cfuge-dur"
+          value="0" min="0" max="600" step="5"
+          class="eng-spin-sm">
+        <button id="eng-cfuge-start"
+          class="eng-cmd-btn">Start</button>
+        <button class="eng-cmd-btn"
+          data-cmd="centrifuge_stop">Stop</button>
+      </div>
+      <div class="eng-row">
+        <label>Target (&deg;):</label>
+        <input type="number" id="eng-cfuge-angle"
+          value="0" min="0" max="360" step="1"
+          class="eng-spin-sm">
+        <label>Move RPM:</label>
+        <input type="number" id="eng-cfuge-move-rpm"
+          value="1" min="50" max="2000" step="50"
+          class="eng-spin-sm">
+        <button id="eng-cfuge-angle-go"
+          class="eng-cmd-btn">Move Angle</button>
+        <label>Actual (&deg;):</label>
+        <span id="eng-cfuge-actual"
+          class="eng-pos-val">--</span>
+      </div>
+    </div>
+
+    <fieldset class="eng-inner-fs">
+      <legend>Trigger Output</legend>
+      <div class="eng-row">
+        <label>Position (&deg;):</label>
+        <input type="number" id="eng-trig-pos"
+          value="0" min="0" max="360"
+          class="eng-spin-sm">
+        <label>Pulse (&micro;s):</label>
+        <input type="number" id="eng-trig-width"
+          value="250" min="0" max="1000" step="10"
+          class="eng-spin-sm">
+        <label>Polarity:</label>
+        <select id="eng-trig-pol">
+          <option value="0">Active High</option>
+          <option value="1">Active Low</option>
+        </select>
+      </div>
+      <div class="eng-btn-row">
+        <button id="eng-trig-enable"
+          class="eng-cmd-btn">Enable</button>
+        <button id="eng-trig-disable"
+          class="eng-cmd-btn">Disable</button>
+        <button id="eng-trig-info"
+          class="eng-cmd-btn">Get Info</button>
+      </div>
+    </fieldset>
+
+    <div class="eng-row">
+      <label>24V Power:</label>
+      <span id="eng-cfuge-pwr-led"
+        class="eng-pos-led red"></span>
+      <button class="eng-cmd-btn"
+        data-cmd="centrifuge_power"
+        data-params='{"enable":true}'>Power ON</button>
+      <button class="eng-cmd-btn eng-red-btn"
+        data-cmd="centrifuge_power"
+        data-params='{"enable":false}'>Power OFF</button>
+    </div>
+
+    <div class="eng-btn-row">
+      <button class="eng-cmd-btn"
+        data-cmd="centrifuge_home">Home</button>
+      <button id="eng-cfuge-enc-align"
+        class="eng-cmd-btn">Encoder Align</button>
+      <button id="eng-cfuge-refresh"
+        class="eng-cmd-btn">Get Status</button>
+      <button id="eng-cfuge-clear-err"
+        class="eng-cmd-btn">Clear Error</button>
+    </div>
+    <pre id="eng-cfuge-status"
+      class="eng-status-box">--</pre>
+
+    <fieldset class="eng-inner-fs">
+      <legend>Position PID</legend>
+      <div class="eng-row">
+        <label>P gain:</label>
+        <input type="number" id="eng-pid-p-gain"
+          value="1" class="eng-spin-xs">
+        <label>P shift:</label>
+        <input type="number" id="eng-pid-p-shift"
+          value="4" min="0" max="31" class="eng-spin-xs">
+        <label>I gain:</label>
+        <input type="number" id="eng-pid-i-gain"
+          value="1" class="eng-spin-xs">
+        <label>I shift:</label>
+        <input type="number" id="eng-pid-i-shift"
+          value="4" min="0" max="31" class="eng-spin-xs">
+        <button id="eng-pid-get"
+          class="eng-cmd-btn eng-btn-xs">Get PID</button>
+        <button id="eng-pid-set"
+          class="eng-cmd-btn eng-btn-xs">Set PID</button>
+      </div>
+    </fieldset>
+
+    <fieldset class="eng-inner-fs">
+      <legend>Position-Hold Thresholds</legend>
+      <div class="eng-row">
+        <label>Dev thresh (0.01&deg;):</label>
+        <input type="number" id="eng-th-dev"
+          value="30" class="eng-spin-xs">
+        <label>Ctrl max (ms):</label>
+        <input type="number" id="eng-th-ctrl"
+          value="4000" class="eng-spin-xs">
+        <label>Stop thresh (0.01&deg;):</label>
+        <input type="number" id="eng-th-stop"
+          value="30" class="eng-spin-xs">
+        <label>Stop detect (ms):</label>
+        <input type="number" id="eng-th-detect"
+          value="200" class="eng-spin-xs">
+      </div>
+      <div class="eng-btn-row">
+        <button id="eng-th-get"
+          class="eng-cmd-btn eng-btn-xs">
+          Get Thresholds</button>
+        <button id="eng-th-set"
+          class="eng-cmd-btn eng-btn-xs">
+          Set Thresholds</button>
+        <span id="eng-th-status-lbl"></span>
+      </div>
+    </fieldset>
+
+    <fieldset class="eng-inner-fs">
+      <legend>Current Limits</legend>
+      <div class="eng-row">
+        <label>Soft OC (0.1 A):</label>
+        <input type="number" id="eng-curr-soft"
+          value="200" class="eng-spin-xs">
+        <button id="eng-curr-soft-get"
+          class="eng-cmd-btn eng-btn-xs">Get</button>
+        <button id="eng-curr-soft-set"
+          class="eng-cmd-btn eng-btn-xs">Set</button>
+        <label>Max Out (0.1 A):</label>
+        <input type="number" id="eng-curr-max"
+          value="100" class="eng-spin-xs">
+        <button id="eng-curr-max-get"
+          class="eng-cmd-btn eng-btn-xs">Get</button>
+        <button id="eng-curr-max-set"
+          class="eng-cmd-btn eng-btn-xs">Set</button>
+      </div>
+    </fieldset>
+  </div>
+
+  <!-- ===== CARTRIDGE ===== -->
+  <div class="eng-pane" id="eng-cartridge" hidden>
+    <div class="eng-row eng-dim">
+      Open init / lift heights in 0.1 mm
+    </div>
+    <div class="eng-row">
+      <label>Open init (&deg;):</label>
+      <input type="number" id="eng-cart-open-init"
+        value="290" min="0" max="360" step="1"
+        class="eng-spin-sm">
+      <label>Extra (&deg;):</label>
+      <input type="number" id="eng-cart-extra-deg"
+        value="15" min="0" max="90" step="1"
+        class="eng-spin-sm">
+    </div>
+    <div class="eng-row">
+      <label>Lift high (0.1mm):</label>
+      <input type="number" id="eng-cart-lift-hi"
+        value="380" min="0" max="1000" step="10"
+        class="eng-spin-sm">
+      <label>Lift mid (0.1mm):</label>
+      <input type="number" id="eng-cart-lift-mid"
+        value="280" min="0" max="1000" step="10"
+        class="eng-spin-sm">
+      <label>Move RPM:</label>
+      <input type="number" id="eng-cart-rpm"
+        value="1" min="1" max="2000" step="50"
+        class="eng-spin-sm">
+    </div>
+    <div class="eng-btn-row">
+      <button id="eng-cart-unlock"
+        class="eng-cmd-btn">Unlock</button>
+      <button id="eng-cart-lock"
+        class="eng-cmd-btn">Lock</button>
+      <button id="eng-cart-reverse"
+        class="eng-cmd-btn">Reverse</button>
+      <button id="eng-cart-goto-serum"
+        class="eng-cmd-btn">Goto Serum</button>
+      <button id="eng-cart-goto-pipette"
+        class="eng-cmd-btn">Goto Pipette</button>
+      <button id="eng-cart-goto-blister"
+        class="eng-cmd-btn">Goto Blister</button>
+    </div>
+    <span id="eng-cart-status-lbl"></span>
+  </div>
+
+  <!-- ===== CAMERA ===== -->
+  <div class="eng-pane" id="eng-camera" hidden>
+    <div class="eng-row">
+      <label>Device:</label>
+      <input type="text" id="eng-cam-device"
+        value="20" class="eng-spin-sm">
+      <span class="eng-dim">
+        (index or /dev/video&hellip;)
+      </span>
+    </div>
+    <div class="eng-btn-row">
+      <button id="eng-cam-start"
+        class="eng-cmd-btn">Start Stream</button>
+      <button id="eng-cam-stop"
+        class="eng-cmd-btn">Stop Stream</button>
+      <span id="eng-cam-status-lbl"></span>
+    </div>
+    <div id="eng-cam-preview" class="eng-cam-preview">
+      <span class="eng-dim">
+        Preview (Start stream to see live)
+      </span>
+    </div>
+  </div>
+
+  <!-- ===== LOCATIONS ===== -->
+  <div class="eng-pane" id="eng-locations" hidden>
+    <div class="eng-section">
+      <h3>Move to Location</h3>
+      <div class="eng-row">
+        <label>Location:</label>
+        <select id="eng-loc-select"
+          class="eng-loc-sel"></select>
+        <label>Speed (mm/s):</label>
+        <input type="number" id="eng-loc-speed"
+          value="20" min="0" max="150" step="5"
+          class="eng-spin-sm">
+        <span class="eng-dim">(0 = firmware default)</span>
+        <button id="eng-loc-go"
+          class="eng-cmd-btn">Move to Location</button>
+      </div>
+    </div>
+    <div class="eng-section">
+      <h3>Set Location Centre (mm)</h3>
+      <div class="eng-row">
+        <label>X:</label>
+        <input type="number" id="eng-ctr-x"
+          value="71.478" step="0.001" class="eng-spin-sm">
+        <label>Y:</label>
+        <input type="number" id="eng-ctr-y"
+          value="43.5" step="0.001" class="eng-spin-sm">
+        <label>Z:</label>
+        <input type="number" id="eng-ctr-z"
+          value="-11.0" step="0.001" class="eng-spin-sm">
+        <button id="eng-ctr-go"
+          class="eng-cmd-btn">Set Centre</button>
+      </div>
+    </div>
+    <div class="eng-section">
+      <h3>Set Calibration Offset (mm)</h3>
+      <div class="eng-row">
+        <span class="eng-dim">
+          default dX=0, dY=0.98 mm
+        </span>
+      </div>
+      <div class="eng-row">
+        <label>dX:</label>
+        <input type="number" id="eng-off-x"
+          value="0" step="0.01" class="eng-spin-sm">
+        <label>dY:</label>
+        <input type="number" id="eng-off-y"
+          value="0.98" step="0.01" class="eng-spin-sm">
+        <label>dZ:</label>
+        <input type="number" id="eng-off-z"
+          value="0" step="0.01" class="eng-spin-sm">
+        <button id="eng-off-go"
+          class="eng-cmd-btn">Set Offset</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== LED CONTROL ===== -->
+  <div class="eng-pane" id="eng-leds" hidden>
+    <div class="eng-section">
+      <h3>Single LED</h3>
+      <div class="eng-row">
+        <label>LED #:</label>
+        <input type="number" id="eng-led-idx"
+          value="0" min="0" max="4" class="eng-spin-xs">
+      </div>
+      <div class="eng-row eng-slider-row">
+        <label>R:</label>
+        <input type="range" id="eng-led-r"
+          min="0" max="255" value="0">
+        <span id="eng-led-r-val">0</span>
+        <label>G:</label>
+        <input type="range" id="eng-led-g"
+          min="0" max="255" value="0">
+        <span id="eng-led-g-val">0</span>
+      </div>
+      <div class="eng-row eng-slider-row">
+        <label>B:</label>
+        <input type="range" id="eng-led-b"
+          min="0" max="255" value="0">
+        <span id="eng-led-b-val">0</span>
+        <label>W:</label>
+        <input type="range" id="eng-led-w"
+          min="0" max="255" value="0">
+        <span id="eng-led-w-val">0</span>
+      </div>
+      <div class="eng-btn-row">
+        <button id="eng-led-set"
+          class="eng-cmd-btn">Set</button>
+        <button id="eng-led-off"
+          class="eng-cmd-btn">Off</button>
+        <button id="eng-led-all-same"
+          class="eng-cmd-btn">All Same</button>
+        <button class="eng-cmd-btn"
+          data-cmd="led_set_all_off">All Off</button>
+      </div>
+    </div>
+    <div class="eng-section">
+      <h3>LED Patterns</h3>
+      <div class="eng-row">
+        <label>Duration (s):</label>
+        <input type="number" id="eng-led-dur"
+          value="10" min="1" max="300"
+          class="eng-spin-sm">
+      </div>
+      <div class="eng-btn-row">
+        <button class="eng-led-pat-btn"
+          data-pat="1">Waiting</button>
+        <button class="eng-led-pat-btn"
+          data-pat="2">Ready</button>
+        <button class="eng-led-pat-btn"
+          data-pat="3">Error</button>
+        <button class="eng-led-pat-btn"
+          data-pat="5">Scanning</button>
+      </div>
+      <div class="eng-row">
+        <label>Stage:</label>
+        <input type="number" id="eng-led-stage"
+          value="1" min="1" max="5" class="eng-spin-xs">
+        <button id="eng-led-progress"
+          class="eng-cmd-btn">Progress</button>
+        <button id="eng-led-pat-stop"
+          class="eng-cmd-btn">Stop</button>
+      </div>
+    </div>
+    <div class="eng-section">
+      <h3>Button LED</h3>
+      <div class="eng-row">
+        <label><input type="checkbox"
+          id="eng-btn-led"> Door Button LED On</label>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== AIR HEATER / ENVIRONMENT ===== -->
+  <div class="eng-pane" id="eng-environment" hidden>
+    <div class="eng-section">
+      <h3>Heater Enable</h3>
+      <div class="eng-row">
+        <label><input type="checkbox"
+          id="eng-ah-enable"> 24V Enable</label>
+      </div>
+    </div>
+    <div class="eng-section">
+      <h3>Heater PWM</h3>
+      <div class="eng-row">
+        <input type="range" id="eng-ah-heat-duty"
+          min="0" max="100" value="0">
+        <span id="eng-ah-heat-duty-val">0</span>%
+        <button id="eng-ah-heat-set"
+          class="eng-cmd-btn">Set</button>
+      </div>
+    </div>
+    <div class="eng-section">
+      <h3>Air Fan PWM</h3>
+      <div class="eng-row">
+        <input type="range" id="eng-ah-fan-duty"
+          min="0" max="100" value="0">
+        <span id="eng-ah-fan-duty-val">0</span>%
+        <button id="eng-ah-fan-set"
+          class="eng-cmd-btn">Set</button>
+      </div>
+    </div>
+    <fieldset class="eng-inner-fs">
+      <legend>Temperature Controller</legend>
+      <div class="eng-row">
+        <label>Setpoint (&deg;C):</label>
+        <input type="number" id="eng-ah-setpoint"
+          value="45" min="20" max="120" step="0.5"
+          class="eng-spin-sm">
+        <label>Hysteresis:</label>
+        <input type="number" id="eng-ah-hyst"
+          value="2" min="0.5" max="20" step="0.5"
+          class="eng-spin-sm">
+      </div>
+      <div class="eng-row">
+        <label>Heater duty %:</label>
+        <input type="number" id="eng-ah-ctrl-heat"
+          value="15" min="0" max="100"
+          class="eng-spin-sm">
+        <label>Fan duty %:</label>
+        <input type="number" id="eng-ah-ctrl-fan"
+          value="40" min="0" max="100"
+          class="eng-spin-sm">
+      </div>
+      <div class="eng-btn-row">
+        <button id="eng-ah-ctrl-start"
+          class="eng-cmd-btn">Start Controller</button>
+        <button id="eng-ah-ctrl-stop"
+          class="eng-cmd-btn">Stop Controller</button>
+        <span id="eng-ah-ctrl-state">IDLE</span>
+      </div>
+    </fieldset>
+    <div class="eng-btn-row">
+      <button id="eng-ah-get-status"
+        class="eng-cmd-btn">Get Status</button>
+    </div>
+    <fieldset class="eng-inner-fs">
+      <legend>Status</legend>
+      <div class="eng-status-labels">
+        <span>Primary NTC: <b id="eng-ah-ntc1">--</b></span>
+        <span>Secondary NTC:
+          <b id="eng-ah-ntc2">--</b></span>
+        <span>Heater duty:
+          <b id="eng-ah-st-heat">--</b></span>
+        <span>Fan duty:
+          <b id="eng-ah-st-fan">--</b></span>
+        <span>Heater EN:
+          <b id="eng-ah-st-en">--</b></span>
+        <span>Controller:
+          <b id="eng-ah-st-ctrl">--</b></span>
+      </div>
+    </fieldset>
+  </div>
+
+  <!-- ===== ACCELEROMETER ===== -->
+  <div class="eng-pane" id="eng-accel" hidden>
+    <button id="eng-accel-status"
+      class="eng-cmd-btn">Get Status</button>
+    <pre id="eng-accel-status-box"
+      class="eng-status-box">--</pre>
+  </div>
+
+  <!-- ===== FANS ===== -->
+  <div class="eng-pane" id="eng-fans" hidden>
+    <div class="eng-section">
+      <h3>Status</h3>
+      <pre id="eng-fan-status-box"
+        class="eng-status-box">--</pre>
+      <button id="eng-fan-status"
+        class="eng-cmd-btn">Get Status</button>
+    </div>
+    <div class="eng-section">
+      <h3>Set PWM Duty</h3>
+      <div class="eng-row">
+        <input type="number" id="eng-fan-duty"
+          value="50" min="0" max="100"
+          class="eng-spin-sm">
+        <span>%</span>
+        <button id="eng-fan-duty-set"
+          class="eng-cmd-btn">Set</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== TEMPERATURE ===== -->
+  <div class="eng-pane" id="eng-temp" hidden>
+    <div class="eng-row">
+      <label><input type="checkbox"
+        id="eng-temp-auto"> Auto-poll (2 Hz)</label>
+      <button id="eng-temp-get"
+        class="eng-cmd-btn">Get Status</button>
+    </div>
+    <pre id="eng-temp-status-box"
+      class="eng-status-box">--</pre>
+  </div>
+
+        </fieldset><!-- eng-tabs-fieldset -->
+      </div><!-- eng-left-col -->
+
+      <!-- RIGHT COLUMN -->
+      <div class="eng-right-col">
+        <fieldset id="eng-devcmd-fieldset"
+                  class="eng-fieldset" disabled>
+          <legend>Device Commands</legend>
           <div class="eng-section">
-            <h3>Door</h3>
-            <div class="eng-btn-row">
+            <div class="eng-row">
               <button class="eng-cmd-btn"
-                      data-cmd="door_open">Open</button>
+                data-cmd="door_open">Open Door</button>
               <button class="eng-cmd-btn"
-                      data-cmd="door_close">Close</button>
-              <button id="eng-door-status"
-                      class="eng-cmd-btn">Status</button>
+                data-cmd="door_close">Close Door</button>
+              <label>Status:</label>
+              <span id="eng-door-status-lbl">--</span>
             </div>
-            <pre id="eng-door-status-box"
-                 class="eng-status-box">--</pre>
+            <div class="eng-row">
+              <label>Door LED:</label>
+              <label><input type="checkbox"
+                id="eng-door-led"> On</label>
+            </div>
           </div>
           <div class="eng-section">
             <h3>Lid</h3>
             <div class="eng-row">
-              <label>Z engage (mm):</label>
+              <label>Z mm:</label>
               <input type="number" id="eng-lid-z"
-                     value="-4.5" step="0.5">
-              <label>Extra X (mm):</label>
+                value="-5" min="-20" max="0" step="0.5"
+                class="eng-spin-sm">
+              <label>Extra X mm:</label>
               <input type="number" id="eng-lid-extra"
-                     value="10" step="1">
+                value="10" min="0" max="30" step="1"
+                class="eng-spin-sm">
             </div>
             <div class="eng-btn-row">
               <button id="eng-lid-open"
-                      class="eng-cmd-btn">Open Lid</button>
+                class="eng-cmd-btn">Open Lid</button>
               <button id="eng-lid-close"
-                      class="eng-cmd-btn">Close Lid</button>
+                class="eng-cmd-btn">Close Lid</button>
             </div>
           </div>
-        </div>
+        </fieldset>
 
-        <!-- ===== CONSOLE ===== -->
-        <div class="eng-pane" id="eng-console" hidden>
-          <h2>Command Console</h2>
-          <div class="eng-section">
-            <div class="eng-row">
-              <label>Command:</label>
-              <input type="text" id="eng-con-cmd"
-                     placeholder="e.g. ping"
-                     list="eng-cmd-list">
-              <datalist id="eng-cmd-list"></datalist>
-              <label>Params (JSON):</label>
-              <input type="text" id="eng-con-params"
-                     placeholder='e.g. {"x_mm":100}'>
-              <button id="eng-con-send"
-                      class="eng-cmd-btn">Send</button>
-            </div>
-            <div class="eng-row">
-              <label>
-                <input type="checkbox" id="eng-con-wait"
-                       checked>
-                Wait for DONE
-              </label>
-            </div>
+        <fieldset id="eng-log-fieldset"
+                  class="eng-fieldset" disabled>
+          <legend>Status Log</legend>
+          <div class="eng-row">
+            <input type="text" id="eng-con-cmd"
+              placeholder="Command"
+              list="eng-cmd-list" class="eng-con-input">
+            <datalist id="eng-cmd-list"></datalist>
+            <button id="eng-con-send"
+              class="eng-cmd-btn">Send</button>
+          </div>
+          <div class="eng-row">
+            <input type="text" id="eng-con-params"
+              placeholder='Params JSON'
+              class="eng-con-input">
+            <label><input type="checkbox"
+              id="eng-con-wait" checked> Wait</label>
           </div>
           <pre id="eng-con-log"
-               class="eng-console-log"></pre>
-        </div>
-
-      </div><!-- .eng-content -->
-    </div><!-- .eng-layout -->
+            class="eng-console-log"></pre>
+          <div class="eng-row">
+            <button id="eng-con-clear"
+              class="eng-cmd-btn">Clear Log</button>
+            <button id="eng-dev-status"
+              class="eng-cmd-btn">Device Status</button>
+            <label><input type="checkbox"
+              id="eng-con-autoscroll" checked>
+              Auto-scroll</label>
+          </div>
+        </fieldset>
+      </div><!-- eng-right-col -->
+    </div><!-- eng-main-cols -->
   </div><!-- #eng-view -->
 
   <script src="/static/app.js"></script>

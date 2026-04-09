@@ -1295,8 +1295,9 @@
     'Pipette Tip 1','Pipette Tip 2','Pipette Tip 3',
     'Pipette Tip 4','Pipette Tip 5','Pipette Tip 6',
     'Pipette Tip 7','Pipette Tip 8',
-    'Pipette Port 1','Pipette Port 2','Pipette Port 3',
-    'Pipette Port 4','Pipette Port 5','Pipette Port 6',
+    'Pipette Port 1','Pipette Port 2',
+    'Pipette Port 3','Pipette Port 4',
+    'Pipette Port 5','Pipette Port 6',
     'Pipette Port 7','Pipette Port 8',
     'Locked Collar Height','Unlocked Collar Height',
     'Serum Port',
@@ -1317,11 +1318,24 @@
   ];
 
   let engPosTimer = null;
+  let engConnected = false;
+  let engTempTimer = null;
+
+  function setEngControls(en) {
+    ['eng-pos-fieldset', 'eng-motor-fieldset',
+     'eng-tabs-fieldset', 'eng-devcmd-fieldset',
+     'eng-log-fieldset',
+    ].forEach((id) => {
+      const el = $(`#${id}`);
+      if (el) el.disabled = !en;
+    });
+  }
 
   function initEngineering() {
     initAppTabs();
     initEngTabs();
     populateLocationSelects();
+    wireEngConnect();
     wireEngMotion();
     wireEngPump();
     wireEngCentrifuge();
@@ -1329,7 +1343,11 @@
     wireEngLocations();
     wireEngLeds();
     wireEngEnvironment();
-    wireEngDoor();
+    wireEngCamera();
+    wireEngFans();
+    wireEngAccel();
+    wireEngTemp();
+    wireEngDevCmd();
     wireEngConsole();
     wireSimpleCommandButtons();
   }
@@ -1350,11 +1368,11 @@
           if (v === 'engineering') {
             runV.hidden = true;
             engV.hidden = false;
-            startEngPolling();
           } else {
             runV.hidden = false;
             engV.hidden = true;
             stopEngPolling();
+            if (engConnected) doEngDisconnect();
           }
         });
       },
@@ -1391,6 +1409,69 @@
       .forEach((sel) => { sel.innerHTML = opts; });
   }
 
+  /* -- Connect / Disconnect -- */
+  function wireEngConnect() {
+    const btn = $('#eng-connect');
+    btn.onclick = () => {
+      if (engConnected) doEngDisconnect();
+      else doEngConnect();
+    };
+  }
+
+  async function doEngConnect() {
+    const btn = $('#eng-connect');
+    btn.disabled = true;
+    btn.textContent = 'Connecting...';
+    try {
+      const r = await fetch(
+        '/api/stm32/connect', { method: 'POST' },
+      );
+      const j = await r.json();
+      if (!r.ok) {
+        alert(j.detail || 'Connect failed');
+        btn.disabled = false;
+        btn.textContent = 'Connect';
+        return;
+      }
+      engConnected = true;
+      btn.textContent = 'Disconnect';
+      btn.classList.add('connected');
+      btn.disabled = false;
+      $('#eng-conn-status').textContent = 'Connected';
+      $('#eng-conn-status').className = 'eng-connected';
+      const fw = j.firmware || '--';
+      $('#eng-fw-version').textContent =
+        `Firmware: ${fw}`;
+      setEngControls(true);
+      startEngPolling();
+      engLog('Connected to STM32');
+    } catch (e) {
+      alert(`Connect error: ${e}`);
+      btn.disabled = false;
+      btn.textContent = 'Connect';
+    }
+  }
+
+  async function doEngDisconnect() {
+    stopEngPolling();
+    try {
+      await fetch(
+        '/api/stm32/disconnect', { method: 'POST' },
+      );
+    } catch (_) { /* ignore */ }
+    engConnected = false;
+    const btn = $('#eng-connect');
+    btn.textContent = 'Connect';
+    btn.classList.remove('connected');
+    btn.disabled = false;
+    $('#eng-conn-status').textContent = 'Disconnected';
+    $('#eng-conn-status').className =
+      'eng-disconnected';
+    $('#eng-fw-version').textContent = 'Firmware: --';
+    setEngControls(false);
+    engLog('Disconnected from STM32');
+  }
+
   /* -- STM32 command helper -- */
   async function engCmd(
     cmd, params = {}, waitDone = true,
@@ -1412,7 +1493,9 @@
       );
       const j = await res.json();
       if (!res.ok) {
-        engLog(`ERR ${cmd}: ${j.detail || res.status}`);
+        engLog(
+          `ERR ${cmd}: ${j.detail || res.status}`,
+        );
         return null;
       }
       engLog(
@@ -1430,16 +1513,20 @@
     if (!el) return;
     const ts = new Date().toLocaleTimeString();
     el.textContent += `[${ts}] ${msg}\n`;
-    el.scrollTop = el.scrollHeight;
+    const asc = $('#eng-con-autoscroll');
+    if (!asc || asc.checked) {
+      el.scrollTop = el.scrollHeight;
+    }
   }
 
   /* -- Position polling -- */
   function startEngPolling() {
     if (engPosTimer) return;
     pollEngPosition();
-    engPosTimer = setInterval(
-      pollEngPosition, 1000,
-    );
+    const ms = parseInt(
+      $('#eng-update-ms').value,
+    ) || 3000;
+    engPosTimer = setInterval(pollEngPosition, ms);
   }
   function stopEngPolling() {
     if (engPosTimer) {
@@ -1457,7 +1544,8 @@
         const el = $(`#eng-pos-${id}`);
         if (el) {
           el.textContent = (
-            v != null ? Number(v).toFixed(2) : '--'
+            v != null
+              ? Number(v).toFixed(2) : '--'
           );
         }
       };
@@ -1466,6 +1554,17 @@
       setV('z', g.z_mm);
       const lift = d.lift || {};
       setV('lift', lift.position_mm);
+
+      const setLed = (id, homed) => {
+        const el = $(`#eng-led-${id}`);
+        if (!el) return;
+        el.classList.toggle('green', !!homed);
+        el.classList.toggle('red', !homed);
+      };
+      setLed('x', g.x_homed);
+      setLed('y', g.y_homed);
+      setLed('z', g.z_homed);
+      setLed('lift', lift.homed);
     } catch (_) { /* ignore */ }
   }
 
@@ -1476,128 +1575,250 @@
         btn.addEventListener('click', () => {
           const axis = btn.dataset.axis;
           const dir = parseInt(btn.dataset.dir);
+          const stepEl = $(`#eng-step-${axis}`);
+          const velEl = $(`#eng-vel-${axis}`);
           const step = parseFloat(
-            $('#eng-jog-step').value,
+            stepEl ? stepEl.value : 1,
           );
           const speed = parseFloat(
-            $('#eng-jog-speed').value,
+            velEl ? velEl.value : 20,
           );
-          const dist = step * dir;
-          const um = Math.round(dist * 1000);
-          const sp = Math.round(speed * 10);
-          const p = {};
-          p[`${axis}_um`] = um;
-          p[`${axis}_speed_01mms`] = sp;
-          p.relative = 1;
-          engCmd('move_gantry', p);
+          if (axis === 'lift') {
+            engCmd('lift_move', {
+              target_mm: step * dir,
+              speed: speed,
+              relative: true,
+            });
+          } else {
+            const p = {};
+            p[`${axis}_mm`] = step * dir;
+            p.speed = speed;
+            p.relative = true;
+            engCmd('move_gantry', p);
+          }
         });
       });
 
-    $('#eng-goto-btn').addEventListener(
-      'click', () => {
-        const x = parseFloat(
-          $('#eng-goto-x').value,
-        );
-        const y = parseFloat(
-          $('#eng-goto-y').value,
-        );
-        const z = parseFloat(
-          $('#eng-goto-z').value,
-        );
-        engCmd('move_gantry', {
-          x_um: Math.round(x * 1000),
-          y_um: Math.round(y * 1000),
-          z_um: Math.round(z * 1000),
-        });
-      },
-    );
+    $('#eng-x-end').onclick = () => {
+      const spd = parseFloat($('#eng-vel-x').value);
+      engCmd('move_gantry', {
+        x_mm: 72.0, speed: spd,
+      });
+    };
+    $('#eng-y-front').onclick = () => {
+      const spd = parseFloat($('#eng-vel-y').value);
+      engCmd('move_gantry', {
+        y_mm: 9999, speed: spd,
+      });
+    };
+    $('#eng-z-bottom').onclick = () => {
+      const spd = parseFloat($('#eng-vel-z').value);
+      engCmd('move_gantry', {
+        z_mm: -23.81, speed: spd,
+      });
+    };
 
-    $('#eng-estop').addEventListener(
-      'click', () => engCmd('abort', {}, false, 5),
-    );
+    $('#eng-goto-btn').onclick = () => {
+      const x = parseFloat($('#eng-goto-x').value);
+      const y = parseFloat($('#eng-goto-y').value);
+      const z = parseFloat($('#eng-goto-z').value);
+      const v = parseFloat($('#eng-goto-vel').value);
+      engCmd('home_z_axis', {}, true, 30).then(
+        () => engCmd('move_gantry', {
+          x_mm: x, y_mm: y, z_mm: z, speed: v,
+        }),
+      );
+    };
+
+    $('#eng-lift-move-btn').onclick = () => {
+      const mm = parseFloat(
+        $('#eng-goto-lift').value,
+      );
+      const spd = parseFloat(
+        $('#eng-vel-lift').value,
+      );
+      engCmd('lift_move', {
+        target_mm: mm, speed: spd,
+      });
+    };
+
+    $('#eng-estop').onclick = () =>
+      engCmd('abort', {}, false, 5);
+
+    $('#eng-update-all').onclick = () =>
+      pollEngPosition();
+
+    const autoCb = $('#eng-auto-update');
+    if (autoCb) {
+      autoCb.onchange = () => {
+        if (autoCb.checked && engConnected) {
+          startEngPolling();
+        } else {
+          stopEngPolling();
+        }
+      };
+    }
   }
 
   /* ---- PUMP wiring ---- */
   function wireEngPump() {
-    $('#eng-tip-pickup').onclick = () => {
-      const id = parseInt($('#eng-tip-id').value);
-      engCmd('move_to_location', {
-        location_id: id, speed_01mms: 200,
-      });
+    const pumpSpd = () =>
+      parseFloat($('#eng-pump-speed').value) || 100;
+
+    $('#eng-pump-init').onclick = async () => {
+      const lbl = $('#eng-pump-status-lbl');
+      lbl.textContent = 'Initializing...';
+      lbl.className = '';
+      await engCmd('pump_init', {}, true, 30);
+      await engCmd('pump_piston_reset', {}, true, 10);
+      lbl.textContent = 'Initialized';
+      lbl.className = '';
+      lbl.style.color = 'var(--green)';
     };
-    $('#eng-tip-return').onclick = () => {
-      const id = parseInt($('#eng-tip-id').value);
-      engCmd('move_to_location', {
-        location_id: id, speed_01mms: 200,
-      });
-    };
+
     $('#eng-tip-swap').onclick = () => {
-      const id = parseInt($('#eng-tip-id').value);
-      engCmd('gantry_tip_swap', { tip_id: id });
+      const from = parseInt(
+        $('#eng-tip-return-id').value,
+      );
+      const to = parseInt(
+        $('#eng-tip-pickup-id').value,
+      );
+      const p = {
+        from_id: from, to_id: to,
+        x_eject_um: parseInt(
+          $('#eng-ts-x-ej').value,
+        ),
+        pick_depth_um: Math.round(
+          parseFloat(
+            $('#eng-ts-pick-z').value,
+          ) * 1000,
+        ),
+        retract_um: parseInt(
+          $('#eng-ts-retract').value,
+        ),
+        xy_speed_01mms: Math.round(
+          parseFloat(
+            $('#eng-ts-xy-spd').value,
+          ) * 10,
+        ),
+        z_speed_01mms: Math.round(
+          parseFloat(
+            $('#eng-ts-z-spd').value,
+          ) * 10,
+        ),
+      };
+      engCmd('gantry_tip_swap', p);
     };
-    $('#eng-pump-aspirate').onclick = () => {
-      const vol = parseInt($('#eng-pump-vol').value);
-      const spd = parseInt($('#eng-pump-speed').value);
+
+    $('#eng-lld-perform').onclick = () =>
+      engCmd('lld_perform', {});
+
+    $('#eng-aspirate').onclick = () => {
       engCmd('pump_aspirate', {
-        volume_ul: vol, speed: spd,
+        volume_ul: parseFloat(
+          $('#eng-asp-vol').value,
+        ),
+        speed_ul_s: pumpSpd(),
       });
     };
-    $('#eng-pump-dispense').onclick = () => {
-      const vol = parseInt($('#eng-pump-vol').value);
-      const spd = parseInt($('#eng-pump-speed').value);
-      engCmd('pump_dispense', {
-        volume_ul: vol, speed: spd,
-      });
-    };
-    $('#eng-pump-blowout').onclick = () => {
-      engCmd('pump_blowout');
-    };
-    $('#eng-sa-go').onclick = () => {
-      const loc = parseInt($('#eng-sa-loc').value);
-      const vol = parseInt($('#eng-sa-vol').value);
+    $('#eng-llf-aspirate').onclick = () => {
+      const wt = $('#eng-well-type').value;
       engCmd('smart_aspirate', {
-        location_id: loc, volume_ul: vol,
+        volume_ul: parseFloat(
+          $('#eng-asp-vol').value,
+        ),
+        pump_speed_ul_s: pumpSpd(),
+        well_id: wt === 'large' ? 1 : 0,
+        air_slug_ul: parseFloat(
+          $('#eng-air-slug').value,
+        ),
       });
     };
-    $('#eng-well-dispense').onclick = () => {
-      const src = parseInt($('#eng-wc-src').value);
-      const dst = parseInt($('#eng-wc-dst').value);
-      const vol = parseInt($('#eng-wc-vol').value);
-      const spd = parseInt($('#eng-wc-speed').value);
+    $('#eng-dispense').onclick = () => {
+      engCmd('pump_dispense', {
+        volume_ul: parseFloat(
+          $('#eng-disp-vol').value,
+        ),
+        speed_ul_s: pumpSpd(),
+      });
+    };
+
+    $('#eng-wd-go').onclick = () => {
       engCmd('well_dispense', {
-        src_location: src, dst_location: dst,
-        volume_ul: vol, speed: spd,
+        z_depth_mm: parseFloat(
+          $('#eng-wd-depth').value,
+        ),
+        volume_ul: parseFloat(
+          $('#eng-wd-vol').value,
+        ),
+        speed_ul_s: parseFloat(
+          $('#eng-wd-speed').value,
+        ),
+        z_retract_mm: parseFloat(
+          $('#eng-wd-retract').value,
+        ),
+        blowout: $('#eng-wd-blowout').checked
+          ? 1 : 0,
       });
     };
-    $('#eng-cart-dispense').onclick = () => {
-      const src = parseInt($('#eng-wc-src').value);
-      const dst = parseInt($('#eng-wc-dst').value);
-      const vol = parseInt($('#eng-wc-vol').value);
-      const spd = parseInt($('#eng-wc-speed').value);
+    $('#eng-cd-go').onclick = () => {
       engCmd('cart_dispense', {
-        src_location: src, dst_location: dst,
-        volume_ul: vol, speed: spd,
+        volume_ul: parseFloat(
+          $('#eng-cd-vol').value,
+        ),
+        vel_ul_s: parseFloat(
+          $('#eng-cd-vel').value,
+        ),
+        reasp_ul: parseFloat(
+          $('#eng-cd-reasp').value,
+        ),
+        sleep_s: parseFloat(
+          $('#eng-cd-sleep').value,
+        ),
+        z_retract_mm: parseFloat(
+          $('#eng-cd-retract').value,
+        ),
       });
     };
-    $('#eng-cart-bf').onclick = () => {
-      const src = parseInt($('#eng-wc-src').value);
-      const dst = parseInt($('#eng-wc-dst').value);
-      const vol = parseInt($('#eng-wc-vol').value);
-      const spd = parseInt($('#eng-wc-speed').value);
-      const cyc = parseInt($('#eng-wc-cycles').value);
+    $('#eng-cb-go').onclick = () => {
       engCmd('cart_dispense_bf', {
-        src_location: src, dst_location: dst,
-        volume_ul: vol, speed: spd, cycles: cyc,
+        duration_s: parseFloat(
+          $('#eng-cb-dur').value,
+        ),
+        vel_ul_s: parseFloat(
+          $('#eng-cb-vel').value,
+        ),
+        for_vol_ul: parseFloat(
+          $('#eng-cb-fwd').value,
+        ),
+        back_vol_ul: parseFloat(
+          $('#eng-cb-bak').value,
+        ),
+        reasp_ul: parseFloat(
+          $('#eng-cb-reasp').value,
+        ),
+        sleep_s: parseFloat(
+          $('#eng-cb-sleep').value,
+        ),
+        z_retract_mm: parseFloat(
+          $('#eng-cb-retract').value,
+        ),
       });
     };
-    $('#eng-tip-mix').onclick = () => {
-      const loc = parseInt($('#eng-wc-src').value);
-      const vol = parseInt($('#eng-wc-vol').value);
-      const spd = parseInt($('#eng-wc-speed').value);
-      const cyc = parseInt($('#eng-wc-cycles').value);
+    $('#eng-tm-go').onclick = () => {
       engCmd('tip_mix', {
-        location_id: loc,
-        volume_ul: vol, speed: spd, cycles: cyc,
+        mix_vol_ul: parseFloat(
+          $('#eng-tm-vol').value,
+        ),
+        speed_ul_s: parseFloat(
+          $('#eng-tm-speed').value,
+        ),
+        cycles: parseInt(
+          $('#eng-tm-cycles').value,
+        ),
+        pull_vol_ul: parseFloat(
+          $('#eng-tm-pull').value,
+        ),
       });
     };
   }
@@ -1605,37 +1826,245 @@
   /* ---- CENTRIFUGE wiring ---- */
   function wireEngCentrifuge() {
     $('#eng-cfuge-start').onclick = () => {
-      const rpm = parseInt(
-        $('#eng-cfuge-rpm').value,
-      );
-      const dur = parseInt(
-        $('#eng-cfuge-dur').value,
-      );
       engCmd('centrifuge_start', {
-        rpm, duration_s: dur,
+        rpm: parseInt($('#eng-cfuge-rpm').value),
+        duration_s: parseInt(
+          $('#eng-cfuge-dur').value,
+        ),
       });
     };
     $('#eng-cfuge-angle-go').onclick = () => {
-      const ang = parseInt(
-        $('#eng-cfuge-angle').value,
-      );
       engCmd('centrifuge_move_angle', {
-        angle_deg: ang,
+        angle_deg: parseFloat(
+          $('#eng-cfuge-angle').value,
+        ),
+        rpm: parseInt(
+          $('#eng-cfuge-move-rpm').value,
+        ),
       });
     };
     $('#eng-cfuge-refresh').onclick = async () => {
       const r = await engCmd(
         'centrifuge_status', {}, false, 3,
       );
-      $('#eng-cfuge-status').textContent = (
-        r ? JSON.stringify(r, null, 2) : 'Error'
+      if (r) {
+        $('#eng-cfuge-status').textContent =
+          JSON.stringify(r, null, 2);
+        if (r.angle_deg != null) {
+          $('#eng-cfuge-actual').textContent =
+            Number(r.angle_deg).toFixed(1);
+        }
+      }
+    };
+    $('#eng-cfuge-enc-align').onclick = () => {
+      engCmd('centrifuge_bldc_cmd', {
+        bldc_cmd: 0x0013,
+      }, true, 10);
+    };
+    $('#eng-cfuge-clear-err').onclick = () => {
+      engCmd('centrifuge_bldc_cmd', {
+        bldc_cmd: 0x0006,
+      }, false, 5);
+    };
+
+    $('#eng-trig-enable').onclick = () => {
+      const pos = parseInt(
+        $('#eng-trig-pos').value,
       );
+      const width = parseInt(
+        $('#eng-trig-width').value,
+      );
+      const pol = parseInt(
+        $('#eng-trig-pol').value,
+      );
+      const posRaw = Math.round(
+        pos * 16384 / 360,
+      );
+      [
+        [0x0034, posRaw],
+        [0x0033, width],
+        [0x0032, pol],
+        [0x0031, 1],
+      ].forEach(([cmd, val]) => {
+        engCmd('centrifuge_bldc_cmd', {
+          bldc_cmd: cmd, data_u16: val,
+        }, false, 5);
+      });
+    };
+    $('#eng-trig-disable').onclick = () => {
+      engCmd('centrifuge_bldc_cmd', {
+        bldc_cmd: 0x0031, data_u16: 0,
+      }, false, 5);
+    };
+    $('#eng-trig-info').onclick = async () => {
+      const r = await engCmd(
+        'centrifuge_bldc_cmd', {
+          bldc_cmd: 0x0030,
+        }, false, 5,
+      );
+      engLog(`Trigger info: ${JSON.stringify(r)}`);
+    };
+
+    $('#eng-pid-get').onclick = async () => {
+      const r = await engCmd(
+        'centrifuge_bldc_cmd', {
+          bldc_cmd: 0x0022,
+        }, false, 5,
+      );
+      if (r) {
+        engLog(`PID: ${JSON.stringify(r)}`);
+      }
+    };
+    $('#eng-pid-set').onclick = () => {
+      engCmd('centrifuge_bldc_cmd', {
+        bldc_cmd: 0x0023,
+        p_gain: parseInt(
+          $('#eng-pid-p-gain').value,
+        ),
+        p_shift: parseInt(
+          $('#eng-pid-p-shift').value,
+        ),
+        i_gain: parseInt(
+          $('#eng-pid-i-gain').value,
+        ),
+        i_shift: parseInt(
+          $('#eng-pid-i-shift').value,
+        ),
+      }, false, 5);
+    };
+
+    const thGetCmds = [
+      0x0016, 0x0018, 0x001C, 0x001E,
+    ];
+    const thSetCmds = [
+      0x0017, 0x0019, 0x001D, 0x001F,
+    ];
+    const thFields = [
+      '#eng-th-dev', '#eng-th-ctrl',
+      '#eng-th-stop', '#eng-th-detect',
+    ];
+    $('#eng-th-get').onclick = async () => {
+      for (let i = 0; i < thGetCmds.length; i++) {
+        const r = await engCmd(
+          'centrifuge_bldc_cmd', {
+            bldc_cmd: thGetCmds[i],
+          }, false, 5,
+        );
+        engLog(
+          `Thresh[${i}]: ${JSON.stringify(r)}`,
+        );
+      }
+    };
+    $('#eng-th-set').onclick = () => {
+      for (let i = 0; i < thSetCmds.length; i++) {
+        engCmd('centrifuge_bldc_cmd', {
+          bldc_cmd: thSetCmds[i],
+          data_u32: parseInt(
+            $(thFields[i]).value,
+          ),
+        }, false, 5);
+      }
+    };
+
+    $('#eng-curr-soft-get').onclick = () => {
+      engCmd('centrifuge_bldc_cmd', {
+        bldc_cmd: 0x001A,
+      }, false, 5);
+    };
+    $('#eng-curr-soft-set').onclick = () => {
+      engCmd('centrifuge_bldc_cmd', {
+        bldc_cmd: 0x001B,
+        data_u16: parseInt(
+          $('#eng-curr-soft').value,
+        ),
+      }, false, 5);
+    };
+    $('#eng-curr-max-get').onclick = () => {
+      engCmd('centrifuge_bldc_cmd', {
+        bldc_cmd: 0x0050,
+      }, false, 5);
+    };
+    $('#eng-curr-max-set').onclick = () => {
+      engCmd('centrifuge_bldc_cmd', {
+        bldc_cmd: 0x0051,
+        data_u16: parseInt(
+          $('#eng-curr-max').value,
+        ),
+      }, false, 5);
     };
   }
 
   /* ---- CARTRIDGE wiring ---- */
   function wireEngCartridge() {
-    /* uses simple data-cmd buttons */
+    const seqP = () => ({
+      angle_open_initial_deg: parseInt(
+        $('#eng-cart-open-init').value,
+      ),
+      angle_extra_deg: parseInt(
+        $('#eng-cart-extra-deg').value,
+      ),
+      lift_high_01mm: parseInt(
+        $('#eng-cart-lift-hi').value,
+      ),
+      lift_mid_01mm: parseInt(
+        $('#eng-cart-lift-mid').value,
+      ),
+      move_rpm: parseInt(
+        $('#eng-cart-rpm').value,
+      ),
+    });
+    $('#eng-cart-unlock').onclick = () =>
+      engCmd('centrifuge_unlock', seqP());
+    $('#eng-cart-lock').onclick = () =>
+      engCmd('centrifuge_lock', seqP());
+    $('#eng-cart-reverse').onclick = () =>
+      engCmd('centrifuge_reverse', seqP());
+    $('#eng-cart-goto-serum').onclick = () =>
+      engCmd('centrifuge_goto_serum', {
+        angle_open_initial_deg: parseInt(
+          $('#eng-cart-open-init').value,
+        ),
+        move_rpm: parseInt(
+          $('#eng-cart-rpm').value,
+        ),
+      });
+    $('#eng-cart-goto-pipette').onclick = () =>
+      engCmd('centrifuge_goto_pipette', {
+        angle_open_initial_deg: parseInt(
+          $('#eng-cart-open-init').value,
+        ),
+        move_rpm: parseInt(
+          $('#eng-cart-rpm').value,
+        ),
+      });
+    $('#eng-cart-goto-blister').onclick = () =>
+      engCmd('centrifuge_goto_blister', {
+        angle_open_initial_deg: parseInt(
+          $('#eng-cart-open-init').value,
+        ),
+        move_rpm: parseInt(
+          $('#eng-cart-rpm').value,
+        ),
+      });
+  }
+
+  /* ---- CAMERA wiring ---- */
+  function wireEngCamera() {
+    const preview = $('#eng-cam-preview');
+    $('#eng-cam-start').onclick = () => {
+      preview.innerHTML =
+        '<img src="/api/camera/stream" alt="Live">';
+      $('#eng-cam-status-lbl').textContent =
+        'Streaming';
+    };
+    $('#eng-cam-stop').onclick = () => {
+      preview.innerHTML =
+        '<span class="eng-dim">' +
+        'Preview (Start stream to see live)' +
+        '</span>';
+      $('#eng-cam-status-lbl').textContent =
+        'Stopped';
+    };
   }
 
   /* ---- LOCATIONS wiring ---- */
@@ -1681,7 +2110,11 @@
     ['r', 'g', 'b', 'w'].forEach((c) => {
       const sl = $(`#eng-led-${c}`);
       const sp = $(`#eng-led-${c}-val`);
-      sl.oninput = () => { sp.textContent = sl.value; };
+      if (sl && sp) {
+        sl.oninput = () => {
+          sp.textContent = sl.value;
+        };
+      }
     });
     const ledVals = () => ({
       r: parseInt($('#eng-led-r').value),
@@ -1690,14 +2123,17 @@
       w: parseInt($('#eng-led-w').value),
     });
     $('#eng-led-set').onclick = () => {
-      const idx = parseInt($('#eng-led-idx').value);
-      const c = ledVals();
+      const idx = parseInt(
+        $('#eng-led-idx').value,
+      );
       engCmd('led_set_pixel', {
-        index: idx, ...c,
+        index: idx, ...ledVals(),
       }, false);
     };
     $('#eng-led-off').onclick = () => {
-      const idx = parseInt($('#eng-led-idx').value);
+      const idx = parseInt(
+        $('#eng-led-idx').value,
+      );
       engCmd('led_set_pixel_off', {
         index: idx,
       }, false);
@@ -1710,18 +2146,28 @@
         }, false);
       }
     };
-    $('#eng-led-pat-start').onclick = () => {
-      const pat = parseInt(
-        $('#eng-led-pattern').value,
+
+    document.querySelectorAll('.eng-led-pat-btn')
+      .forEach((btn) => {
+        btn.onclick = () => {
+          const pat = parseInt(btn.dataset.pat);
+          const dur = parseInt(
+            $('#eng-led-dur').value,
+          );
+          engCmd('led_set_pattern', {
+            pattern: pat, duration_s: dur, stage: 0,
+          }, false);
+        };
+      });
+    $('#eng-led-progress').onclick = () => {
+      const dur = parseInt(
+        $('#eng-led-dur').value,
       );
-      const dur = parseInt($('#eng-led-dur').value);
       const stg = parseInt(
         $('#eng-led-stage').value,
       );
       engCmd('led_set_pattern', {
-        pattern: pat,
-        duration_s: dur,
-        stage: stg,
+        pattern: 4, duration_s: dur, stage: stg,
       }, false);
     };
     $('#eng-led-pat-stop').onclick = () => {
@@ -1729,30 +2175,100 @@
         pattern: 0, duration_s: 0, stage: 0,
       }, false);
     };
+
+    const btnLed = $('#eng-btn-led');
+    if (btnLed) {
+      btnLed.onchange = () => {
+        engCmd('led_set_button', {
+          on: btnLed.checked ? 1 : 0,
+        }, false);
+      };
+    }
   }
 
-  /* ---- ENVIRONMENT wiring ---- */
+  /* ---- ENVIRONMENT / AIR HEATER wiring ---- */
   function wireEngEnvironment() {
-    $('#eng-heat-duty-set').onclick = () => {
-      const d = parseInt(
-        $('#eng-heat-duty').value,
-      );
-      engCmd('air_heater_set_duty', {
-        duty_pct: d,
+    const heatSl = $('#eng-ah-heat-duty');
+    const heatLbl = $('#eng-ah-heat-duty-val');
+    if (heatSl && heatLbl) {
+      heatSl.oninput = () => {
+        heatLbl.textContent = heatSl.value;
+      };
+    }
+    const fanSl = $('#eng-ah-fan-duty');
+    const fanLbl = $('#eng-ah-fan-duty-val');
+    if (fanSl && fanLbl) {
+      fanSl.oninput = () => {
+        fanLbl.textContent = fanSl.value;
+      };
+    }
+
+    $('#eng-ah-enable').onchange = () => {
+      engCmd('air_heater_set_en', {
+        enable: $('#eng-ah-enable').checked ? 1 : 0,
       }, false);
     };
-    $('#eng-heat-status').onclick = async () => {
+    $('#eng-ah-heat-set').onclick = () => {
+      engCmd('air_heater_set_duty', {
+        duty_pct: parseInt(heatSl.value),
+      }, false);
+    };
+    $('#eng-ah-fan-set').onclick = () => {
+      engCmd('air_heater_set_fan', {
+        duty_pct: parseInt(fanSl.value),
+      }, false);
+    };
+    $('#eng-ah-ctrl-start').onclick = () => {
+      engCmd('air_heater_set_ctrl', {
+        enable: true,
+        setpoint_c: parseFloat(
+          $('#eng-ah-setpoint').value,
+        ),
+        hysteresis: parseFloat(
+          $('#eng-ah-hyst').value,
+        ),
+        heater_duty_pct: parseInt(
+          $('#eng-ah-ctrl-heat').value,
+        ),
+        fan_duty_pct: parseInt(
+          $('#eng-ah-ctrl-fan').value,
+        ),
+      }, false);
+    };
+    $('#eng-ah-ctrl-stop').onclick = () => {
+      engCmd('air_heater_set_ctrl', {
+        enable: false,
+        setpoint_c: 0, hysteresis: 0,
+        heater_duty_pct: 0, fan_duty_pct: 0,
+      }, false);
+    };
+    $('#eng-ah-get-status').onclick = async () => {
       const r = await engCmd(
         'air_heater_get_status', {}, false, 3,
       );
-      $('#eng-heat-status-box').textContent = (
-        r ? JSON.stringify(r, null, 2) : 'Error'
-      );
+      if (r) {
+        const s = (k) => r[k] != null ? r[k] : '--';
+        $('#eng-ah-ntc1').textContent = s('ntc1_c');
+        $('#eng-ah-ntc2').textContent = s('ntc2_c');
+        $('#eng-ah-st-heat').textContent =
+          s('heater_duty');
+        $('#eng-ah-st-fan').textContent =
+          s('fan_duty');
+        $('#eng-ah-st-en').textContent =
+          s('heater_en');
+        $('#eng-ah-st-ctrl').textContent =
+          s('ctrl_state');
+      }
     };
+  }
+
+  /* ---- FANS wiring ---- */
+  function wireEngFans() {
     $('#eng-fan-duty-set').onclick = () => {
-      const d = parseInt($('#eng-fan-duty').value);
       engCmd('fan_set_duty', {
-        duty_pct: d,
+        duty_pct: parseInt(
+          $('#eng-fan-duty').value,
+        ),
       }, false);
     };
     $('#eng-fan-status').onclick = async () => {
@@ -1763,14 +2279,10 @@
         r ? JSON.stringify(r, null, 2) : 'Error'
       );
     };
-    $('#eng-temp-status').onclick = async () => {
-      const r = await engCmd(
-        'temp_get_status', {}, false, 3,
-      );
-      $('#eng-temp-status-box').textContent = (
-        r ? JSON.stringify(r, null, 2) : 'Error'
-      );
-    };
+  }
+
+  /* ---- ACCELEROMETER wiring ---- */
+  function wireEngAccel() {
     $('#eng-accel-status').onclick = async () => {
       const r = await engCmd(
         'accel_get_status', {}, false, 3,
@@ -1781,16 +2293,47 @@
     };
   }
 
-  /* ---- DOOR / LID wiring ---- */
-  function wireEngDoor() {
-    $('#eng-door-status').onclick = async () => {
+  /* ---- TEMPERATURE wiring ---- */
+  function wireEngTemp() {
+    $('#eng-temp-get').onclick = async () => {
       const r = await engCmd(
-        'door_status', {}, false, 3,
+        'temp_get_status', {}, false, 3,
       );
-      $('#eng-door-status-box').textContent = (
+      $('#eng-temp-status-box').textContent = (
         r ? JSON.stringify(r, null, 2) : 'Error'
       );
     };
+    const autoCb = $('#eng-temp-auto');
+    if (autoCb) {
+      autoCb.onchange = () => {
+        if (engTempTimer) {
+          clearInterval(engTempTimer);
+          engTempTimer = null;
+        }
+        if (autoCb.checked && engConnected) {
+          engTempTimer = setInterval(async () => {
+            const r = await engCmd(
+              'temp_get_status', {}, false, 3,
+            );
+            $('#eng-temp-status-box').textContent =
+              r ? JSON.stringify(r, null, 2)
+                : 'Error';
+          }, 500);
+        }
+      };
+    }
+  }
+
+  /* ---- DEVICE COMMANDS (right panel) ---- */
+  function wireEngDevCmd() {
+    const doorLed = $('#eng-door-led');
+    if (doorLed) {
+      doorLed.onchange = () => {
+        engCmd('led_set_button', {
+          on: doorLed.checked ? 1 : 0,
+        }, false);
+      };
+    }
     $('#eng-lid-open').onclick = () => {
       const z = parseFloat($('#eng-lid-z').value);
       const extra = parseFloat(
@@ -1799,7 +2342,9 @@
       engCmd('lid_move', {
         open: 1,
         z_engage_um: Math.round(z * 1000),
-        extra_x_um: Math.round(extra * 1000),
+        xy_speed_01mms: 250,
+        z_speed_01mms: 60,
+        x_open_extra_um: Math.round(extra * 1000),
       });
     };
     $('#eng-lid-close').onclick = () => {
@@ -1810,8 +2355,22 @@
       engCmd('lid_move', {
         open: 0,
         z_engage_um: Math.round(z * 1000),
-        extra_x_um: Math.round(extra * 1000),
+        xy_speed_01mms: 250,
+        z_speed_01mms: 60,
+        x_open_extra_um: Math.round(extra * 1000),
       });
+    };
+    $('#eng-dev-status').onclick = async () => {
+      const r = await engCmd(
+        'get_status', {}, false, 3,
+      );
+      if (r) engLog(
+        `Status: ${JSON.stringify(r)}`,
+      );
+    };
+    $('#eng-con-clear').onclick = () => {
+      const el = $('#eng-con-log');
+      if (el) el.textContent = '';
     };
   }
 
@@ -1832,7 +2391,9 @@
       const cmd = $('#eng-con-cmd').value.trim();
       if (!cmd) return;
       let params = {};
-      const pStr = $('#eng-con-params').value.trim();
+      const pStr = (
+        $('#eng-con-params').value.trim()
+      );
       if (pStr) {
         try { params = JSON.parse(pStr); }
         catch (e) {
@@ -1861,7 +2422,9 @@
         let params = {};
         if (btn.dataset.params) {
           try {
-            params = JSON.parse(btn.dataset.params);
+            params = JSON.parse(
+              btn.dataset.params,
+            );
           } catch (_) { /* ignore */ }
         }
         engCmd(cmd, params);
