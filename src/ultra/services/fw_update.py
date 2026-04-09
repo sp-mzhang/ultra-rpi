@@ -326,13 +326,19 @@ def _gpio_set(pin: int, value: int) -> None:
 
 
 def _enter_bootloader() -> None:
-    '''Enter STM32 system bootloader via BOOT0 + nRST.'''
+    '''Enter STM32 system bootloader via BOOT0 + nRST.
+
+    Sequence: set BOOT0 HIGH, hold nRST LOW for 100 ms,
+    release nRST, wait for bootloader to initialize.
+    The STM32 samples BOOT0 on the rising edge of nRST.
+    '''
     _log('Entering bootloader (BOOT0=HIGH, nRST pulse)')
     _gpio_set(GPIO_BOOT0, 1)
+    time.sleep(0.05)
     _gpio_set(GPIO_NRST, 0)
-    time.sleep(0.1)
+    time.sleep(0.15)
     _gpio_set(GPIO_NRST, 1)
-    time.sleep(0.5)
+    time.sleep(1.0)
     _log('Bootloader ready')
 
 
@@ -340,17 +346,66 @@ def _exit_bootloader() -> None:
     '''Return to normal boot: BOOT0=LOW, then reset.'''
     _log('Exiting bootloader (BOOT0=LOW, nRST pulse)')
     _gpio_set(GPIO_BOOT0, 0)
+    time.sleep(0.05)
     _gpio_set(GPIO_NRST, 0)
-    time.sleep(0.1)
+    time.sleep(0.15)
     _gpio_set(GPIO_NRST, 1)
     _log('STM32 reset to application mode')
+
+
+FLASH_MAX_RETRIES = 3
+
+
+def _configure_uart() -> None:
+    '''Reset UART port settings for bootloader communication.'''
+    try:
+        subprocess.run(
+            [
+                'stty', '-F', UART_PORT,
+                str(FLASH_BAUD), 'raw',
+                '-crtscts', '-clocal', 'cs8',
+                '-parenb', '-cstopb',
+            ],
+            check=True, timeout=5,
+        )
+        _log(f'Configured {UART_PORT} for bootloader')
+    except Exception as exc:
+        _log(f'stty warning: {exc}')
+
+
+def _probe_bootloader() -> bool:
+    '''Test if the STM32 bootloader is responding.
+
+    Runs stm32flash without -w to just query the chip.
+
+    Returns:
+        True if the bootloader responded.
+    '''
+    _log('Probing bootloader...')
+    try:
+        result = subprocess.run(
+            [
+                'stm32flash',
+                '-b', str(FLASH_BAUD),
+                UART_PORT,
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        output = result.stdout + result.stderr
+        for line in output.splitlines():
+            _log(f'  {line}')
+        return result.returncode == 0
+    except Exception as exc:
+        _log(f'  probe error: {exc}')
+        return False
 
 
 def flash_firmware(bin_path: str) -> bool:
     '''Flash a .bin file to the STM32 via stm32flash.
 
     Must be called with the UART port free (no active
-    STM32Interface or StatusMonitor).
+    STM32Interface or StatusMonitor). Retries bootloader
+    entry up to FLASH_MAX_RETRIES times.
 
     Args:
         bin_path: Path to the .bin firmware file.
@@ -358,70 +413,85 @@ def flash_firmware(bin_path: str) -> bool:
     Returns:
         True on success, False on failure.
     '''
-    _set_status('flashing', 35, 'Entering bootloader...')
-    try:
-        _enter_bootloader()
-    except Exception as exc:
-        _log(f'GPIO error: {exc}')
-        _set_status('error', 0, f'GPIO error: {exc}')
-        return False
-
-    _set_status('flashing', 38, 'Configuring UART...')
-    try:
-        subprocess.run(
-            ['stty', '-F', UART_PORT, '-crtscts'],
-            check=True, timeout=5,
-        )
+    for attempt in range(1, FLASH_MAX_RETRIES + 1):
         _log(
-            f'Disabled HW flow control on {UART_PORT}',
+            f'--- Attempt {attempt}/{FLASH_MAX_RETRIES} ---',
         )
-    except Exception as exc:
-        _log(f'stty warning: {exc}')
-
-    _set_status('flashing', 40, 'Flashing...')
-    _log(
-        f'Running stm32flash on {UART_PORT} '
-        f'@ {FLASH_BAUD} baud',
-    )
-    _log(f'Binary: {bin_path}')
-
-    cmd = [
-        'stm32flash',
-        '-w', bin_path,
-        '-v',
-        '-g', '0x08000000',
-        '-b', str(FLASH_BAUD),
-        UART_PORT,
-    ]
-    _log(f'$ {" ".join(cmd)}')
-
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+        _set_status(
+            'flashing', 35,
+            f'Entering bootloader (attempt {attempt})...',
         )
-        progress_re = re.compile(r'(\d+)%')
-        for line in proc.stdout:
-            line = line.rstrip('\n')
-            _log(line)
-            m = progress_re.search(line)
-            if m:
-                pct = int(m.group(1))
-                scaled = 40 + int(pct * 0.55)
-                _set_status(
-                    'flashing', scaled,
-                    f'Flashing... {pct}%',
-                )
+        try:
+            _exit_bootloader()
+            time.sleep(0.2)
+        except Exception:
+            pass
 
-        proc.wait(timeout=120)
-        if proc.returncode != 0:
+        try:
+            _enter_bootloader()
+        except Exception as exc:
+            _log(f'GPIO error: {exc}')
+            _set_status(
+                'error', 0, f'GPIO error: {exc}',
+            )
+            return False
+
+        _configure_uart()
+
+        if not _probe_bootloader():
+            _log('Bootloader not responding, retrying...')
+            continue
+
+        _set_status('flashing', 40, 'Flashing...')
+        _log(
+            f'Running stm32flash on {UART_PORT} '
+            f'@ {FLASH_BAUD} baud',
+        )
+        _log(f'Binary: {bin_path}')
+
+        cmd = [
+            'stm32flash',
+            '-w', bin_path,
+            '-v',
+            '-g', '0x08000000',
+            '-b', str(FLASH_BAUD),
+            UART_PORT,
+        ]
+        _log(f'$ {" ".join(cmd)}')
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            progress_re = re.compile(r'(\d+)%')
+            for line in proc.stdout:
+                line = line.rstrip('\n')
+                _log(line)
+                m = progress_re.search(line)
+                if m:
+                    pct = int(m.group(1))
+                    scaled = 40 + int(pct * 0.55)
+                    _set_status(
+                        'flashing', scaled,
+                        f'Flashing... {pct}%',
+                    )
+
+            proc.wait(timeout=120)
+            if proc.returncode == 0:
+                break
+
             _log(
                 f'stm32flash exited with code '
                 f'{proc.returncode}',
             )
+            if attempt < FLASH_MAX_RETRIES:
+                _log('Retrying...')
+                continue
+
             _set_status(
                 'error', 0,
                 f'stm32flash failed (rc='
@@ -430,14 +500,19 @@ def flash_firmware(bin_path: str) -> bool:
             _exit_bootloader()
             return False
 
-    except Exception as exc:
-        _log(f'stm32flash error: {exc}')
-        _set_status('error', 0, f'Flash error: {exc}')
-        try:
-            _exit_bootloader()
-        except Exception:
-            pass
-        return False
+        except Exception as exc:
+            _log(f'stm32flash error: {exc}')
+            if attempt < FLASH_MAX_RETRIES:
+                _log('Retrying...')
+                continue
+            _set_status(
+                'error', 0, f'Flash error: {exc}',
+            )
+            try:
+                _exit_bootloader()
+            except Exception:
+                pass
+            return False
 
     _set_status('flashing', 97, 'Resetting MCU...')
     try:
