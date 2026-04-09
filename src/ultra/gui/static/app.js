@@ -1350,6 +1350,27 @@
     wireEngDevCmd();
     wireEngConsole();
     wireSimpleCommandButtons();
+    restoreEngConnection();
+  }
+
+  async function restoreEngConnection() {
+    try {
+      const r = await fetch('/api/stm32/connected');
+      if (!r.ok) return;
+      const j = await r.json();
+      if (!j.connected) return;
+      engConnected = true;
+      const btn = $('#eng-connect');
+      if (btn) {
+        btn.textContent = 'Disconnect';
+        btn.classList.add('connected');
+      }
+      $('#eng-conn-status').textContent = 'Connected';
+      $('#eng-conn-status').className =
+        'eng-connected';
+      setEngControls(true);
+      engLog('Reconnected (session restored)');
+    } catch (_) { /* ignore */ }
   }
 
   /* -- App-level Run / Engineering tabs -- */
@@ -1475,30 +1496,16 @@
     engLog('Disconnected from STM32');
   }
 
-  /* Commands that produce async DONE messages and
-     therefore need send_command_wait_done on the backend.
-     Everything else uses send_command (ACK only). */
-  const WAIT_DONE_CMDS = new Set([
-    'home_all', 'home_gantry',
-    'home_x_axis', 'home_y_axis', 'home_z_axis',
-    'move_gantry', 'move_z_axis', 'move_to_location',
-    'move_to_well',
-    'lift_home', 'lift_move', 'lift_move_top',
-    'lift_stop',
-    'pump_init', 'pump_aspirate', 'pump_dispense',
-    'pump_prime', 'pump_blowout',
-    'pump_piston_reset', 'pump_lld_start',
-    'pump_move_absolute', 'pump_wait_idle',
-    'smart_aspirate', 'well_dispense',
-    'cart_dispense', 'cart_dispense_bf',
-    'tip_mix', 'lld_perform',
-    'gantry_tip_swap', 'lid_move',
-    'centrifuge_start', 'centrifuge_move_angle',
-    'centrifuge_unlock', 'centrifuge_lock',
-    'centrifuge_reverse',
-    'centrifuge_goto_serum', 'centrifuge_goto_pipette',
-    'centrifuge_goto_blister',
-  ]);
+  /* Commands where engCmd auto-selects wait_done=true.
+     In the engineering UI most commands should use ACK-only
+     (false) so they return quickly and don't block the
+     serial lock.  Only use wait_done for commands that the
+     caller explicitly chains (e.g. Move To does
+     home_z → move_gantry sequentially with explicit true).
+     The set below is intentionally EMPTY so the default is
+     always ACK-only; callers pass true explicitly when
+     sequential waits are needed. */
+  const WAIT_DONE_CMDS = new Set([]);
 
   /* -- STM32 command helper -- */
   async function engCmd(
@@ -1878,14 +1885,14 @@
   }
 
   function wireEngCentrifuge() {
-    $('#eng-cfuge-start').onclick = () => {
-      const dur = parseInt(
-        $('#eng-cfuge-dur').value,
-      );
-      engCmd('centrifuge_start', {
+    $('#eng-cfuge-start').onclick = async () => {
+      await engCmd('centrifuge_start', {
         rpm: parseInt($('#eng-cfuge-rpm').value),
-        duration: dur,
-      }, true, dur + 30);
+        duration: parseInt(
+          $('#eng-cfuge-dur').value,
+        ),
+      }, false);
+      cfugeRefreshStatus();
     };
     $('#eng-cfuge-angle-go').onclick = async () => {
       await engCmd('centrifuge_move_angle', {
@@ -1897,7 +1904,7 @@
         move_rpm: parseInt(
           $('#eng-cfuge-move-rpm').value,
         ),
-      });
+      }, false);
       cfugeRefreshStatus();
     };
     $('#eng-cfuge-refresh').onclick = () =>
