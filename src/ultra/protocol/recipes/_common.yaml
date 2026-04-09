@@ -28,12 +28,12 @@ centrifuge_phase:
       label: Rotate 290 deg
       angle_001deg: 29000
 
+    - type: centrifuge_shake
+      label: Shake carousel
+
     - type: lift_move
       label: Lower lift to 15mm
       target_mm: 15.0
-
-    - type: centrifuge_shake
-      label: Shake carousel
 
     - type: centrifuge_goto_pipette
       label: Rotate to pipette position
