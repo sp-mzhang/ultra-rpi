@@ -325,28 +325,50 @@ def _gpio_set(pin: int, value: int) -> None:
         raise RuntimeError(f'Unknown GPIO method: {method}')
 
 
+def _flush_uart() -> None:
+    '''Flush any stale bytes from the UART receive buffer.'''
+    import serial as _serial
+    try:
+        ser = _serial.Serial(
+            UART_PORT, FLASH_BAUD, timeout=0.05,
+        )
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        stale = ser.read(4096)
+        ser.close()
+        if stale:
+            _log(f'Flushed {len(stale)} stale UART bytes')
+    except Exception as exc:
+        _log(f'UART flush warning: {exc}')
+
+
 def _enter_bootloader() -> None:
     '''Enter STM32 system bootloader via BOOT0 + nRST.
 
-    First resets to a known state (BOOT0 LOW, nRST pulse),
-    then sets BOOT0 HIGH and pulses nRST so the STM32
-    samples BOOT0=HIGH on the rising edge and enters the
-    system bootloader.
+    First resets to a known state (BOOT0 LOW, nRST hold,
+    settle), then sets BOOT0 HIGH and pulses nRST so the
+    STM32 samples BOOT0=HIGH on the rising edge and enters
+    the system bootloader. Finally flushes the UART to
+    discard any leftover application data.
     '''
     _log('Resetting STM32 to known state')
     _gpio_set(GPIO_BOOT0, 0)
     _gpio_set(GPIO_NRST, 0)
-    time.sleep(0.15)
+    time.sleep(0.5)
     _gpio_set(GPIO_NRST, 1)
-    time.sleep(0.3)
+    time.sleep(0.5)
+
+    _flush_uart()
 
     _log('Entering bootloader (BOOT0=HIGH, nRST pulse)')
     _gpio_set(GPIO_BOOT0, 1)
     time.sleep(0.05)
     _gpio_set(GPIO_NRST, 0)
-    time.sleep(0.15)
+    time.sleep(0.5)
     _gpio_set(GPIO_NRST, 1)
-    time.sleep(1.0)
+    time.sleep(1.5)
+
+    _flush_uart()
 
     try:
         subprocess.run(
