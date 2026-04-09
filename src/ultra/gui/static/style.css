@@ -1296,6 +1296,38 @@ textarea {
   object-fit: contain;
 }
 
+/* --- Form-grid utilities for engineering panels --- */
+.eng-form-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 8px;
+  align-items: center;
+}
+.eng-form-grid label {
+  text-align: right;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+.eng-form-grid .eng-full-row {
+  grid-column: 1 / -1;
+}
+.eng-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: start;
+}
+.eng-2col > .eng-full-row {
+  grid-column: 1 / -1;
+}
+.eng-3col {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  align-items: start;
+}
+
 /* --- Responsive fallback --- */
 @media (max-width: 768px) {
   main {
