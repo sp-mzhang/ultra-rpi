@@ -349,7 +349,10 @@ def _send_app_reset() -> None:
             stopbits=_serial.STOPBITS_ONE,
             rtscts=False,
         )
-        frame = fp.build_frame(command=0x8007, data=b'')
+        payload = fp.pack_seq(0)
+        frame = fp.build_frame(
+            command=fp.CMD_RESET, data=payload,
+        )
         ser.write(frame)
         ser.flush()
         time.sleep(0.1)
@@ -362,43 +365,59 @@ def _send_app_reset() -> None:
 def _enter_bootloader() -> None:
     '''Enter STM32 system bootloader.
 
-    Uses a two-pronged approach:
-    1. Set BOOT0 HIGH via GPIO.
-    2. Send CMD_RESET via application UART (software reset).
-    3. Also pulse nRST via GPIO (hardware reset fallback).
-    4. Wait for bootloader to initialize.
+    Sets BOOT0 HIGH, then sends CMD_RESET via the application
+    UART to trigger a software reset. The STM32 samples
+    BOOT0=HIGH on reset and enters the system bootloader.
 
-    The software reset is more reliable than GPIO nRST alone
-    because it goes through the proven UART path, while the
-    nRST GPIO signal may be attenuated by the series resistor.
+    Does NOT pulse nRST — the GPIO nRST signal through the
+    series resistor does not reliably reach the STM32.
     '''
     _log('Setting BOOT0=HIGH')
     _gpio_set(GPIO_BOOT0, 1)
     time.sleep(0.05)
 
     _send_app_reset()
-    time.sleep(0.3)
-
-    _log('Pulsing nRST (hardware reset fallback)')
-    _gpio_set(GPIO_NRST, 0)
-    time.sleep(0.15)
-    _gpio_set(GPIO_NRST, 1)
-    time.sleep(1.0)
+    time.sleep(2.0)
     _log('Bootloader ready')
 
 
 def _exit_bootloader() -> None:
-    '''Return to normal boot: BOOT0=LOW, then reset.'''
-    _log('Exiting bootloader (BOOT0=LOW, nRST pulse)')
+    '''Return to normal boot: BOOT0=LOW, then jump to app.
+
+    Sets BOOT0 LOW, then uses stm32flash -g to tell the
+    bootloader to jump to the application at 0x08000000.
+    This avoids nRST which is unreliable on this hardware.
+    '''
+    _log('Setting BOOT0=LOW')
     _gpio_set(GPIO_BOOT0, 0)
     time.sleep(0.05)
-    _gpio_set(GPIO_NRST, 0)
-    time.sleep(0.15)
-    _gpio_set(GPIO_NRST, 1)
-    _log('STM32 reset to application mode')
+
+    _log('Jumping to application via stm32flash -g')
+    try:
+        proc = subprocess.run(
+            [
+                'stm32flash',
+                '-g', '0x08000000',
+                '-b', str(FLASH_BAUD),
+                UART_PORT,
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if proc.returncode == 0:
+            _log('  Jump command sent')
+        else:
+            out = (proc.stdout + proc.stderr).strip()
+            _log(f'  stm32flash -g exit {proc.returncode}')
+            if out:
+                _log(f'  {out[:200]}')
+    except Exception as exc:
+        _log(f'  stm32flash -g warning: {exc}')
+
+    time.sleep(2.0)
+    _log('STM32 should be in application mode')
 
 
-FLASH_ATTEMPTS = 5
+FLASH_ATTEMPTS = 3
 
 
 def _configure_uart() -> None:
@@ -526,11 +545,10 @@ def flash_firmware(bin_path: str) -> bool:
             f'(attempt {attempt})...',
         )
 
-        try:
+        if attempt > 1:
+            _log('Resetting for retry...')
             _exit_bootloader()
-            time.sleep(0.2)
-        except Exception:
-            pass
+            time.sleep(1.0)
 
         try:
             _enter_bootloader()
