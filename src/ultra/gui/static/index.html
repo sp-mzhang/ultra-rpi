@@ -475,227 +475,226 @@
         class="eng-warn">Not initialized</span>
     </div>
 
-    <!-- Tip Management -->
-    <fieldset class="eng-inner-fs">
-      <legend>Tip Management</legend>
-      <div class="eng-form-grid">
-        <label>Return to tip #:</label>
-        <input type="number" id="eng-tip-return-id"
-          value="0" min="0" max="8" class="eng-spin-sm">
-        <label>Pickup from tip #:</label>
-        <input type="number" id="eng-tip-pickup-id"
-          value="0" min="0" max="8" class="eng-spin-sm">
-      </div>
-      <div class="eng-btn-row">
-        <button id="eng-tip-swap"
-          class="eng-cmd-btn">Swap Tip</button>
-        <button id="eng-lld-perform"
-          class="eng-cmd-btn">Perform LLD</button>
-      </div>
-    </fieldset>
-
-    <!-- Tip Swap Motion -->
-    <fieldset class="eng-inner-fs">
-      <legend>Tip Swap Motion</legend>
-      <div class="eng-form-grid">
-        <label>X offset (&micro;m):</label>
-        <input type="number" id="eng-ts-x-ej"
-          value="7500" min="0" max="50000" step="100"
-          class="eng-spin-sm">
-        <label>Pick Z (mm):</label>
-        <input type="number" id="eng-ts-pick-z"
-          value="0" min="-30" max="0" step="0.5"
-          class="eng-spin-sm">
-        <label>Retract (&micro;m):</label>
-        <input type="number" id="eng-ts-retract"
-          value="1000" min="0" max="10000" step="50"
-          class="eng-spin-sm">
-        <label>XY speed (mm/s):</label>
-        <input type="number" id="eng-ts-xy-spd"
-          value="25" min="1" max="100" step="1"
-          class="eng-spin-sm">
-        <label>Z speed (mm/s):</label>
-        <input type="number" id="eng-ts-z-spd"
-          value="6" min="1" max="20" step="0.5"
-          class="eng-spin-sm">
-      </div>
-      <span class="eng-dim">
-        X offset def 7500 = 7.5 mm, 0 = MCU default;
-        Pick Z 0 = default
-      </span>
-    </fieldset>
-
+    <!-- Tip Management + Tip Swap Motion side-by-side -->
     <div class="eng-2col">
-
-      <!-- Aspirate / Dispense -->
       <fieldset class="eng-inner-fs">
-        <legend>Aspirate / Dispense</legend>
+        <legend>Tip Management</legend>
         <div class="eng-form-grid">
-          <label>Aspirate vol (&micro;L):</label>
-          <input type="number" id="eng-asp-vol"
-            value="250" min="0" max="10000" step="10"
+          <label>Return to tip #:</label>
+          <input type="number" id="eng-tip-return-id"
+            value="0" min="0" max="8"
             class="eng-spin-sm">
-          <label>Dispense vol (&micro;L):</label>
-          <input type="number" id="eng-disp-vol"
-            value="250" min="0" max="10000" step="10"
+          <label>Pickup from tip #:</label>
+          <input type="number" id="eng-tip-pickup-id"
+            value="0" min="0" max="8"
             class="eng-spin-sm">
-          <label>Air slug (&micro;L):</label>
-          <input type="number" id="eng-air-slug"
-            value="0" min="0" max="500" step="5"
-            class="eng-spin-sm">
-          <label>Speed (&micro;L/s):</label>
-          <input type="number" id="eng-pump-speed"
-            value="100" min="0.1" max="1000" step="0.1"
-            class="eng-spin-sm">
-          <label>Timeout (s):</label>
-          <input type="number" id="eng-pump-timeout"
-            value="40" min="1" max="120" step="5"
-            class="eng-spin-sm">
-          <label>Well type:</label>
-          <select id="eng-well-type">
-            <option value="small" selected>Small</option>
-            <option value="large">Large</option>
-          </select>
         </div>
         <div class="eng-btn-row">
-          <button id="eng-aspirate"
-            class="eng-cmd-btn">Aspirate</button>
-          <button id="eng-llf-aspirate"
-            class="eng-cmd-btn">LLF Aspirate</button>
-          <button id="eng-dispense"
-            class="eng-cmd-btn">Dispense</button>
+          <button id="eng-tip-swap"
+            class="eng-cmd-btn">Swap Tip</button>
+          <button id="eng-lld-perform"
+            class="eng-cmd-btn">Perform LLD</button>
         </div>
       </fieldset>
 
-      <!-- Dispense Commands -->
       <fieldset class="eng-inner-fs">
-        <legend>Dispense Commands</legend>
-
-        <fieldset class="eng-inner-fs">
-          <legend>Well</legend>
-          <div class="eng-form-grid">
-            <label>Depth:</label>
-            <input type="number" id="eng-wd-depth"
-              value="0" min="0" max="24" step="1"
-              class="eng-spin-xs">
-            <label>Volume:</label>
-            <input type="number" id="eng-wd-vol"
-              value="50" min="0" max="2000" step="10"
-              class="eng-spin-xs">
-            <label>Speed:</label>
-            <input type="number" id="eng-wd-speed"
-              value="100" min="0.1" max="1000"
-              step="0.1" class="eng-spin-xs">
-            <label>Retract:</label>
-            <input type="number" id="eng-wd-retract"
-              value="5" min="0" max="20" step="1"
-              class="eng-spin-xs">
-            <label>Blowout:</label>
-            <label style="text-align:left">
-              <input type="checkbox"
-                id="eng-wd-blowout" checked> On</label>
-          </div>
-          <div class="eng-btn-row">
-            <button id="eng-wd-go"
-              class="eng-cmd-btn eng-btn-xs">Go</button>
-          </div>
-        </fieldset>
-
-        <fieldset class="eng-inner-fs">
-          <legend>Cartridge</legend>
-          <div class="eng-form-grid">
-            <label>Volume:</label>
-            <input type="number" id="eng-cd-vol"
-              value="70" min="0" max="5000" step="10"
-              class="eng-spin-xs">
-            <label>Velocity:</label>
-            <input type="number" id="eng-cd-vel"
-              value="100" min="0.1" max="500"
-              step="0.1" class="eng-spin-xs">
-            <label>Re-aspirate:</label>
-            <input type="number" id="eng-cd-reasp"
-              value="12" min="0" max="200"
-              class="eng-spin-xs">
-            <label>Sleep (s):</label>
-            <input type="number" id="eng-cd-sleep"
-              value="0" min="0" max="120" step="5"
-              class="eng-spin-xs">
-            <label>Retract:</label>
-            <input type="number" id="eng-cd-retract"
-              value="2" min="0" max="20"
-              class="eng-spin-xs">
-          </div>
-          <div class="eng-btn-row">
-            <button id="eng-cd-go"
-              class="eng-cmd-btn eng-btn-xs">Go</button>
-          </div>
-        </fieldset>
-
-        <fieldset class="eng-inner-fs">
-          <legend>Back &amp; Forth</legend>
-          <div class="eng-form-grid">
-            <label>Duration (s):</label>
-            <input type="number" id="eng-cb-dur"
-              value="170" min="0" max="600" step="10"
-              class="eng-spin-xs">
-            <label>Velocity:</label>
-            <input type="number" id="eng-cb-vel"
-              value="1" min="0.1" max="500"
-              class="eng-spin-xs">
-            <label>Forward:</label>
-            <input type="number" id="eng-cb-fwd"
-              value="60" min="1" max="500" step="5"
-              class="eng-spin-xs">
-            <label>Back:</label>
-            <input type="number" id="eng-cb-bak"
-              value="30" min="0" max="500"
-              class="eng-spin-xs">
-            <label>Re-aspirate:</label>
-            <input type="number" id="eng-cb-reasp"
-              value="12" min="0" max="200"
-              class="eng-spin-xs">
-            <label>Sleep (s):</label>
-            <input type="number" id="eng-cb-sleep"
-              value="30" min="0" max="120"
-              class="eng-spin-xs">
-            <label>Retract:</label>
-            <input type="number" id="eng-cb-retract"
-              value="2" min="0" max="20"
-              class="eng-spin-xs">
-          </div>
-          <div class="eng-btn-row">
-            <button id="eng-cb-go"
-              class="eng-cmd-btn eng-btn-xs">Go</button>
-          </div>
-        </fieldset>
-
-        <fieldset class="eng-inner-fs">
-          <legend>Mix</legend>
-          <div class="eng-form-grid">
-            <label>Volume:</label>
-            <input type="number" id="eng-tm-vol"
-              value="150" min="1" max="1000" step="10"
-              class="eng-spin-xs">
-            <label>Speed:</label>
-            <input type="number" id="eng-tm-speed"
-              value="100" min="0.1" max="1000" step="1"
-              class="eng-spin-xs">
-            <label>Cycles:</label>
-            <input type="number" id="eng-tm-cycles"
-              value="4" min="1" max="50"
-              class="eng-spin-xs">
-            <label>Pull:</label>
-            <input type="number" id="eng-tm-pull"
-              value="0" min="0" max="500" step="10"
-              class="eng-spin-xs">
-          </div>
-          <div class="eng-btn-row">
-            <button id="eng-tm-go"
-              class="eng-cmd-btn eng-btn-xs">Go</button>
-          </div>
-        </fieldset>
-
+        <legend>Tip Swap Motion</legend>
+        <div class="eng-form-grid">
+          <label>X offset (&micro;m):</label>
+          <input type="number" id="eng-ts-x-ej"
+            value="7500" min="0" max="50000" step="100"
+            class="eng-spin-sm">
+          <label>Pick Z (mm):</label>
+          <input type="number" id="eng-ts-pick-z"
+            value="0" min="-30" max="0" step="0.5"
+            class="eng-spin-sm">
+          <label>Retract (&micro;m):</label>
+          <input type="number" id="eng-ts-retract"
+            value="1000" min="0" max="10000" step="50"
+            class="eng-spin-sm">
+          <label>XY speed (mm/s):</label>
+          <input type="number" id="eng-ts-xy-spd"
+            value="25" min="1" max="100" step="1"
+            class="eng-spin-sm">
+          <label>Z speed (mm/s):</label>
+          <input type="number" id="eng-ts-z-spd"
+            value="6" min="1" max="20" step="0.5"
+            class="eng-spin-sm">
+        </div>
+        <span class="eng-dim">
+          X offset def 7500 = 7.5 mm, 0 = MCU default;
+          Pick Z 0 = default
+        </span>
       </fieldset>
+    </div>
+
+    <!-- Aspirate / Dispense -- full width -->
+    <fieldset class="eng-inner-fs">
+      <legend>Aspirate / Dispense</legend>
+      <div class="eng-form-grid">
+        <label>Aspirate vol (&micro;L):</label>
+        <input type="number" id="eng-asp-vol"
+          value="250" min="0" max="10000" step="10"
+          class="eng-spin-sm">
+        <label>Dispense vol (&micro;L):</label>
+        <input type="number" id="eng-disp-vol"
+          value="250" min="0" max="10000" step="10"
+          class="eng-spin-sm">
+        <label>Air slug (&micro;L):</label>
+        <input type="number" id="eng-air-slug"
+          value="0" min="0" max="500" step="5"
+          class="eng-spin-sm">
+        <label>Speed (&micro;L/s):</label>
+        <input type="number" id="eng-pump-speed"
+          value="100" min="0.1" max="1000" step="0.1"
+          class="eng-spin-sm">
+        <label>Timeout (s):</label>
+        <input type="number" id="eng-pump-timeout"
+          value="40" min="1" max="120" step="5"
+          class="eng-spin-sm">
+        <label>Well type:</label>
+        <select id="eng-well-type">
+          <option value="small" selected>Small</option>
+          <option value="large">Large</option>
+        </select>
+      </div>
+      <div class="eng-btn-row">
+        <button id="eng-aspirate"
+          class="eng-cmd-btn">Aspirate</button>
+        <button id="eng-llf-aspirate"
+          class="eng-cmd-btn">LLF Aspirate</button>
+        <button id="eng-dispense"
+          class="eng-cmd-btn">Dispense</button>
+      </div>
+    </fieldset>
+
+    <!-- Dispense Commands -- 2 per row -->
+    <div class="eng-2col">
+
+      <fieldset class="eng-inner-fs">
+        <legend>Well Dispense</legend>
+        <div class="eng-form-grid">
+          <label>Depth:</label>
+          <input type="number" id="eng-wd-depth"
+            value="0" min="0" max="24" step="1"
+            class="eng-spin-xs">
+          <label>Volume:</label>
+          <input type="number" id="eng-wd-vol"
+            value="50" min="0" max="2000" step="10"
+            class="eng-spin-xs">
+          <label>Speed:</label>
+          <input type="number" id="eng-wd-speed"
+            value="100" min="0.1" max="1000"
+            step="0.1" class="eng-spin-xs">
+          <label>Retract:</label>
+          <input type="number" id="eng-wd-retract"
+            value="5" min="0" max="20" step="1"
+            class="eng-spin-xs">
+          <label>Blowout:</label>
+          <label style="text-align:left">
+            <input type="checkbox"
+              id="eng-wd-blowout" checked> On</label>
+        </div>
+        <div class="eng-btn-row">
+          <button id="eng-wd-go"
+            class="eng-cmd-btn eng-btn-xs">Go</button>
+        </div>
+      </fieldset>
+
+      <fieldset class="eng-inner-fs">
+        <legend>Cartridge Dispense</legend>
+        <div class="eng-form-grid">
+          <label>Volume:</label>
+          <input type="number" id="eng-cd-vol"
+            value="70" min="0" max="5000" step="10"
+            class="eng-spin-xs">
+          <label>Velocity:</label>
+          <input type="number" id="eng-cd-vel"
+            value="100" min="0.1" max="500"
+            step="0.1" class="eng-spin-xs">
+          <label>Re-aspirate:</label>
+          <input type="number" id="eng-cd-reasp"
+            value="12" min="0" max="200"
+            class="eng-spin-xs">
+          <label>Sleep (s):</label>
+          <input type="number" id="eng-cd-sleep"
+            value="0" min="0" max="120" step="5"
+            class="eng-spin-xs">
+          <label>Retract:</label>
+          <input type="number" id="eng-cd-retract"
+            value="2" min="0" max="20"
+            class="eng-spin-xs">
+        </div>
+        <div class="eng-btn-row">
+          <button id="eng-cd-go"
+            class="eng-cmd-btn eng-btn-xs">Go</button>
+        </div>
+      </fieldset>
+
+      <fieldset class="eng-inner-fs">
+        <legend>Back &amp; Forth</legend>
+        <div class="eng-form-grid">
+          <label>Duration (s):</label>
+          <input type="number" id="eng-cb-dur"
+            value="170" min="0" max="600" step="10"
+            class="eng-spin-xs">
+          <label>Velocity:</label>
+          <input type="number" id="eng-cb-vel"
+            value="1" min="0.1" max="500"
+            class="eng-spin-xs">
+          <label>Forward:</label>
+          <input type="number" id="eng-cb-fwd"
+            value="60" min="1" max="500" step="5"
+            class="eng-spin-xs">
+          <label>Back:</label>
+          <input type="number" id="eng-cb-bak"
+            value="30" min="0" max="500"
+            class="eng-spin-xs">
+          <label>Re-aspirate:</label>
+          <input type="number" id="eng-cb-reasp"
+            value="12" min="0" max="200"
+            class="eng-spin-xs">
+          <label>Sleep (s):</label>
+          <input type="number" id="eng-cb-sleep"
+            value="30" min="0" max="120"
+            class="eng-spin-xs">
+          <label>Retract:</label>
+          <input type="number" id="eng-cb-retract"
+            value="2" min="0" max="20"
+            class="eng-spin-xs">
+        </div>
+        <div class="eng-btn-row">
+          <button id="eng-cb-go"
+            class="eng-cmd-btn eng-btn-xs">Go</button>
+        </div>
+      </fieldset>
+
+      <fieldset class="eng-inner-fs">
+        <legend>Mix</legend>
+        <div class="eng-form-grid">
+          <label>Volume:</label>
+          <input type="number" id="eng-tm-vol"
+            value="150" min="1" max="1000" step="10"
+            class="eng-spin-xs">
+          <label>Speed:</label>
+          <input type="number" id="eng-tm-speed"
+            value="100" min="0.1" max="1000" step="1"
+            class="eng-spin-xs">
+          <label>Cycles:</label>
+          <input type="number" id="eng-tm-cycles"
+            value="4" min="1" max="50"
+            class="eng-spin-xs">
+          <label>Pull:</label>
+          <input type="number" id="eng-tm-pull"
+            value="0" min="0" max="500" step="10"
+            class="eng-spin-xs">
+        </div>
+        <div class="eng-btn-row">
+          <button id="eng-tm-go"
+            class="eng-cmd-btn eng-btn-xs">Go</button>
+        </div>
+      </fieldset>
+
     </div>
   </div>
 

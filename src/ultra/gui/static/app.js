@@ -2368,8 +2368,10 @@
       );
       if (r) {
         const s = (k) => r[k] != null ? r[k] : '--';
-        $('#eng-ah-ntc1').textContent = s('ntc1_c');
-        $('#eng-ah-ntc2').textContent = s('ntc2_c');
+        $('#eng-ah-ntc1').textContent =
+          s('prim_temp_c');
+        $('#eng-ah-ntc2').textContent =
+          s('sec_temp_c');
         $('#eng-ah-st-heat').textContent =
           s('heater_duty');
         $('#eng-ah-st-fan').textContent =
@@ -2377,7 +2379,7 @@
         $('#eng-ah-st-en').textContent =
           s('heater_en');
         $('#eng-ah-st-ctrl').textContent =
-          s('ctrl_state');
+          r.ctrl_enabled ? 'ON' : 'OFF';
       }
     };
   }
