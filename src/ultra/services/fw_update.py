@@ -341,21 +341,44 @@ def _gpio_get(pin: int) -> str:
         return '(unknown)'
 
 
-def _flush_uart() -> None:
-    '''Flush any stale bytes from the UART receive buffer.'''
+def _sync_bootloader() -> bool:
+    '''Poll STM32 bootloader with 0x7F until ACK.
+
+    The H735 system bootloader enumerates all interfaces
+    (USB, SPI, I2C, USARTs) before listening. This polls
+    USART2 with the sync byte until the bootloader responds.
+
+    Returns:
+        True if the bootloader ACKed.
+    '''
     import serial as _serial
-    try:
-        ser = _serial.Serial(
-            UART_PORT, FLASH_BAUD, timeout=0.05,
-        )
-        ser.reset_input_buffer()
-        ser.reset_output_buffer()
-        stale = ser.read(4096)
-        ser.close()
-        if stale:
-            _log(f'Flushed {len(stale)} stale UART bytes')
-    except Exception as exc:
-        _log(f'UART flush warning: {exc}')
+    _log('Syncing bootloader on UART...')
+    ser = _serial.Serial(
+        UART_PORT, FLASH_BAUD, timeout=0.5,
+        parity=_serial.PARITY_EVEN,
+        stopbits=_serial.STOPBITS_ONE,
+        bytesize=_serial.EIGHTBITS,
+        rtscts=False,
+    )
+    ser.reset_input_buffer()
+
+    for i in range(20):
+        ser.write(b'\x7f')
+        resp = ser.read(1)
+        if resp == b'\x79':
+            _log(f'  ACK on poll {i + 1}')
+            ser.close()
+            return True
+        if resp == b'\x1f':
+            _log(f'  NACK on poll {i + 1} (already synced)')
+            ser.close()
+            return True
+        if resp:
+            _log(f'  0x{resp.hex()} on poll {i + 1}')
+
+    ser.close()
+    _log('  No bootloader response after 20 polls')
+    return False
 
 
 def _enter_bootloader() -> None:
@@ -363,16 +386,13 @@ def _enter_bootloader() -> None:
 
     1. Configure GPIOs as outputs (BOOT0 LOW, nRST HIGH).
     2. Reset MCU in app mode to get to a known state.
-    3. Flush UART to discard application data.
-    4. Set BOOT0 HIGH, pulse nRST to enter bootloader.
-    5. Verify GPIO states and flush UART again.
+    3. Set BOOT0 HIGH, pulse nRST to enter bootloader.
+    4. Poll bootloader with 0x7F sync byte until ACK.
     '''
     _log('Initializing GPIOs as outputs')
     _gpio_set(GPIO_BOOT0, 0)
     _gpio_set(GPIO_NRST, 1)
     time.sleep(0.1)
-    _log(f'  BOOT0: {_gpio_get(GPIO_BOOT0)}')
-    _log(f'  nRST:  {_gpio_get(GPIO_NRST)}')
 
     _log('Resetting STM32 (app mode)')
     _gpio_set(GPIO_NRST, 0)
@@ -380,22 +400,18 @@ def _enter_bootloader() -> None:
     _gpio_set(GPIO_NRST, 1)
     time.sleep(0.5)
 
-    _flush_uart()
-
-    _log('Setting BOOT0=HIGH')
+    _log('Setting BOOT0=HIGH, pulsing nRST')
     _gpio_set(GPIO_BOOT0, 1)
-    time.sleep(0.1)
-    _log(f'  BOOT0: {_gpio_get(GPIO_BOOT0)}')
-
-    _log('Pulsing nRST (entering bootloader)')
+    time.sleep(0.05)
     _gpio_set(GPIO_NRST, 0)
     time.sleep(0.5)
     _gpio_set(GPIO_NRST, 1)
-    time.sleep(2.0)
-    _log(f'  BOOT0: {_gpio_get(GPIO_BOOT0)}')
-    _log(f'  nRST:  {_gpio_get(GPIO_NRST)}')
+    time.sleep(0.5)
 
-    _flush_uart()
+    if not _sync_bootloader():
+        raise RuntimeError(
+            'STM32 bootloader not responding on UART'
+        )
     _log('Bootloader ready')
 
 
@@ -439,6 +455,7 @@ def flash_firmware(bin_path: str) -> bool:
 
     cmd = [
         'stm32flash',
+        '-c',
         '-w', bin_path,
         '-v',
         '-g', '0x08000000',
