@@ -59,10 +59,14 @@ setup_env() {
     ensure_uv
     echo "Syncing environment with uv..."
     cd "$PROJECT_DIR"
-    UV_NO_PROGRESS=1 NO_COLOR=1 \
+    if timeout 120 env UV_NO_PROGRESS=1 NO_COLOR=1 \
         uv sync \
         --upgrade-package analysis-tools \
-        --upgrade-package dollopclient 2>&1
+        --upgrade-package dollopclient 2>&1; then
+        echo "uv sync succeeded."
+    else
+        echo "WARNING: uv sync failed or timed out — using existing venv."
+    fi
 
     # OpenCV: prefer system apt package, fall back to pip
     if ! "$VENV_DIR/bin/python" -c "import cv2" 2>/dev/null; then
