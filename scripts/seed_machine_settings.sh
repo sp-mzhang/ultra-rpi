@@ -65,14 +65,26 @@ if [[ -f "$AWS_CREDS" ]]; then
   echo "AWS credentials already present at ${AWS_CREDS} — skipping."
 else
   echo "=== AWS Credentials Setup ==="
-  if [[ ! -f "$PROV_AWS_CREDS" ]]; then
-    echo "[ERROR] Missing ${PROV_AWS_CREDS}"
-    echo "  Place the aws_credentials file in provisioning/ and re-run."
-    echo "  Format:"
-    echo "    [default]"
-    echo "    aws_access_key_id = YOUR_KEY"
-    echo "    aws_secret_access_key = YOUR_SECRET"
-    exit 1
+
+  if [[ -f "$PROV_AWS_CREDS" ]]; then
+    echo "Using cached credentials from ${PROV_AWS_CREDS}"
+  else
+    echo "No cached credentials found."
+    echo "Enter AWS credentials (get these from an existing machine or your admin):"
+    read -rp "  AWS Access Key ID: " AWS_KEY
+    read -rp "  AWS Secret Access Key: " AWS_SECRET
+    if [[ -z "$AWS_KEY" || -z "$AWS_SECRET" ]]; then
+      echo "[ERROR] Both key and secret are required."
+      exit 1
+    fi
+    mkdir -p "$(dirname "$PROV_AWS_CREDS")"
+    cat > "${PROV_AWS_CREDS}" << GENCREDS
+[default]
+aws_access_key_id = ${AWS_KEY}
+aws_secret_access_key = ${AWS_SECRET}
+GENCREDS
+    chmod 600 "${PROV_AWS_CREDS}"
+    echo "[OK] Saved to ${PROV_AWS_CREDS} (gitignored, reused on next run)."
   fi
 
   mkdir -p "${AWS_DIR}"

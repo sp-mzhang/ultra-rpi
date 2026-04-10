@@ -1,6 +1,5 @@
 # Provisioning certificates — excluded by default.
-# These files contain private keys and should not be committed
-# to a public repository.
+# These files contain private keys and should not be committed.
 #
 # To intentionally version-control them (private repo only):
 #   git add -f provisioning/certs/
