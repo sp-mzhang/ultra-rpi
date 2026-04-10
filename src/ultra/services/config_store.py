@@ -209,6 +209,12 @@ def put_recipe_yaml(slug: str, yaml_text: str) -> None:
     _write_cache(key, yaml_text)
 
 
+def put_shared_common_yaml(yaml_text: str) -> None:
+    key = shared_common_key()
+    put_object_bytes(key, yaml_text.encode('utf-8'))
+    _write_cache(key, yaml_text)
+
+
 def sync_recipes_and_shared_from_s3() -> None:
     '''Best-effort download of all recipe.yaml and _shared/_common.'''
     slugs = list_recipe_slugs()

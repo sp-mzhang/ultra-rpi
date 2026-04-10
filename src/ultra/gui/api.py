@@ -1038,6 +1038,51 @@ def create_api_router(
             'message': f'Recipe "{slug}" saved to S3.',
         }
 
+    @router.get('/common-protocol/yaml')
+    async def common_protocol_get():
+        '''Return raw YAML for _common.yaml (shared protocol phases).'''
+        import os.path as op
+        from ultra.protocol import recipe_loader as rl
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+
+        def _read() -> tuple[str, str]:
+            path = config_store.fetch_shared_common_to_cache()
+            if path and op.isfile(path):
+                with open(path, encoding='utf-8') as fh:
+                    return fh.read(), 's3'
+            pack = op.join(rl.RECIPES_DIR, '_common.yaml')
+            if op.isfile(pack):
+                with open(pack, encoding='utf-8') as fh:
+                    return fh.read(), 'packaged'
+            raise FileNotFoundError('_common.yaml')
+
+        try:
+            text, source = await loop.run_in_executor(None, _read)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail='_common.yaml not found')
+        return {'yaml_text': text, 'source': source}
+
+    @router.put('/common-protocol/yaml')
+    @router.post('/common-protocol/yaml')
+    async def common_protocol_put(req: YamlTextBody):
+        '''Save _common.yaml to S3.'''
+        import yaml
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+
+        def _validate_and_save() -> None:
+            raw = yaml.safe_load(req.yaml_text)
+            if not isinstance(raw, dict):
+                raise ValueError('_common.yaml must be a YAML mapping')
+            config_store.put_shared_common_yaml(req.yaml_text)
+
+        try:
+            await loop.run_in_executor(None, _validate_and_save)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {'ok': True, 'message': 'Common protocol saved to S3.'}
+
     @router.get('/protocol/step-types')
     async def protocol_step_types():
         '''List registered protocol step type names.'''

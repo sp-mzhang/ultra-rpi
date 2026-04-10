@@ -1396,6 +1396,7 @@
       <nav class="cfg-sidebar">
         <button class="cfg-nav-btn cfg-nav-active" data-panel="machine">Machine Config</button>
         <button class="cfg-nav-btn" data-panel="recipe">Recipe Editor</button>
+        <button class="cfg-nav-btn" data-panel="common">Common Protocol</button>
       </nav>
       <div class="cfg-main">
 
@@ -1455,7 +1456,7 @@
                 <table id="rb-wells-table" class="rb-wells">
                   <thead>
                     <tr>
-                      <th>Name</th><th>Slot</th><th>Reagent</th>
+                      <th>Slot</th><th>Reagent</th>
                       <th>Volume (uL)</th><th></th>
                     </tr>
                   </thead>
@@ -1530,6 +1531,19 @@
             </div>
             <pre id="cfg-yaml-msg" class="cfg-msg"></pre>
           </div>
+        </section>
+
+        <!-- Common Protocol panel -->
+        <section id="cfg-panel-common" class="cfg-panel">
+          <h2>Common Protocol (_common.yaml)</h2>
+          <p class="cfg-hint">Shared phases included by all recipes (centrifuge, lock, defaults).</p>
+          <div class="cfg-btn-row">
+            <button id="cfg-common-load" class="btn btn-sm">Reload from S3</button>
+            <button id="cfg-common-save" class="btn btn-sm btn-primary">Save to S3</button>
+          </div>
+          <pre id="cfg-common-msg" class="cfg-msg"></pre>
+          <textarea id="cfg-common-yaml" class="cfg-yaml-editor"
+            spellcheck="false" rows="24"></textarea>
         </section>
 
       </div>

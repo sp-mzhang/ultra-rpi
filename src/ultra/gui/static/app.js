@@ -2970,21 +2970,22 @@
     const CARTRIDGE_PORT_NAMES = CARTRIDGE_PORTS.map((p) => p.name);
 
     const SLOT_MAP = [
-      { loc: 18, label: 'SERUM (18)' },
-      { loc: 21, label: 'S1 (21)' },  { loc: 22, label: 'S2 (22)' },
-      { loc: 23, label: 'S3 (23)' },  { loc: 24, label: 'S4 (24)' },
-      { loc: 25, label: 'S5 (25)' },  { loc: 26, label: 'S6 (26)' },
-      { loc: 27, label: 'S7 (27)' },  { loc: 28, label: 'S8 (28)' },
-      { loc: 29, label: 'S9 (29)' },
-      { loc: 33, label: 'M1 (33)' },  { loc: 34, label: 'M2 (34)' },
-      { loc: 35, label: 'M3 (35)' },  { loc: 36, label: 'M4 (36)' },
-      { loc: 37, label: 'M5 (37)' },  { loc: 38, label: 'M6 (38)' },
-      { loc: 39, label: 'M7 (39)' },  { loc: 40, label: 'M8 (40)' },
-      { loc: 41, label: 'M9 (41)' },  { loc: 42, label: 'M10 (42)' },
-      { loc: 43, label: 'M11 (43)' }, { loc: 44, label: 'M12 (44)' },
-      { loc: 45, label: 'M13 (45)' }, { loc: 46, label: 'M14 (46)' },
-      { loc: 47, label: 'M15 (47)' },
+      { loc: 18, name: 'SERUM' },
+      { loc: 21, name: 'S1' },  { loc: 22, name: 'S2' },
+      { loc: 23, name: 'S3' },  { loc: 24, name: 'S4' },
+      { loc: 25, name: 'S5' },  { loc: 26, name: 'S6' },
+      { loc: 27, name: 'S7' },  { loc: 28, name: 'S8' },
+      { loc: 29, name: 'S9' },
+      { loc: 33, name: 'M1' },  { loc: 34, name: 'M2' },
+      { loc: 35, name: 'M3' },  { loc: 36, name: 'M4' },
+      { loc: 37, name: 'M5' },  { loc: 38, name: 'M6' },
+      { loc: 39, name: 'M7' },  { loc: 40, name: 'M8' },
+      { loc: 41, name: 'M9' },  { loc: 42, name: 'M10' },
+      { loc: 43, name: 'M11' }, { loc: 44, name: 'M12' },
+      { loc: 45, name: 'M13' }, { loc: 46, name: 'M14' },
+      { loc: 47, name: 'M15' },
     ];
+    const LOC_TO_NAME = Object.fromEntries(SLOT_MAP.map((s) => [s.loc, s.name]));
 
     const DEFAULT_INCLUDE_START = { name: 'A', label: 'Centrifuge', include: '_common.yaml#centrifuge_phase' };
     const DEFAULT_INCLUDE_END   = { name: 'C', label: 'Lock', include: '_common.yaml#lock_phase' };
@@ -3229,19 +3230,28 @@
     }
 
     /* --- wells table --- */
-    function slotOptions(selectedLoc) {
-      return SLOT_MAP.map((s) =>
-        `<option value="${s.loc}"${s.loc === selectedLoc ? ' selected' : ''}>${s.label}</option>`
-      ).join('');
+    function slotOptions(selectedLoc, excludeLocs) {
+      return SLOT_MAP.map((s) => {
+        const taken = excludeLocs && excludeLocs.has(s.loc) && s.loc !== selectedLoc;
+        return `<option value="${s.loc}"${s.loc === selectedLoc ? ' selected' : ''}${taken ? ' disabled' : ''}>${s.name} (${s.loc})</option>`;
+      }).join('');
+    }
+
+    function usedSlotLocs() {
+      const locs = new Set();
+      for (const w of Object.values(builderModel.wells)) {
+        if (w.loc) locs.add(w.loc);
+      }
+      return locs;
     }
 
     function renderWellsTable() {
       wellsTbody.innerHTML = '';
+      const used = usedSlotLocs();
       for (const [name, w] of Object.entries(builderModel.wells)) {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td><input value="${name}" data-field="name" data-orig="${name}"></td>
-          <td><select data-field="loc">${slotOptions(w.loc || 0)}</select></td>
+          <td><select data-field="loc">${slotOptions(w.loc || 0, used)}</select></td>
           <td><input value="${w.reagent || ''}" data-field="reagent"></td>
           <td><input type="number" value="${w.volume_ul || 0}" data-field="volume_ul"></td>
           <td><button class="rb-well-del" title="Remove">&times;</button></td>
@@ -3251,31 +3261,33 @@
           renderWellsTable();
           refreshWellDropdowns();
         });
-        tr.querySelectorAll('input, select').forEach((inp) => {
+        const locSel = tr.querySelector('[data-field="loc"]');
+        locSel.addEventListener('change', () => {
+          const newLoc = Number(locSel.value);
+          const newName = LOC_TO_NAME[newLoc] || name;
+          const oldData = builderModel.wells[name];
+          oldData.loc = newLoc;
+          if (newName !== name) {
+            delete builderModel.wells[name];
+            builderModel.wells[newName] = oldData;
+          }
+          renderWellsTable();
+          refreshWellDropdowns();
+        });
+        tr.querySelectorAll('input').forEach((inp) => {
           inp.addEventListener('change', () => {
-            const orig = inp.dataset.orig || name;
             const field = inp.dataset.field;
-            if (field === 'name') {
-              const nv = inp.value.trim();
-              if (nv && nv !== orig) {
-                builderModel.wells[nv] = builderModel.wells[orig];
-                delete builderModel.wells[orig];
-                renderWellsTable();
-                refreshWellDropdowns();
-              }
-            } else {
-              const val = field === 'reagent' ? inp.value : Number(inp.value);
-              builderModel.wells[name][field] = val;
-            }
+            builderModel.wells[name][field] = field === 'reagent' ? inp.value : Number(inp.value);
           });
         });
         wellsTbody.appendChild(tr);
       }
     }
     $('#rb-well-add').addEventListener('click', () => {
-      let n = 1;
-      while (builderModel.wells[`W${n}`]) n++;
-      builderModel.wells[`W${n}`] = { loc: 0, reagent: '', volume_ul: 0 };
+      const used = usedSlotLocs();
+      const avail = SLOT_MAP.find((s) => !used.has(s.loc));
+      if (!avail) return;
+      builderModel.wells[avail.name] = { loc: avail.loc, reagent: '', volume_ul: 0 };
       renderWellsTable();
       refreshWellDropdowns();
     });
@@ -3298,8 +3310,10 @@
       for (const t of types.sort()) {
         const card = document.createElement('div');
         card.className = 'rb-step-card';
-        card.textContent = t;
-        if (stepDescriptions[t]) card.title = stepDescriptions[t];
+        const desc = stepDescriptions[t] || '';
+        card.innerHTML = `<span class="rb-card-name">${t}</span>` +
+          (desc ? `<span class="rb-card-desc">${desc}</span>` : '');
+        if (desc) card.title = desc;
         card.draggable = true;
         card.addEventListener('dragstart', (e) => {
           e.dataTransfer.setData('text/plain', t);
@@ -3745,12 +3759,56 @@
     $('#cfg-recipe-load').addEventListener('click', loadRecipeYaml);
     sel.addEventListener('change', loadRecipeYaml);
 
+    /* === Common Protocol (_common.yaml) === */
+    const taCommon = $('#cfg-common-yaml');
+    const msgC = $('#cfg-common-msg');
+
+    async function loadCommonProtocol() {
+      const btn = $('#cfg-common-load');
+      btnLoad(btn);
+      setMsg(msgC, '');
+      try {
+        const res = await fetch('/api/common-protocol/yaml');
+        const j = await parseJson(res);
+        if (!res.ok) { setMsg(msgC, fmtApiErr(j, 'Failed'), true); return; }
+        taCommon.value = j.yaml_text || '';
+        const hint = j.source === 's3' ? 'Loaded from S3.' : 'Packaged file.';
+        setMsg(msgC, hint, false, true);
+      } catch (e) {
+        setMsg(msgC, String(e), true);
+      } finally {
+        btnDone(btn);
+      }
+    }
+
+    $('#cfg-common-load').addEventListener('click', loadCommonProtocol);
+    $('#cfg-common-save').addEventListener('click', async () => {
+      const btn = $('#cfg-common-save');
+      btnLoad(btn);
+      setMsg(msgC, 'Saving…');
+      try {
+        const res = await fetch('/api/common-protocol/yaml', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ yaml_text: taCommon.value }),
+        });
+        const j = await parseJson(res);
+        if (!res.ok) { setMsg(msgC, fmtApiErr(j, 'Save failed'), true); return; }
+        setMsg(msgC, j.message || 'Saved.', false, false);
+      } catch (e) {
+        setMsg(msgC, String(e), true);
+      } finally {
+        btnDone(btn);
+      }
+    });
+
     /* === Tab activation === */
     window.__cfgTabActivate = async function () {
       await Promise.all([
         loadRecipeListForCfg(),
         loadMachineSettings(false),
         loadSchemas(),
+        loadCommonProtocol(),
       ]);
       renderPalette();
       await loadRecipeYaml();

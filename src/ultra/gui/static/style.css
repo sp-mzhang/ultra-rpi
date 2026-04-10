@@ -1700,6 +1700,11 @@ textarea {
 }
 .cfg-msg-err { color: var(--red); }
 .cfg-msg-info { color: var(--blue); }
+.cfg-hint {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
 
 /* Sub-tabs (Visual / Raw YAML) */
 .cfg-subtabs {
@@ -1863,6 +1868,17 @@ textarea {
   background: color-mix(in srgb, var(--blue) 6%, var(--bg));
 }
 .rb-step-card:active { cursor: grabbing; }
+.rb-card-name {
+  font-weight: 600;
+  display: block;
+}
+.rb-card-desc {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  line-height: 1.3;
+  margin-top: 1px;
+}
 
 /* Protocol list */
 .rb-protocol-wrap {
