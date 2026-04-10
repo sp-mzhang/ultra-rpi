@@ -147,24 +147,34 @@ class STM32Interface:
         def _loop():
             while not self._telem_stop.is_set():
                 if not self._ser or not self._ser.is_open:
-                    self._telem_stop.wait(0.1)
+                    self._telem_stop.wait(0.2)
+                    continue
+                if self._ser.in_waiting == 0:
+                    self._telem_stop.wait(0.02)
                     continue
                 acquired = self._lock.acquire(timeout=0.05)
                 if not acquired:
+                    self._telem_stop.wait(0.01)
                     continue
                 try:
                     result = self._recv_frame(
-                        timeout_s=0.05,
+                        timeout_s=0.02,
                     )
                 finally:
                     self._lock.release()
                 if result is None:
                     continue
                 rsp_cmd, rsp_data = result
-                if fp.is_async_msg(rsp_cmd):
-                    self._dispatch_motor_telem(
-                        rsp_cmd, rsp_data,
+                if not fp.is_async_msg(rsp_cmd):
+                    LOG.debug(
+                        'telem-reader: dropped non-async '
+                        'frame 0x%04X (%d bytes)',
+                        rsp_cmd, len(rsp_data),
                     )
+                    continue
+                self._dispatch_motor_telem(
+                    rsp_cmd, rsp_data,
+                )
 
         self._telem_thread = threading.Thread(
             target=_loop, daemon=True,
@@ -174,7 +184,8 @@ class STM32Interface:
         LOG.info('Telemetry reader started')
 
     def stop_telem_reader(self) -> None:
-        '''Stop the background telemetry reader thread.'''
+        '''Stop the background telemetry reader thread and
+        disable firmware telemetry.'''
         stop = getattr(self, '_telem_stop', None)
         if stop is None:
             return
@@ -184,6 +195,17 @@ class STM32Interface:
             t.join(timeout=2.0)
         self._telem_stop = None
         self._telem_thread = None
+        self._motor_telem_cb = None
+        try:
+            self.send_command(
+                cmd={
+                    'cmd': 'set_motor_telem',
+                    'enable': False,
+                },
+                timeout_s=1.0,
+            )
+        except Exception:
+            pass
         LOG.info('Telemetry reader stopped')
 
     def request_abort(self) -> None:

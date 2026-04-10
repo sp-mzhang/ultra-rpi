@@ -1568,6 +1568,7 @@
     if (waitDone === undefined) {
       waitDone = WAIT_DONE_CMDS.has(cmd);
     }
+    if (typeof _stopMotorStream === 'function') _stopMotorStream();
     try {
       const res = await fetch(
         '/api/stm32/command', {
@@ -2265,6 +2266,7 @@
       streaming = false;
       if (toggleBtn) toggleBtn.textContent = 'Start Stream';
     }
+    window._stopMotorStream = stopStream;
 
     function startStream() {
       history.x.length = 0;

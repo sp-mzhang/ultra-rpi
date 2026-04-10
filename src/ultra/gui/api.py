@@ -601,6 +601,8 @@ def create_api_router(
                        'allowed',
             )
         stm32 = _get_eng_stm32()
+        if stm32 is not None:
+            stm32.stop_telem_reader()
         if stm32 is None:
             raise HTTPException(
                 status_code=503,
@@ -647,6 +649,7 @@ def create_api_router(
                 status_code=503,
                 detail='STM32 not connected',
             )
+        stm32.stop_telem_reader()
         loop = asyncio.get_running_loop()
         r = await loop.run_in_executor(
             None,
@@ -690,13 +693,21 @@ def create_api_router(
                 pass
 
         stm32.set_motor_telem_callback(_on_sample)
-        await loop.run_in_executor(
+        rsp = await loop.run_in_executor(
             None,
             lambda: stm32.send_command(
                 cmd={'cmd': 'set_motor_telem', 'enable': True},
                 timeout_s=2.0,
             ),
         )
+        if rsp is None:
+            stm32.set_motor_telem_callback(None)
+            raise HTTPException(
+                status_code=503,
+                detail='Firmware did not acknowledge '
+                       'set_motor_telem — command may '
+                       'not be supported on this FW',
+            )
         stm32.start_telem_reader()
 
         async def _generate():
@@ -717,20 +728,6 @@ def create_api_router(
                 pass
             finally:
                 stm32.stop_telem_reader()
-                stm32.set_motor_telem_callback(None)
-                try:
-                    await loop.run_in_executor(
-                        None,
-                        lambda: stm32.send_command(
-                            cmd={
-                                'cmd': 'set_motor_telem',
-                                'enable': False,
-                            },
-                            timeout_s=2.0,
-                        ),
-                    )
-                except Exception:
-                    pass
 
         return StreamingResponse(
             _generate(),
