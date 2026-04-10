@@ -1335,6 +1335,41 @@ def _p(
     return d
 
 
+STEP_DESCRIPTIONS: dict[str, str] = {
+    'set_loc_offset':          'Send a global calibration offset to the firmware',
+    'centrifuge_unlock':       'Unlock the cartridge holder',
+    'centrifuge_lock':         'Lock the cartridge holder',
+    'centrifuge_spin':         'Spin centrifuge at given RPM for duration',
+    'centrifuge_rotate':       'Rotate centrifuge carousel to a specific angle',
+    'centrifuge_shake':        'Shake the carousel back and forth',
+    'centrifuge_goto_serum':   'Rotate centrifuge to serum-access position',
+    'centrifuge_goto_pipette': 'Rotate centrifuge to pipette-access position',
+    'lift_move':               'Move lift to a target height in mm',
+    'lid':                     'Open or close the lid',
+    'move_to_location':        'Move gantry XY to a well/port location',
+    'tip_pick':                'Pick up a tip',
+    'tip_swap':                'Swap from one tip to another',
+    'tip_return':              'Return tip to rack',
+    'lld':                     'Detect cartridge Z via liquid level detection',
+    'reagent_transfer':        'Aspirate from source, cart-dispense to target',
+    'reagent_transfer_bf':     'Back-and-forth reagent transfer for slow-binding reagents',
+    'well_transfer':           'Direct well-to-well transfer (no cartridge)',
+    'well_transfer_return':    'Aspirate from source, dispense to dest, return tip',
+    'well_to_chip':            'Aspirate from well, cart-dispense to chip',
+    'tip_mix':                 'Mix reagent in a well by repeated asp/disp cycles',
+    'home_z':                  'Home Z axis only (retract tip before rotation)',
+    'well_dispense':           'Dispense into a well at the given location',
+    'smart_aspirate':          'Smart-aspirate from a well with LLD and piston reset',
+    'dilution_transfer':       'Smart-aspirate from source, dispense to dest',
+    'home_all':                'Home all axes',
+    'home_close':              'Home all axes and close lid',
+    'pump_init':               'Initialize the pump',
+    'led_pattern':             'Set LED pattern',
+    'delay':                   'Wait for a specified duration',
+    'timing_marker':           'Record a timing marker in sample log',
+}
+
+
 STEP_SCHEMAS: dict[str, list[dict]] = {
     'set_loc_offset': [
         _p('dx_um', default=0),

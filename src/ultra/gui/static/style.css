@@ -1821,12 +1821,14 @@ textarea {
 .rb-builder {
   display: grid;
   grid-template-columns: 240px 1fr;
+  grid-template-rows: 1fr;
   gap: 10px;
   min-height: 280px;
+  max-height: 60vh;
   margin-bottom: 10px;
 }
 @media (max-width: 900px) {
-  .rb-builder { grid-template-columns: 1fr; }
+  .rb-builder { grid-template-columns: 1fr; max-height: none; }
 }
 
 .rb-palette {
@@ -1835,7 +1837,7 @@ textarea {
   border-radius: 6px;
   padding: 8px;
   overflow-y: auto;
-  max-height: 420px;
+  min-height: 0;
 }
 .rb-palette h3 {
   font-size: 0.82rem;
@@ -1868,9 +1870,8 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px;
-  min-height: 200px;
+  min-height: 0;
   overflow-y: auto;
-  max-height: 500px;
 }
 .rb-protocol-wrap h3 {
   font-size: 0.82rem;
@@ -1891,6 +1892,58 @@ textarea {
   text-align: center;
   padding: 30px 0;
 }
+.rb-include-banner {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border: 1px dashed var(--accent);
+  border-radius: 5px;
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rb-include-banner .rb-inc-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.rb-include-banner .rb-inc-ref {
+  font-family: monospace;
+  font-size: 0.72rem;
+  opacity: 0.7;
+}
+.rb-phase-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  margin: 6px 0 2px;
+  background: color-mix(in srgb, var(--blue) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
+  border-radius: 5px;
+  font-size: 0.76rem;
+}
+.rb-phase-name {
+  width: 36px;
+  text-align: center;
+  font-weight: 700;
+}
+.rb-phase-label {
+  flex: 1;
+  min-width: 100px;
+}
+.rb-phase-del {
+  background: none;
+  border: none;
+  color: var(--red);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0 4px;
+  opacity: 0.6;
+}
+.rb-phase-del:hover { opacity: 1; }
 .rb-drop-over {
   outline: 2px dashed var(--blue);
   outline-offset: -2px;

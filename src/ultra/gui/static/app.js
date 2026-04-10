@@ -2959,11 +2959,43 @@
 
     /* === Recipe Editor State === */
     let stepSchemas = {};
+    let stepDescriptions = {};
+
+    const CARTRIDGE_PORTS = [
+      { name: 'PP1', loc: 8 },  { name: 'PP2', loc: 9 },
+      { name: 'PP3', loc: 10 }, { name: 'PP4', loc: 11 },
+      { name: 'PP5', loc: 12 }, { name: 'PP6', loc: 13 },
+      { name: 'PP7', loc: 14 }, { name: 'PP8', loc: 15 },
+    ];
+    const CARTRIDGE_PORT_NAMES = CARTRIDGE_PORTS.map((p) => p.name);
+
+    const SLOT_MAP = [
+      { loc: 18, label: 'SERUM (18)' },
+      { loc: 21, label: 'S1 (21)' },  { loc: 22, label: 'S2 (22)' },
+      { loc: 23, label: 'S3 (23)' },  { loc: 24, label: 'S4 (24)' },
+      { loc: 25, label: 'S5 (25)' },  { loc: 26, label: 'S6 (26)' },
+      { loc: 27, label: 'S7 (27)' },  { loc: 28, label: 'S8 (28)' },
+      { loc: 29, label: 'S9 (29)' },
+      { loc: 33, label: 'M1 (33)' },  { loc: 34, label: 'M2 (34)' },
+      { loc: 35, label: 'M3 (35)' },  { loc: 36, label: 'M4 (36)' },
+      { loc: 37, label: 'M5 (37)' },  { loc: 38, label: 'M6 (38)' },
+      { loc: 39, label: 'M7 (39)' },  { loc: 40, label: 'M8 (40)' },
+      { loc: 41, label: 'M9 (41)' },  { loc: 42, label: 'M10 (42)' },
+      { loc: 43, label: 'M11 (43)' }, { loc: 44, label: 'M12 (44)' },
+      { loc: 45, label: 'M13 (45)' }, { loc: 46, label: 'M14 (46)' },
+      { loc: 47, label: 'M15 (47)' },
+    ];
+
+    const DEFAULT_INCLUDE_START = { name: 'A', label: 'Centrifuge', include: '_common.yaml#centrifuge_phase' };
+    const DEFAULT_INCLUDE_END   = { name: 'C', label: 'Lock', include: '_common.yaml#lock_phase' };
+
     let builderModel = {
       name: '', description: '',
       constants: {}, reader: {}, peak_detect: {},
       wells: {},
-      phases: [{ name: 'A', label: 'Main', steps: [] }],
+      includeStart: { ...DEFAULT_INCLUDE_START },
+      includeEnd:   { ...DEFAULT_INCLUDE_END },
+      phases: [{ name: 'B', label: 'Pipetting', steps: [] }],
     };
 
     /* --- fetch schemas once --- */
@@ -2973,6 +3005,7 @@
         const res = await fetch('/api/protocol/step-schemas');
         const j = await res.json();
         stepSchemas = j.schemas || {};
+        stepDescriptions = j.descriptions || {};
       } catch (_) {}
     }
 
@@ -3013,15 +3046,49 @@
     }
 
     function dumpYaml(obj) {
-      if (typeof jsyaml !== 'undefined') {
-        return jsyaml.dump(obj, {
-          flowLevel: 3,
-          lineWidth: 120,
-          noRefs: true,
-          sortKeys: false,
-        });
+      if (typeof jsyaml === 'undefined') return JSON.stringify(obj, null, 2);
+
+      const KEY_ORDER = [
+        'name', 'description', 'reader', 'peak_detect', 'constants', 'wells', 'phases',
+      ];
+      const ordered = {};
+      for (const k of KEY_ORDER) {
+        if (obj[k] !== undefined) ordered[k] = obj[k];
       }
-      return JSON.stringify(obj, null, 2);
+      for (const k of Object.keys(obj)) {
+        if (!(k in ordered)) ordered[k] = obj[k];
+      }
+
+      const wellsBlock = ordered.wells;
+      delete ordered.wells;
+      let yaml = jsyaml.dump(ordered, {
+        lineWidth: 120,
+        noRefs: true,
+        sortKeys: false,
+        quotingType: "'",
+        forceQuotes: false,
+      });
+
+      if (wellsBlock && Object.keys(wellsBlock).length) {
+        const maxNameLen = Math.max(...Object.keys(wellsBlock).map((n) => n.length));
+        let wellsYaml = 'wells:\n';
+        for (const [wn, wv] of Object.entries(wellsBlock)) {
+          const pad = ' '.repeat(Math.max(0, maxNameLen - wn.length));
+          const parts = [];
+          if (wv.loc !== undefined) parts.push(`loc: ${wv.loc}`);
+          if (wv.reagent !== undefined) parts.push(`reagent: ${wv.reagent}`);
+          if (wv.volume_ul !== undefined) parts.push(`volume_ul: ${wv.volume_ul}`);
+          wellsYaml += `  ${wn}:${pad} {${parts.join(', ')}}\n`;
+        }
+
+        const phasesIdx = yaml.indexOf('phases:');
+        if (phasesIdx !== -1) {
+          yaml = yaml.slice(0, phasesIdx) + wellsYaml + '\n' + yaml.slice(phasesIdx);
+        } else {
+          yaml += '\n' + wellsYaml;
+        }
+      }
+      return yaml;
     }
 
     function yamlToBuilder() {
@@ -3035,27 +3102,30 @@
         builderModel.constants = raw.constants || {};
         builderModel.reader = raw.reader || {};
         builderModel.peak_detect = raw.peak_detect || {};
+
         builderModel.wells = {};
         if (raw.wells && typeof raw.wells === 'object') {
           for (const [k, v] of Object.entries(raw.wells)) {
+            if (CARTRIDGE_PORT_NAMES.includes(k)) continue;
             builderModel.wells[k] = typeof v === 'object' ? { ...v } : {};
           }
         }
+
+        builderModel.includeStart = { ...DEFAULT_INCLUDE_START };
+        builderModel.includeEnd = { ...DEFAULT_INCLUDE_END };
         builderModel.phases = [];
+
         if (Array.isArray(raw.phases)) {
           for (const ph of raw.phases) {
-            const phase = {
-              name: ph.name || '',
-              label: ph.label || '',
-              steps: [],
-            };
             if (ph.include) {
-              phase.steps.push({
-                type: '_include',
-                label: String(ph.include),
-                params: { include: ph.include },
-              });
+              const ref = String(ph.include);
+              if (ref.includes('centrifuge')) {
+                builderModel.includeStart = { name: ph.name || 'A', label: ph.label || 'Centrifuge', include: ref };
+              } else if (ref.includes('lock')) {
+                builderModel.includeEnd = { name: ph.name || 'C', label: ph.label || 'Lock', include: ref };
+              }
             } else if (Array.isArray(ph.steps)) {
+              const phase = { name: ph.name || '', label: ph.label || '', steps: [] };
               for (const s of ph.steps) {
                 const p = { ...s };
                 delete p.type; delete p.label;
@@ -3065,12 +3135,12 @@
                   params: p,
                 });
               }
+              builderModel.phases.push(phase);
             }
-            builderModel.phases.push(phase);
           }
         }
         if (!builderModel.phases.length) {
-          builderModel.phases = [{ name: 'A', label: 'Main', steps: [] }];
+          builderModel.phases = [{ name: 'B', label: 'Pipetting', steps: [] }];
         }
         renderBuilder();
       } catch (e) {
@@ -3085,13 +3155,28 @@
       if (Object.keys(builderModel.reader).length) obj.reader = builderModel.reader;
       if (Object.keys(builderModel.peak_detect).length) obj.peak_detect = builderModel.peak_detect;
       if (Object.keys(builderModel.constants).length) obj.constants = builderModel.constants;
-      if (Object.keys(builderModel.wells).length) obj.wells = builderModel.wells;
-      obj.phases = builderModel.phases.map((ph) => {
-        const incStep = ph.steps.find((s) => s.type === '_include');
-        if (incStep) {
-          return { name: ph.name, label: ph.label, include: incStep.params.include };
+
+      const allWells = { ...builderModel.wells };
+      const usedPorts = new Set();
+      for (const ph of builderModel.phases) {
+        for (const s of ph.steps) {
+          for (const v of Object.values(s.params)) {
+            if (CARTRIDGE_PORT_NAMES.includes(String(v))) usedPorts.add(String(v));
+          }
         }
-        return {
+      }
+      for (const pp of CARTRIDGE_PORTS) {
+        if (usedPorts.has(pp.name)) {
+          allWells[pp.name] = { loc: pp.loc, reagent: 'Cartridge', volume_ul: 0 };
+        }
+      }
+      if (Object.keys(allWells).length) obj.wells = allWells;
+
+      const is = builderModel.includeStart;
+      const ie = builderModel.includeEnd;
+      obj.phases = [
+        { name: is.name, label: is.label, include: is.include },
+        ...builderModel.phases.map((ph) => ({
           name: ph.name,
           label: ph.label,
           steps: ph.steps.map((s) => {
@@ -3102,8 +3187,9 @@
             }
             return step;
           }),
-        };
-      });
+        })),
+        { name: ie.name, label: ie.label, include: ie.include },
+      ];
       taR.value = dumpYaml(obj);
     }
 
@@ -3113,7 +3199,9 @@
         name: '', description: '',
         constants: {}, reader: {}, peak_detect: {},
         wells: {},
-        phases: [{ name: 'A', label: 'Main', steps: [] }],
+        includeStart: { ...DEFAULT_INCLUDE_START },
+        includeEnd:   { ...DEFAULT_INCLUDE_END },
+        phases: [{ name: 'B', label: 'Pipetting', steps: [] }],
       };
       taR.value = '';
       sel.value = '';
@@ -3129,7 +3217,7 @@
     const wellsTbody = $('#rb-wells-table tbody');
 
     function wellNames() {
-      return Object.keys(builderModel.wells);
+      return [...Object.keys(builderModel.wells), ...CARTRIDGE_PORT_NAMES];
     }
 
     function renderBuilder() {
@@ -3141,13 +3229,19 @@
     }
 
     /* --- wells table --- */
+    function slotOptions(selectedLoc) {
+      return SLOT_MAP.map((s) =>
+        `<option value="${s.loc}"${s.loc === selectedLoc ? ' selected' : ''}>${s.label}</option>`
+      ).join('');
+    }
+
     function renderWellsTable() {
       wellsTbody.innerHTML = '';
       for (const [name, w] of Object.entries(builderModel.wells)) {
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td><input value="${name}" data-field="name" data-orig="${name}"></td>
-          <td><input type="number" value="${w.loc || 0}" data-field="loc"></td>
+          <td><select data-field="loc">${slotOptions(w.loc || 0)}</select></td>
           <td><input value="${w.reagent || ''}" data-field="reagent"></td>
           <td><input type="number" value="${w.volume_ul || 0}" data-field="volume_ul"></td>
           <td><button class="rb-well-del" title="Remove">&times;</button></td>
@@ -3157,7 +3251,7 @@
           renderWellsTable();
           refreshWellDropdowns();
         });
-        tr.querySelectorAll('input').forEach((inp) => {
+        tr.querySelectorAll('input, select').forEach((inp) => {
           inp.addEventListener('change', () => {
             const orig = inp.dataset.orig || name;
             const field = inp.dataset.field;
@@ -3200,11 +3294,12 @@
       paletteEl.innerHTML = '';
       const types = Object.keys(stepSchemas).length
         ? Object.keys(stepSchemas)
-        : Object.keys(builderModel.phases[0]?.steps || {});
+        : [];
       for (const t of types.sort()) {
         const card = document.createElement('div');
         card.className = 'rb-step-card';
         card.textContent = t;
+        if (stepDescriptions[t]) card.title = stepDescriptions[t];
         card.draggable = true;
         card.addEventListener('dragstart', (e) => {
           e.dataTransfer.setData('text/plain', t);
@@ -3226,26 +3321,80 @@
       return out;
     }
 
+    function flatIdxToPhase(flatIdx) {
+      let count = 0;
+      for (let pi = 0; pi < builderModel.phases.length; pi++) {
+        const ph = builderModel.phases[pi];
+        for (let si = 0; si < ph.steps.length; si++) {
+          if (count === flatIdx) return { pi, si };
+          count++;
+        }
+      }
+      return null;
+    }
+
+    function renderIncludeBanner(ref, label) {
+      const div = document.createElement('div');
+      div.className = 'rb-include-banner';
+      div.innerHTML = `<span class="rb-inc-label">${label}</span>` +
+        `<span class="rb-inc-ref">${ref}</span>`;
+      return div;
+    }
+
+    function renderPhaseHeader(phase, phaseIdx) {
+      const div = document.createElement('div');
+      div.className = 'rb-phase-header';
+      div.innerHTML = `
+        <input class="rb-input rb-phase-name" value="${phase.name}" placeholder="name"
+          title="Phase name (e.g. B, C)" data-field="name">
+        <input class="rb-input rb-phase-label" value="${phase.label}" placeholder="label"
+          title="Phase label" data-field="label">
+        <button class="rb-phase-del" title="Remove phase">&times;</button>
+      `;
+      div.querySelector('[data-field="name"]').addEventListener('change', (e) => {
+        builderModel.phases[phaseIdx].name = e.target.value;
+      });
+      div.querySelector('[data-field="label"]').addEventListener('change', (e) => {
+        builderModel.phases[phaseIdx].label = e.target.value;
+      });
+      div.querySelector('.rb-phase-del').addEventListener('click', () => {
+        if (builderModel.phases.length <= 1) return;
+        builderModel.phases.splice(phaseIdx, 1);
+        renderProtocolList();
+      });
+      return div;
+    }
+
     function renderProtocolList() {
       protoListEl.innerHTML = '';
       const steps = allSteps();
       stepCountEl.textContent = `(${steps.length} steps)`;
-      if (!steps.length) {
-        protoListEl.innerHTML = '<p class="rb-drop-hint">Drag steps here or double-click to add</p>';
-        return;
-      }
-      steps.forEach((s, idx) => {
-        const div = document.createElement('div');
-        div.className = 'rb-proto-step';
-        div.draggable = true;
-        div.dataset.idx = idx;
-        const schema = stepSchemas[s.type] || [];
 
-        let paramsHtml = '';
-        if (s.type === '_include') {
-          paramsHtml = `<div class="rb-param"><label>include:</label>
-            <input value="${s.params.include || ''}" data-pkey="include"></div>`;
-        } else {
+      protoListEl.appendChild(
+        renderIncludeBanner(builderModel.includeStart.include, builderModel.includeStart.label)
+      );
+
+      let globalIdx = 0;
+      builderModel.phases.forEach((phase, phaseIdx) => {
+        protoListEl.appendChild(renderPhaseHeader(phase, phaseIdx));
+
+        if (!phase.steps.length) {
+          const hint = document.createElement('p');
+          hint.className = 'rb-drop-hint';
+          hint.dataset.phaseIdx = phaseIdx;
+          hint.textContent = 'Drag steps here or double-click to add';
+          protoListEl.appendChild(hint);
+        }
+
+        phase.steps.forEach((s, localIdx) => {
+          const idx = globalIdx++;
+          const div = document.createElement('div');
+          div.className = 'rb-proto-step';
+          div.draggable = true;
+          div.dataset.idx = idx;
+          const schema = stepSchemas[s.type] || [];
+
+          let paramsHtml = '';
           for (const p of schema) {
             const val = s.params[p.name] !== undefined ? s.params[p.name] : (p.default !== undefined ? p.default : '');
             if (p.well_ref) {
@@ -3265,64 +3414,81 @@
                 <input value="${val}" data-pkey="${p.name}"></div>`;
             }
           }
-        }
 
-        div.innerHTML = `
-          <div class="rb-step-header">
-            <span class="rb-step-num">${idx + 1}</span>
-            <span class="rb-step-type">${s.type}</span>
-            <input class="rb-input" value="${s.label}" placeholder="label"
-              style="width:140px;margin-left:6px" data-field="label">
-            <button class="rb-step-del" title="Remove">&times;</button>
-          </div>
-          <div class="rb-step-params">${paramsHtml}</div>
-        `;
+          div.innerHTML = `
+            <div class="rb-step-header">
+              <span class="rb-step-num">${idx + 1}</span>
+              <span class="rb-step-type">${s.type}</span>
+              <input class="rb-input" value="${s.label}" placeholder="label"
+                style="width:140px;margin-left:6px" data-field="label">
+              <button class="rb-step-del" title="Remove">&times;</button>
+            </div>
+            <div class="rb-step-params">${paramsHtml}</div>
+          `;
 
-        div.querySelector('.rb-step-del').addEventListener('click', () => {
-          removeStep(idx);
-        });
-        div.querySelector('[data-field="label"]').addEventListener('change', (e) => {
-          s.label = e.target.value;
-        });
-        div.querySelectorAll('[data-pkey]').forEach((inp) => {
-          const ev = inp.type === 'checkbox' ? 'change' : 'change';
-          inp.addEventListener(ev, () => {
-            const k = inp.dataset.pkey;
-            if (inp.type === 'checkbox') {
-              s.params[k] = inp.checked;
+          div.querySelector('.rb-step-del').addEventListener('click', () => {
+            removeStep(idx);
+          });
+          div.querySelector('[data-field="label"]').addEventListener('change', (e) => {
+            s.label = e.target.value;
+          });
+          div.querySelectorAll('[data-pkey]').forEach((inp) => {
+            inp.addEventListener('change', () => {
+              const k = inp.dataset.pkey;
+              if (inp.type === 'checkbox') {
+                s.params[k] = inp.checked;
+              } else {
+                const v = inp.value;
+                s.params[k] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v;
+              }
+            });
+          });
+
+          div.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('application/x-step-idx', String(idx));
+            e.dataTransfer.effectAllowed = 'move';
+          });
+          div.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            div.classList.add('rb-drag-over');
+          });
+          div.addEventListener('dragleave', () => {
+            div.classList.remove('rb-drag-over');
+          });
+          div.addEventListener('drop', (e) => {
+            e.preventDefault();
+            div.classList.remove('rb-drag-over');
+            const fromIdx = e.dataTransfer.getData('application/x-step-idx');
+            if (fromIdx !== '') {
+              reorderStep(parseInt(fromIdx, 10), idx);
             } else {
-              const v = inp.value;
-              s.params[k] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v;
+              const typ = e.dataTransfer.getData('text/plain');
+              if (typ) insertStepAt(typ, idx);
             }
           });
-        });
 
-        /* drag reorder */
-        div.addEventListener('dragstart', (e) => {
-          e.dataTransfer.setData('application/x-step-idx', String(idx));
-          e.dataTransfer.effectAllowed = 'move';
+          protoListEl.appendChild(div);
         });
-        div.addEventListener('dragover', (e) => {
-          e.preventDefault();
-          div.classList.add('rb-drag-over');
-        });
-        div.addEventListener('dragleave', () => {
-          div.classList.remove('rb-drag-over');
-        });
-        div.addEventListener('drop', (e) => {
-          e.preventDefault();
-          div.classList.remove('rb-drag-over');
-          const fromIdx = e.dataTransfer.getData('application/x-step-idx');
-          if (fromIdx !== '') {
-            reorderStep(parseInt(fromIdx, 10), idx);
-          } else {
-            const typ = e.dataTransfer.getData('text/plain');
-            if (typ) insertStepAt(typ, idx);
-          }
-        });
-
-        protoListEl.appendChild(div);
       });
+
+      const addPhaseBtn = document.createElement('button');
+      addPhaseBtn.className = 'btn btn-sm btn-outline';
+      addPhaseBtn.textContent = '+ Add Phase';
+      addPhaseBtn.style.margin = '6px 0';
+      addPhaseBtn.addEventListener('click', () => {
+        const letters = builderModel.phases.map((p) => p.name);
+        let next = 'B';
+        for (let c = 66; c <= 90; c++) {
+          if (!letters.includes(String.fromCharCode(c))) { next = String.fromCharCode(c); break; }
+        }
+        builderModel.phases.push({ name: next, label: '', steps: [] });
+        renderProtocolList();
+      });
+      protoListEl.appendChild(addPhaseBtn);
+
+      protoListEl.appendChild(
+        renderIncludeBanner(builderModel.includeEnd.include, builderModel.includeEnd.label)
+      );
     }
 
     function addStepToProtocol(type) {
@@ -3331,8 +3497,8 @@
       for (const p of schema) {
         if (p.default !== undefined) params[p.name] = p.default;
       }
-      const phase = builderModel.phases[builderModel.phases.length - 1];
-      phase.steps.push({ type, label: '', params });
+      const last = builderModel.phases[builderModel.phases.length - 1];
+      last.steps.push({ type, label: '', params });
       renderProtocolList();
     }
 
@@ -3342,53 +3508,35 @@
       for (const p of schema) {
         if (p.default !== undefined) params[p.name] = p.default;
       }
-      const flat = allSteps();
-      let count = 0;
-      for (const ph of builderModel.phases) {
-        for (let i = 0; i <= ph.steps.length; i++) {
-          if (count === beforeIdx) {
-            ph.steps.splice(i, 0, { type, label: '', params });
-            renderProtocolList();
-            return;
-          }
-          if (i < ph.steps.length) count++;
-        }
+      const loc = flatIdxToPhase(beforeIdx);
+      if (loc) {
+        builderModel.phases[loc.pi].steps.splice(loc.si, 0, { type, label: '', params });
+      } else {
+        builderModel.phases[builderModel.phases.length - 1].steps.push({ type, label: '', params });
       }
-      addStepToProtocol(type);
+      renderProtocolList();
     }
 
     function removeStep(flatIdx) {
-      let count = 0;
-      for (const ph of builderModel.phases) {
-        for (let i = 0; i < ph.steps.length; i++) {
-          if (count === flatIdx) {
-            ph.steps.splice(i, 1);
-            renderProtocolList();
-            return;
-          }
-          count++;
-        }
+      const loc = flatIdxToPhase(flatIdx);
+      if (loc) {
+        builderModel.phases[loc.pi].steps.splice(loc.si, 1);
+        renderProtocolList();
       }
     }
 
     function reorderStep(fromIdx, toIdx) {
       if (fromIdx === toIdx) return;
-      const flat = allSteps();
-      const item = flat[fromIdx];
-      removeStep(fromIdx);
+      const fromLoc = flatIdxToPhase(fromIdx);
+      if (!fromLoc) return;
+      const [item] = builderModel.phases[fromLoc.pi].steps.splice(fromLoc.si, 1);
       const adjustedTo = fromIdx < toIdx ? toIdx - 1 : toIdx;
-      let count = 0;
-      for (const ph of builderModel.phases) {
-        for (let i = 0; i <= ph.steps.length; i++) {
-          if (count === adjustedTo) {
-            ph.steps.splice(i, 0, item);
-            renderProtocolList();
-            return;
-          }
-          if (i < ph.steps.length) count++;
-        }
+      const toLoc = flatIdxToPhase(adjustedTo);
+      if (toLoc) {
+        builderModel.phases[toLoc.pi].steps.splice(toLoc.si, 0, item);
+      } else {
+        builderModel.phases[builderModel.phases.length - 1].steps.push(item);
       }
-      builderModel.phases[builderModel.phases.length - 1].steps.push(item);
       renderProtocolList();
     }
 
