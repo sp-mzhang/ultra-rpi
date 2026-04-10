@@ -465,6 +465,8 @@
             <button class="eng-tab"
               data-eng="environment">Air Heater</button>
             <button class="eng-tab"
+              data-eng="fcheater">FC Heater</button>
+            <button class="eng-tab"
               data-eng="accel">Accelerometer</button>
             <button class="eng-tab"
               data-eng="fans">Fans</button>
@@ -1272,6 +1274,124 @@
       <div class="eng-btn-row">
         <button id="eng-ah-get-status"
           class="eng-cmd-btn">Get Status</button>
+      </div>
+    </fieldset>
+  </div>
+
+  <!-- ===== FC HEATER ===== -->
+  <div class="eng-pane" id="eng-fcheater" hidden>
+
+    <div class="eng-2col">
+      <!-- Manual PWM -->
+      <fieldset class="eng-inner-fs">
+        <legend>Manual PWM</legend>
+        <div class="eng-row">
+          <label><input type="checkbox"
+            id="eng-fc-enable"> Heater Enable</label>
+        </div>
+        <div class="eng-form-grid">
+          <label>Heater PWM:</label>
+          <div class="eng-row" style="margin:0">
+            <input type="range" id="eng-fc-duty"
+              min="0" max="100" value="0">
+            <span id="eng-fc-duty-val">0</span>%
+            <button id="eng-fc-duty-set"
+              class="eng-cmd-btn eng-btn-xs">Set</button>
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- PID Controller -->
+      <fieldset class="eng-inner-fs">
+        <legend>PID Temperature Controller</legend>
+        <div class="eng-form-grid">
+          <label>Target (&deg;C):</label>
+          <input type="number" id="eng-fc-pid-sp"
+            value="32" min="20" max="50" step="0.5"
+            class="eng-spin-sm">
+          <label>Kp:</label>
+          <input type="number" id="eng-fc-pid-kp"
+            value="0.03" min="0" max="10" step="0.01"
+            class="eng-spin-sm">
+          <label>Ki:</label>
+          <input type="number" id="eng-fc-pid-ki"
+            value="30" min="0" max="100" step="1"
+            class="eng-spin-sm">
+          <label>Kd:</label>
+          <input type="number" id="eng-fc-pid-kd"
+            value="6.4" min="0" max="100" step="0.1"
+            class="eng-spin-sm">
+        </div>
+        <div class="eng-btn-row">
+          <button id="eng-fc-pid-start"
+            class="eng-cmd-btn">Start PID</button>
+          <button id="eng-fc-pid-stop"
+            class="eng-cmd-btn">Stop PID</button>
+          <span id="eng-fc-pid-state">IDLE</span>
+        </div>
+      </fieldset>
+    </div>
+
+    <!-- Status -->
+    <fieldset class="eng-inner-fs">
+      <legend>Status</legend>
+      <div class="eng-status-labels">
+        <span>Temperature:
+          <b id="eng-fc-temp">--</b></span>
+        <span>Duty:
+          <b id="eng-fc-st-duty">--</b></span>
+        <span>Heater EN:
+          <b id="eng-fc-st-en">--</b></span>
+        <span>OTP:
+          <b id="eng-fc-st-otp">--</b></span>
+        <span>Controller:
+          <b id="eng-fc-st-ctrl">--</b></span>
+        <span>Heating:
+          <b id="eng-fc-st-heating">--</b></span>
+      </div>
+      <div class="eng-btn-row">
+        <button id="eng-fc-get-status"
+          class="eng-cmd-btn">Get Status</button>
+      </div>
+    </fieldset>
+
+    <!-- Live Temperature Graph -->
+    <fieldset class="eng-inner-fs">
+      <legend>Temperature Graph</legend>
+      <canvas id="fc-temp-chart" width="600" height="180"></canvas>
+      <div class="motor-chart-legend">
+        <span style="color:#3b82f6">Temp</span>
+        <span style="color:#ef4444">Setpoint</span>
+      </div>
+    </fieldset>
+
+    <!-- Liquid Test Sequence -->
+    <fieldset class="eng-inner-fs">
+      <legend>Liquid Test Sequence</legend>
+      <div class="eng-form-grid">
+        <label>Source well:</label>
+        <input type="text" id="eng-fc-seq-source"
+          value="M1" class="eng-spin-sm"
+          placeholder="e.g. M1">
+        <label>Asp vol (&micro;L):</label>
+        <input type="number" id="eng-fc-seq-asp-vol"
+          value="300" min="10" max="1000" step="10"
+          class="eng-spin-sm">
+        <label>Asp speed (&micro;L/s):</label>
+        <input type="number" id="eng-fc-seq-asp-speed"
+          value="100" min="1" max="1000" step="1"
+          class="eng-spin-sm">
+        <label>Cart vel (&micro;L/s):</label>
+        <input type="number" id="eng-fc-seq-cart-vel"
+          value="1.5" min="0.1" max="10" step="0.1"
+          class="eng-spin-sm">
+      </div>
+      <div class="eng-btn-row">
+        <button id="eng-fc-seq-run"
+          class="eng-cmd-btn">Run Sequence</button>
+        <button id="eng-fc-seq-stop"
+          class="eng-cmd-btn">Stop</button>
+        <span id="eng-fc-seq-status">IDLE</span>
       </div>
     </fieldset>
   </div>

@@ -222,11 +222,12 @@ RSP_ACCEL_STATUS          = 0x9E01
 CMD_TEMP_GET_STATUS       = 0x9101
 RSP_TEMP_STATUS           = 0xA101
 
-# Test (0x8Fxx)
-CMD_TEST_INIT_FLAGS = 0x8F01
-CMD_TEST_SET_FLAG   = 0x8F02
-CMD_TEST_GET_FLAGS  = 0x8F03
-CMD_TEST_TRANSITION = 0x8F04
+# Flowcell heater (0x8Fxx)
+CMD_FC_HEATER_SET_DUTY    = 0x8F01
+CMD_FC_HEATER_SET_EN      = 0x8F02
+CMD_FC_HEATER_GET_STATUS  = 0x8F03
+CMD_FC_HEATER_SET_CTRL    = 0x8F04
+RSP_FC_HEATER_STATUS      = 0x9F03
 
 # Specific response IDs for custom result frames
 RSP_LLD_PERFORM      = 0x9A01
@@ -343,10 +344,10 @@ CMD_NAME_TO_ID = {
     'cart_dispense':        CMD_CART_DISPENSE,
     'tip_mix':              CMD_TIP_MIX,
     'get_pressure_data':    CMD_GET_PRESS_DATA,
-    'test_init_flags':      CMD_TEST_INIT_FLAGS,
-    'test_set_flag':        CMD_TEST_SET_FLAG,
-    'test_get_flags':       CMD_TEST_GET_FLAGS,
-    'test_transition':      CMD_TEST_TRANSITION,
+    'fc_heater_set_duty':   CMD_FC_HEATER_SET_DUTY,
+    'fc_heater_set_en':     CMD_FC_HEATER_SET_EN,
+    'fc_heater_get_status': CMD_FC_HEATER_GET_STATUS,
+    'fc_heater_set_ctrl':   CMD_FC_HEATER_SET_CTRL,
     'led_set_pixel':        CMD_LED_SET_PIXEL,
     'led_set_button':       CMD_LED_SET_BUTTON,
     'led_set_pixel_off':    CMD_LED_SET_PIXEL_OFF,
@@ -1730,28 +1731,71 @@ def pack_tip_mix(
     )
 
 
-def pack_test_set_flag(
+def pack_fc_heater_set_duty(seq: int, pct: int) -> bytes:
+    '''Pack CMD_FC_HEATER_SET_DUTY payload. pct = 0-100.'''
+    return struct.pack('<IB', seq, pct)
+
+
+def pack_fc_heater_set_en(seq: int, enable: bool) -> bytes:
+    '''Pack CMD_FC_HEATER_SET_EN payload.'''
+    return struct.pack('<IB', seq, 1 if enable else 0)
+
+
+def pack_fc_heater_get_status(seq: int) -> bytes:
+    '''Pack CMD_FC_HEATER_GET_STATUS payload (seq only).'''
+    return struct.pack('<I', seq)
+
+
+def pack_fc_heater_set_ctrl(
         seq: int,
-        flag_name: str,
-        value: bool,
+        setpoint_x10: int,
+        kp_x1000: int,
+        ki_x1000: int,
+        kd_x1000: int,
+        enable: bool,
 ) -> bytes:
-    '''Pack CMD_TEST_SET_FLAG payload.'''
-    name_bytes = flag_name.encode('ascii')
-    if len(name_bytes) > 63:
-        name_bytes = name_bytes[:63]
-    return (
-        struct.pack('<IBB', seq, 1 if value else 0, len(name_bytes))
-        + name_bytes
+    '''Pack CMD_FC_HEATER_SET_CTRL payload (13 bytes).
+
+    Wire layout: seq(4) + setpoint_x10(2) + kp_x1000(2) +
+                 ki_x1000(2) + kd_x1000(2) + enable(1).
+    '''
+    return struct.pack(
+        '<IHHHHB', seq,
+        setpoint_x10, kp_x1000, ki_x1000, kd_x1000,
+        1 if enable else 0,
     )
 
 
-def pack_test_transition(
-        seq: int,
-        from_state: int,
-        to_state: int,
-) -> bytes:
-    '''Pack CMD_TEST_TRANSITION payload.'''
-    return struct.pack('<IBB', seq, from_state, to_state)
+def unpack_fc_heater_status(data: bytes) -> dict:
+    '''Unpack FC_HEATER_GET_STATUS response (0x9F03).
+
+    proto_rsp_fc_heater_status_t (20 bytes packed):
+        seq(4) + error(1) + temp_x100(2) + heater_duty(1) +
+        heater_en(1) + otp(1) + ctrl_enabled(1) +
+        ctrl_setpoint_x10(2) + ctrl_kp_x1000(2) +
+        ctrl_ki_x1000(2) + ctrl_kd_x1000(2) + ctrl_heating(1)
+    '''
+    if len(data) < 20:
+        return {'seq': 0, 'error': 0xFF}
+    (seq, error, temp_x100, h_duty, h_en, otp,
+     ctrl_en, ctrl_sp_x10, ctrl_kp, ctrl_ki, ctrl_kd,
+     ctrl_heating) = struct.unpack_from(
+        '<IBhBBBBHHHHB', data,
+    )
+    return {
+        'seq': seq,
+        'error': error,
+        'temp_c': temp_x100 / 100.0,
+        'heater_duty': h_duty,
+        'heater_en': bool(h_en),
+        'otp': bool(otp),
+        'ctrl_enabled': bool(ctrl_en),
+        'ctrl_setpoint_c': ctrl_sp_x10 / 10.0,
+        'ctrl_kp': ctrl_kp / 1000.0,
+        'ctrl_ki': ctrl_ki / 1000.0,
+        'ctrl_kd': ctrl_kd / 1000.0,
+        'ctrl_heating': bool(ctrl_heating),
+    }
 
 
 # =============================================================================

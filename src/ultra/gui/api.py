@@ -1223,4 +1223,175 @@ def create_api_router(
         from ultra.protocol.steps import STEP_SCHEMAS, STEP_DESCRIPTIONS
         return {'schemas': STEP_SCHEMAS, 'descriptions': STEP_DESCRIPTIONS}
 
+    # ── FC Liquid Test Sequence ────────────────────────
+    _fc_seq_state: dict[str, Any] = {
+        'state': 'idle', 'step': '', 'thread': None,
+    }
+
+    WELL_NAME_TO_LOC: dict[str, int] = {
+        'SERUM': 18,
+        'S1': 21, 'S2': 22, 'S3': 23, 'S4': 24,
+        'S5': 25, 'S6': 26, 'S7': 27, 'S8': 28, 'S9': 29,
+        'M1': 33, 'M2': 34, 'M3': 35, 'M4': 36,
+        'M5': 37, 'M6': 38, 'M7': 39, 'M8': 40,
+        'M9': 41, 'M10': 42, 'M11': 43, 'M12': 44,
+        'M13': 45, 'M14': 46, 'M15': 47,
+        'PP1': 8, 'PP2': 9, 'PP3': 10, 'PP4': 11,
+        'PP5': 12, 'PP6': 13, 'PP7': 14, 'PP8': 15,
+    }
+
+    class FcLiquidSeqRequest(BaseModel):
+        source_well: str = 'M1'
+        aspirate_vol_ul: float = 300
+        aspirate_speed_ul_s: float = 100
+        cart_vel_ul_s: float = 1.5
+
+    @router.post('/fc-liquid-sequence')
+    async def fc_liquid_sequence_start(
+        req: FcLiquidSeqRequest,
+    ):
+        if _fc_seq_state['state'] == 'running':
+            raise HTTPException(
+                status_code=409,
+                detail='Sequence already running',
+            )
+        src_name = req.source_well.upper()
+        src_loc = WELL_NAME_TO_LOC.get(src_name)
+        if src_loc is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f'Unknown well: {src_name}',
+            )
+        pp4_loc = WELL_NAME_TO_LOC['PP4']
+
+        import threading
+
+        stm32 = app.get_stm32()
+
+        def _ok(r):
+            if r is None:
+                return False
+            if isinstance(r, bool):
+                return r
+            return r.get('error', 0xFF) == 0
+
+        def _aborted():
+            return stm32._abort_flag.is_set()
+
+        def _set(step_label: str):
+            _fc_seq_state['step'] = step_label
+            LOG.info('FC liquid seq: %s', step_label)
+
+        def _run():
+            try:
+                _fc_seq_state['state'] = 'running'
+                stm32.clear_abort()
+
+                _set('Home all')
+                r = stm32.send_command_wait_done(
+                    cmd={'cmd': 'home_all'},
+                    timeout_s=120.0,
+                )
+                if not _ok(r) or _aborted():
+                    return
+
+                _set('Tip pickup (slot 4)')
+                r = stm32.send_command_wait_done(
+                    cmd={
+                        'cmd': 'gantry_tip_swap',
+                        'from_id': 0, 'to_id': 4,
+                    },
+                    timeout_s=120.0,
+                )
+                if not _ok(r) or _aborted():
+                    return
+
+                _set(
+                    f'Aspirate {req.aspirate_vol_ul} uL '
+                    f'from {src_name}',
+                )
+                r = stm32.smart_aspirate_at(
+                    loc_id=src_loc,
+                    volume_ul=int(req.aspirate_vol_ul),
+                    speed_ul_s=req.aspirate_speed_ul_s,
+                    piston_reset=True,
+                    air_slug_ul=40,
+                    timeout_s=120.0,
+                )
+                if not _ok(r) or _aborted():
+                    return
+
+                _set(
+                    f'Dispense to PP4 @ '
+                    f'{req.cart_vel_ul_s} uL/s',
+                )
+                r = stm32.cart_dispense_at(
+                    loc_id=pp4_loc,
+                    volume_ul=int(req.aspirate_vol_ul),
+                    vel_ul_s=req.cart_vel_ul_s,
+                    reasp_ul=12,
+                    timeout_s=300.0,
+                )
+                if not r or _aborted():
+                    return
+
+                _set(
+                    f'Return remainder to {src_name} '
+                    f'(blowout)',
+                )
+                r = stm32.well_dispense_at(
+                    loc_id=src_loc,
+                    volume_ul=0,
+                    speed_ul_s=100.0,
+                    blowout=True,
+                    timeout_s=120.0,
+                )
+                if not r or _aborted():
+                    return
+
+                _set('Tip return (slot 4)')
+                r = stm32.send_command_wait_done(
+                    cmd={
+                        'cmd': 'gantry_tip_swap',
+                        'from_id': 4, 'to_id': 0,
+                    },
+                    timeout_s=120.0,
+                )
+                if not _ok(r) or _aborted():
+                    return
+
+                _set('Home all (final)')
+                stm32.send_command_wait_done(
+                    cmd={'cmd': 'home_all'},
+                    timeout_s=120.0,
+                )
+
+                _fc_seq_state['state'] = 'done'
+                _fc_seq_state['step'] = 'Done'
+            except Exception as exc:
+                LOG.exception(
+                    'FC liquid seq error: %s', exc,
+                )
+                _fc_seq_state['state'] = 'error'
+                _fc_seq_state['step'] = str(exc)
+            finally:
+                if _aborted():
+                    _fc_seq_state['state'] = 'aborted'
+                    _fc_seq_state['step'] = 'Aborted'
+                    stm32.clear_abort()
+
+        t = threading.Thread(
+            target=_run, daemon=True,
+        )
+        _fc_seq_state['thread'] = t
+        t.start()
+        return {'ok': True}
+
+    @router.get('/fc-liquid-sequence/status')
+    async def fc_liquid_sequence_status():
+        return {
+            'state': _fc_seq_state['state'],
+            'step': _fc_seq_state['step'],
+        }
+
     return router

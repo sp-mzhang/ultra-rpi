@@ -1381,6 +1381,7 @@
     wireEngLocations();
     wireEngLeds();
     wireEngEnvironment();
+    wireEngFcHeater();
     wireEngCamera();
     wireEngFans();
     wireEngAccel();
@@ -2613,6 +2614,258 @@
     };
     $('#eng-ah-get-status').onclick = () =>
       ahRefreshStatus();
+  }
+
+  /* ---- FC HEATER wiring ---- */
+  function wireEngFcHeater() {
+    const dutySl = $('#eng-fc-duty');
+    const dutyLbl = $('#eng-fc-duty-val');
+    if (dutySl && dutyLbl) {
+      dutySl.oninput = () => {
+        dutyLbl.textContent = dutySl.value;
+      };
+    }
+
+    $('#eng-fc-enable').onchange = () => {
+      engCmd('fc_heater_set_en', {
+        enable: $('#eng-fc-enable').checked,
+      });
+    };
+
+    $('#eng-fc-duty-set').onclick = () => {
+      engCmd('fc_heater_set_duty', {
+        pct: parseInt(dutySl.value),
+      });
+    };
+
+    /* -- Status -- */
+    async function fcRefresh() {
+      const r = await engCmd(
+        'fc_heater_get_status', {}, false, 3,
+      );
+      if (!r) return;
+      const s = (k) => r[k] != null ? r[k] : '--';
+      $('#eng-fc-temp').textContent =
+        typeof r.temp_c === 'number'
+          ? r.temp_c.toFixed(2) + ' \u00b0C'
+          : '--';
+      $('#eng-fc-st-duty').textContent = s('heater_duty');
+      $('#eng-fc-st-en').textContent =
+        r.heater_en ? 'ON' : 'OFF';
+      $('#eng-fc-st-otp').textContent =
+        r.otp ? 'YES' : 'no';
+      $('#eng-fc-st-ctrl').textContent =
+        r.ctrl_enabled ? 'ON' : 'OFF';
+      $('#eng-fc-st-heating').textContent =
+        r.ctrl_heating ? 'YES' : 'no';
+      return r;
+    }
+    $('#eng-fc-get-status').onclick = () => fcRefresh();
+
+    /* -- Live temperature chart -- */
+    const TEMP_HISTORY = 200;
+    const tempHistory = [];
+    let tempSetpoint = null;
+
+    function drawTempChart() {
+      const canvas = $('#fc-temp-chart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width;
+      const H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
+
+      if (tempHistory.length < 2) return;
+
+      let tMin = Infinity, tMax = -Infinity;
+      for (const v of tempHistory) {
+        if (v < tMin) tMin = v;
+        if (v > tMax) tMax = v;
+      }
+      if (tempSetpoint != null) {
+        if (tempSetpoint < tMin) tMin = tempSetpoint;
+        if (tempSetpoint > tMax) tMax = tempSetpoint;
+      }
+      const pad = 1.0;
+      tMin -= pad; tMax += pad;
+      if (tMax - tMin < 2) {
+        tMin -= 1; tMax += 1;
+      }
+
+      ctx.strokeStyle = 'rgba(128,128,128,0.15)';
+      ctx.lineWidth = 1;
+      ctx.font = '10px monospace';
+      ctx.fillStyle = '#888';
+      for (let g = 0; g <= 4; g++) {
+        const gy = H - (g / 4) * H;
+        ctx.beginPath();
+        ctx.moveTo(30, gy);
+        ctx.lineTo(W, gy);
+        ctx.stroke();
+        const label = (tMin + (g / 4) * (tMax - tMin))
+          .toFixed(1);
+        ctx.fillText(label, 0, gy + 3);
+      }
+
+      if (tempSetpoint != null) {
+        const spy = H
+          - ((tempSetpoint - tMin) / (tMax - tMin)) * H;
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(30, spy);
+        ctx.lineTo(W, spy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      const len = tempHistory.length;
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < len; i++) {
+        const px = 30
+          + (i / (TEMP_HISTORY - 1)) * (W - 30);
+        const py = H
+          - ((tempHistory[i] - tMin) / (tMax - tMin)) * H;
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+
+    /* -- PID start/stop + polling -- */
+    let fcPollId = null;
+    const pidState = $('#eng-fc-pid-state');
+
+    async function fcPoll() {
+      const r = await fcRefresh();
+      if (!r) return;
+      if (typeof r.temp_c === 'number') {
+        tempHistory.push(r.temp_c);
+        if (tempHistory.length > TEMP_HISTORY)
+          tempHistory.shift();
+      }
+      if (r.ctrl_enabled) {
+        tempSetpoint = r.ctrl_setpoint_c;
+      }
+      drawTempChart();
+    }
+
+    $('#eng-fc-pid-start').onclick = async () => {
+      const sp = parseFloat(
+        $('#eng-fc-pid-sp').value,
+      );
+      const kp = parseFloat(
+        $('#eng-fc-pid-kp').value,
+      );
+      const ki = parseFloat(
+        $('#eng-fc-pid-ki').value,
+      );
+      const kd = parseFloat(
+        $('#eng-fc-pid-kd').value,
+      );
+      await engCmd('fc_heater_set_ctrl', {
+        setpoint_x10: Math.round(sp * 10),
+        kp_x1000: Math.round(kp * 1000),
+        ki_x1000: Math.round(ki * 1000),
+        kd_x1000: Math.round(kd * 1000),
+        enable: true,
+      });
+      tempSetpoint = sp;
+      if (pidState) pidState.textContent = 'RUNNING';
+      if (!fcPollId) {
+        fcPollId = setInterval(fcPoll, 500);
+      }
+    };
+
+    $('#eng-fc-pid-stop').onclick = async () => {
+      await engCmd('fc_heater_set_ctrl', {
+        setpoint_x10: 0, kp_x1000: 0,
+        ki_x1000: 0, kd_x1000: 0,
+        enable: false,
+      });
+      if (fcPollId) {
+        clearInterval(fcPollId);
+        fcPollId = null;
+      }
+      if (pidState) pidState.textContent = 'IDLE';
+      fcRefresh();
+    };
+
+    /* -- Liquid Test Sequence -- */
+    const seqStatus = $('#eng-fc-seq-status');
+
+    $('#eng-fc-seq-run').onclick = async () => {
+      const body = {
+        source_well: $('#eng-fc-seq-source').value || 'M1',
+        aspirate_vol_ul: parseFloat(
+          $('#eng-fc-seq-asp-vol').value,
+        ),
+        aspirate_speed_ul_s: parseFloat(
+          $('#eng-fc-seq-asp-speed').value,
+        ),
+        cart_vel_ul_s: parseFloat(
+          $('#eng-fc-seq-cart-vel').value,
+        ),
+      };
+      if (seqStatus) seqStatus.textContent = 'STARTING...';
+      try {
+        const r = await fetch(
+          '/api/fc-liquid-sequence', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+          },
+        );
+        if (!r.ok) {
+          const e = await r.json();
+          if (seqStatus)
+            seqStatus.textContent =
+              'ERR: ' + (e.detail || r.status);
+          return;
+        }
+        if (seqStatus)
+          seqStatus.textContent = 'RUNNING';
+        pollSequenceStatus();
+      } catch (e) {
+        if (seqStatus)
+          seqStatus.textContent = 'ERR: ' + e;
+      }
+    };
+
+    let seqPollId = null;
+    function pollSequenceStatus() {
+      if (seqPollId) clearInterval(seqPollId);
+      seqPollId = setInterval(async () => {
+        try {
+          const r = await fetch(
+            '/api/fc-liquid-sequence/status',
+          );
+          if (!r.ok) return;
+          const j = await r.json();
+          if (seqStatus)
+            seqStatus.textContent =
+              j.step || j.state || '--';
+          if (j.state === 'idle'
+            || j.state === 'done'
+            || j.state === 'aborted'
+            || j.state === 'error') {
+            clearInterval(seqPollId);
+            seqPollId = null;
+          }
+        } catch (_) {}
+      }, 500);
+    }
+
+    $('#eng-fc-seq-stop').onclick = async () => {
+      if (seqStatus) seqStatus.textContent = 'ABORTING...';
+      try {
+        await fetch('/api/abort', { method: 'POST' });
+      } catch (_) {}
+    };
   }
 
   /* ---- FANS wiring ---- */

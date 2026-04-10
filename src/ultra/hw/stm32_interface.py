@@ -675,7 +675,7 @@ class STM32Interface:
                 'lift_move_top',
                 'led_set_all_off',
                 'accel_get_status',
-                'test_init_flags', 'test_get_flags',
+                'fc_heater_get_status',
         ):
             return fp.pack_seq(seq)
 
@@ -1114,17 +1114,34 @@ class STM32Interface:
                     cmd.get('enable', False),
                 ),
             )
-        if cmd_name == 'test_set_flag':
-            return fp.pack_test_set_flag(
+        if cmd_name == 'fc_heater_set_duty':
+            return fp.pack_fc_heater_set_duty(
                 seq=seq,
-                flag_name=cmd.get('flag', ''),
-                value=cmd.get('value', False),
+                pct=int(cmd.get('pct', 0)),
             )
-        if cmd_name == 'test_transition':
-            return fp.pack_test_transition(
+        if cmd_name == 'fc_heater_set_en':
+            return fp.pack_fc_heater_set_en(
                 seq=seq,
-                from_state=cmd.get('from', 0),
-                to_state=cmd.get('to', 0),
+                enable=bool(cmd.get('enable', False)),
+            )
+        if cmd_name == 'fc_heater_set_ctrl':
+            return fp.pack_fc_heater_set_ctrl(
+                seq=seq,
+                setpoint_x10=int(
+                    cmd.get('setpoint_x10', 320),
+                ),
+                kp_x1000=int(
+                    cmd.get('kp_x1000', 30),
+                ),
+                ki_x1000=int(
+                    cmd.get('ki_x1000', 30000),
+                ),
+                kd_x1000=int(
+                    cmd.get('kd_x1000', 6400),
+                ),
+                enable=bool(
+                    cmd.get('enable', False),
+                ),
             )
 
         return fp.pack_seq(seq)
@@ -1288,6 +1305,9 @@ class STM32Interface:
             )
         elif cmd_name == 'air_heater_get_status':
             d = fp.unpack_air_heater_status(data)
+            result.update(d)
+        elif cmd_name == 'fc_heater_get_status':
+            d = fp.unpack_fc_heater_status(data)
             result.update(d)
         elif cmd_name == 'fan_get_status':
             d = fp.unpack_fan_status(data)
