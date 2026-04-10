@@ -78,7 +78,8 @@
       list.forEach((r) => {
         const opt = document.createElement('option');
         opt.value = r.file;
-        opt.textContent = r.name;
+        const src = r.source ? ` (${r.source})` : '';
+        opt.textContent = r.name + src;
         elRecipe.appendChild(opt);
       });
     } catch (e) {
@@ -1394,13 +1395,20 @@
           const runV = $('#run-view');
           const engV = $('#eng-view');
           const fwV = $('#fw-view');
+          const cfgV = $('#cfg-view');
           runV.hidden = true;
           engV.hidden = true;
           if (fwV) fwV.hidden = true;
+          if (cfgV) cfgV.hidden = true;
           if (v === 'engineering') {
             engV.hidden = false;
           } else if (v === 'firmware') {
             if (fwV) fwV.hidden = false;
+          } else if (v === 'config') {
+            if (cfgV) cfgV.hidden = false;
+            if (typeof window.__cfgTabActivate === 'function') {
+              window.__cfgTabActivate();
+            }
           } else {
             runV.hidden = false;
           }
@@ -2805,8 +2813,224 @@
     }
   }
 
+  /* -- Config & recipes (S3 machine + global recipes) -- */
+  function initConfigRecipes() {
+    const sel = $('#cfg-recipe-select');
+    const taM = $('#cfg-machine-yaml');
+    const taR = $('#cfg-recipe-yaml');
+    const msgM = $('#cfg-machine-msg');
+    const msgR = $('#cfg-recipe-msg');
+    const snEl = $('#cfg-device-sn');
+    const stEl = $('#cfg-step-types');
+    if (!sel || !taM || !taR) return;
+
+    function fmtApiErr(j, fallback) {
+      if (!j || j.detail === undefined) return fallback;
+      const d = j.detail;
+      if (typeof d === 'string') return d;
+      try {
+        return JSON.stringify(d);
+      } catch (_) {
+        return String(d);
+      }
+    }
+
+    async function fillRecipeSelects(list) {
+      const prev = sel.value;
+      sel.innerHTML = '';
+      list.forEach((r) => {
+        const opt = document.createElement('option');
+        opt.value = r.file;
+        const src = r.source ? ` (${r.source})` : '';
+        opt.textContent = r.name + src;
+        sel.appendChild(opt);
+      });
+      if (prev && [...sel.options].some((o) => o.value === prev)) {
+        sel.value = prev;
+      }
+    }
+
+    async function loadRecipeListForCfg() {
+      const res = await fetch('/api/recipes');
+      const list = await res.json();
+      await fillRecipeSelects(list);
+    }
+
+    function setMsg(pre, text, isErr) {
+      if (!pre) return;
+      pre.textContent = text || '';
+      pre.classList.toggle('cfg-msg-err', !!isErr);
+    }
+
+    async function loadMachineSettings() {
+      setMsg(msgM, '');
+      try {
+        const res = await fetch('/api/machine-settings');
+        const j = await res.json();
+        if (!res.ok) {
+          setMsg(
+            msgM,
+            fmtApiErr(j, res.statusText || 'Failed'),
+            true,
+          );
+          taM.value = '';
+          if (snEl) snEl.textContent = '';
+          return;
+        }
+        taM.value = j.yaml_text || '';
+        if (snEl) snEl.textContent = j.device_sn || '';
+      } catch (e) {
+        setMsg(msgM, String(e), true);
+        taM.value = '';
+      }
+    }
+
+    async function loadRecipeYaml() {
+      const slug = sel.value;
+      if (!slug) return;
+      setMsg(msgR, '');
+      try {
+        const res = await fetch(
+          `/api/recipes/${encodeURIComponent(slug)}/yaml`,
+        );
+        const j = await res.json();
+        if (!res.ok) {
+          setMsg(
+            msgR,
+            fmtApiErr(j, res.statusText || 'Failed'),
+            true,
+          );
+          taR.value = '';
+          return;
+        }
+        taR.value = j.yaml_text || '';
+      } catch (e) {
+        setMsg(msgR, String(e), true);
+        taR.value = '';
+      }
+    }
+
+    async function loadStepTypesOnce() {
+      if (!stEl || stEl.dataset.loaded) return;
+      try {
+        const res = await fetch('/api/protocol/step-types');
+        const j = await res.json();
+        if (res.ok && j.step_types) {
+          stEl.textContent = j.step_types.join('\n');
+          stEl.dataset.loaded = '1';
+        }
+      } catch (e) {
+        stEl.textContent = String(e);
+      }
+    }
+
+    window.__cfgTabActivate = async function () {
+      await loadRecipeListForCfg();
+      await loadMachineSettings();
+      await loadRecipeYaml();
+      await loadStepTypesOnce();
+    };
+
+    $('#cfg-machine-load').addEventListener(
+      'click', loadMachineSettings,
+    );
+    $('#cfg-machine-save').addEventListener(
+      'click', async () => {
+        setMsg(msgM, '');
+        try {
+          const res = await fetch('/api/machine-settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              yaml_text: taM.value,
+            }),
+          });
+          const j = await res.json();
+          if (!res.ok) {
+            setMsg(
+              msgM,
+              fmtApiErr(j, res.statusText || 'Save failed'),
+              true,
+            );
+            return;
+          }
+          setMsg(msgM, j.message || 'Saved.');
+        } catch (e) {
+          setMsg(msgM, String(e), true);
+        }
+      },
+    );
+
+    $('#cfg-sync').addEventListener(
+      'click', async () => {
+        setMsg(msgR, 'Syncing…');
+        try {
+          const res = await fetch(
+            '/api/config/sync-recipes',
+            { method: 'POST' },
+          );
+          const j = await res.json();
+          if (!res.ok) {
+            setMsg(
+              msgR,
+              fmtApiErr(j, res.statusText || 'Sync failed'),
+              true,
+            );
+            return;
+          }
+          await loadRecipeListForCfg();
+          await loadRecipes();
+          await loadRecipeYaml();
+          setMsg(msgR, j.message || 'Synced from S3.');
+        } catch (e) {
+          setMsg(msgR, String(e), true);
+        }
+      },
+    );
+
+    $('#cfg-recipe-load').addEventListener(
+      'click', loadRecipeYaml,
+    );
+    $('#cfg-recipe-save').addEventListener(
+      'click', async () => {
+        const slug = sel.value;
+        if (!slug) return;
+        setMsg(msgR, '');
+        try {
+          const res = await fetch(
+            `/api/recipes/${encodeURIComponent(slug)}/yaml`,
+            {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                yaml_text: taR.value,
+              }),
+            },
+          );
+          const j = await res.json();
+          if (!res.ok) {
+            setMsg(
+              msgR,
+              fmtApiErr(j, res.statusText || 'Save failed'),
+              true,
+            );
+            return;
+          }
+          setMsg(msgR, 'Saved and validated.');
+          await loadRecipes();
+          await loadRecipeListForCfg();
+        } catch (e) {
+          setMsg(msgR, String(e), true);
+        }
+      },
+    );
+
+    sel.addEventListener('change', loadRecipeYaml);
+  }
+
   /* ---- Boot ---- */
   init();
   initEngineering();
   initFirmware();
+  initConfigRecipes();
 })();

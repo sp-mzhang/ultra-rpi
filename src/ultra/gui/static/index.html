@@ -92,6 +92,9 @@
     <button class="app-tab" data-view="firmware">
       Firmware
     </button>
+    <button class="app-tab" data-view="config">
+      Config &amp; recipes
+    </button>
   </nav>
 
   <div id="run-view">
@@ -1386,6 +1389,53 @@
       </fieldset>
     </div>
   </div><!-- #fw-view -->
+
+  <div id="cfg-view" hidden>
+    <div class="cfg-container">
+      <div class="cfg-grid">
+        <section class="cfg-panel">
+          <h2>Machine settings (S3)</h2>
+          <p class="cfg-hint">
+            Per-device overlay merged at startup.
+            <code id="cfg-device-sn" class="cfg-sn"></code>
+          </p>
+          <textarea id="cfg-machine-yaml" class="cfg-textarea"
+            rows="20" spellcheck="false"
+            placeholder="# machine_settings.yaml"></textarea>
+          <div class="cfg-btn-row">
+            <button id="cfg-machine-load" type="button"
+              class="btn btn-sm">Reload</button>
+            <button id="cfg-machine-save" type="button"
+              class="btn btn-green btn-sm">Save to S3</button>
+          </div>
+          <pre id="cfg-machine-msg" class="cfg-msg"></pre>
+        </section>
+        <section class="cfg-panel">
+          <h2>Global recipes</h2>
+          <div class="cfg-row">
+            <label for="cfg-recipe-select">Recipe:</label>
+            <select id="cfg-recipe-select"></select>
+            <button id="cfg-sync" type="button"
+              class="btn btn-sm">Sync from S3</button>
+          </div>
+          <textarea id="cfg-recipe-yaml" class="cfg-textarea"
+            rows="20" spellcheck="false"
+            placeholder="# recipe.yaml"></textarea>
+          <div class="cfg-btn-row">
+            <button id="cfg-recipe-load" type="button"
+              class="btn btn-sm">Reload</button>
+            <button id="cfg-recipe-save" type="button"
+              class="btn btn-green btn-sm">Save to S3</button>
+          </div>
+          <pre id="cfg-recipe-msg" class="cfg-msg"></pre>
+        </section>
+        <section class="cfg-panel cfg-panel-wide">
+          <h2>Protocol step types</h2>
+          <pre id="cfg-step-types" class="cfg-step-types"></pre>
+        </section>
+      </div>
+    </div>
+  </div><!-- #cfg-view -->
 
   <script src="/static/app.js"></script>
 </body>

@@ -165,6 +165,9 @@ class Recipe:
         wells: Well definitions (name -> attrs).
         phases: Ordered list of phase definitions.
         total_steps: Pre-computed total step count.
+        reader: Optional reader acquisition overrides
+            (merged with app config for the run).
+        peak_detect: Optional peak detection overrides.
     '''
     name: str
     description: str = ''
@@ -178,3 +181,9 @@ class Recipe:
         default_factory=list,
     )
     total_steps: int = 0
+    reader: dict[str, Any] = field(
+        default_factory=dict,
+    )
+    peak_detect: dict[str, Any] = field(
+        default_factory=dict,
+    )

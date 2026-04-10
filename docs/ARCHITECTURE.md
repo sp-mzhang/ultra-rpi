@@ -7,6 +7,9 @@ shorter overview, see the root `README.md`.
 
 The existing `sway` repo is a monolithic GUI application (~50+ instruments, Qt UI, multi-process architecture) that happens to support Ultra hardware as one of many modes. The goal is to extract the Ultra-specific functionality into a clean, headless RPi service.
 
+For **global recipes and per-machine YAML in S3** (bucket layout, merge order,
+IAM, seeding), see [recipe_s3.md](recipe_s3.md).
+
 **Two hardware communication paths exist:**
 - **Ultra STM32** (mechanics): UART `/dev/ttyAMA3` @ 921600 baud, SOH binary frame protocol -- controls centrifuge, gantry, pump, lift, drawer, LEDs, heater, fan, temperature
 - **PProc reader** (optics): USB serial @ 1M baud, TLV protocol -- acquires 15-channel ring-resonator spectral data

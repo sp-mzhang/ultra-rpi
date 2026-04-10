@@ -74,6 +74,16 @@ class Application:
         app = create_app(self)
         self._start_gui(app, host, port)
 
+        try:
+            from ultra.services import config_store
+            await loop.run_in_executor(
+                None,
+                config_store.sync_recipes_and_shared_from_s3,
+            )
+            LOG.info('S3 recipe catalog sync attempted')
+        except Exception as exc:
+            LOG.warning('S3 recipe sync skipped: %s', exc)
+
         egress_cfg = self.config.get('egress', {})
         if egress_cfg.get('enabled', False):
             self._start_egress()

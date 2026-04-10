@@ -11,18 +11,16 @@ stm32:
 reader:
   port: auto
   dollop_name: reader7
-  acq_mode: continuous
-  acq_time_total_s: 20000
-  acq_time_step_s: 4
 
-peak_detect:
-  fit_type: detect_peaks
-  stitch_th: 1.15
-  config_fit:
-    dist: 100
-    ignore_start: 400
-    min_power: -45
-    prom: 1.5
+# Per-unit calibration (override via S3 machine_settings.yaml).
+calibration:
+  loc_offset_x_um: 0
+  loc_offset_y_um: 0
+  loc_offset_z_um: 0
+  angle_open_initial_deg: 290
+  default_cartridge_z_mm: -23.8
+
+# Acquisition and peak_detect live in each protocol recipe YAML.
 
 protocol:
   default_recipe: tsh_ultra

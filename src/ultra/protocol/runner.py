@@ -23,7 +23,11 @@ from typing import Any
 
 from ultra.events import EventBus
 from ultra.protocol.models import Recipe
-from ultra.protocol.recipe_loader import load_recipe
+from ultra.protocol.recipe_loader import (
+    apply_machine_calibration,
+    load_recipe,
+    merge_protocol_config,
+)
 from ultra.protocol.state_tracker import (
     ProtocolStateTracker,
 )
@@ -96,6 +100,13 @@ class ProtocolRunner:
         self._start_step: int = 1
         self._restart_requested = False
         self._run_dir: str | None = None
+        self._protocol_config: dict[str, Any] | None = None
+
+    def _active_config(self) -> dict[str, Any]:
+        '''Config merged with recipe reader/peak for current run.'''
+        if self._protocol_config is not None:
+            return self._protocol_config
+        return self._config
 
     @property
     def is_running(self) -> bool:
@@ -242,7 +253,7 @@ class ProtocolRunner:
         Events are pushed to the GUI via ``emit_sync``
         (thread-safe).
         '''
-        reader_cfg = self._config.get('reader', {})
+        reader_cfg = self._active_config().get('reader', {})
         step_s = int(reader_cfg.get('acq_time_step_s', 3))
         total_s = int(
             reader_cfg.get('acq_time_total_s', 20000),
@@ -491,7 +502,7 @@ class ProtocolRunner:
                 )
                 return rdt
 
-        reader_cfg = self._config.get('reader', {})
+        reader_cfg = self._active_config().get('reader', {})
         reader_dollop = reader_cfg.get(
             'dollop_name', 'reader7',
         )
@@ -658,6 +669,16 @@ class ProtocolRunner:
             List of per-step result dicts.
         '''
         self.recipe = load_recipe(recipe_name)
+        self.recipe = apply_machine_calibration(
+            self._config, self.recipe,
+        )
+        self._protocol_config = merge_protocol_config(
+            self._config, self.recipe,
+        )
+        if self._pipeline is not None:
+            self._pipeline.set_peak_config(
+                self._protocol_config.get('peak_detect', {}),
+            )
         self.tracker.init_wells(
             self.recipe.wells,
             recipe_name=self.recipe.name,
@@ -780,6 +801,11 @@ class ProtocolRunner:
                     break
         finally:
             self._stop_reader()
+            self._protocol_config = None
+            if self._pipeline is not None:
+                self._pipeline.set_peak_config(
+                    self._config.get('peak_detect', {}),
+                )
             self._running = False
             if rg_writer is not None:
                 try:

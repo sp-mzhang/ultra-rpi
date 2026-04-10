@@ -38,6 +38,11 @@ class FirmwareFlashRequest(BaseModel):
     key: str
 
 
+class YamlTextBody(BaseModel):
+    '''YAML payload for machine settings or recipe save.'''
+    yaml_text: str = ''
+
+
 class SMRequest(BaseModel):
     '''Request body for state machine control.'''
     action: str = 'start'
@@ -801,5 +806,119 @@ def create_api_router(
         '''
         from ultra.services import fw_update
         return fw_update.get_status(log_offset)
+
+    # -------------------------------------------------------
+    # Machine settings + global recipes (S3)
+    # -------------------------------------------------------
+
+    @router.get('/machine-settings')
+    async def machine_settings_get():
+        '''Return S3 machine_settings.yaml for this device.'''
+        from ultra.services import config_store
+        ds = app.config.get('device_sn', '')
+        if not ds:
+            raise HTTPException(
+                status_code=400,
+                detail='device_sn not set in config',
+            )
+        loop = asyncio.get_running_loop()
+
+        def _load() -> str:
+            t = config_store.fetch_machine_settings_yaml(ds)
+            return t if t is not None else ''
+
+        yaml_text = await loop.run_in_executor(None, _load)
+        return {'device_sn': ds, 'yaml_text': yaml_text}
+
+    @router.put('/machine-settings')
+    async def machine_settings_put(req: YamlTextBody):
+        '''Write machine_settings.yaml to S3 for this device.'''
+        from ultra.services import config_store
+        ds = app.config.get('device_sn', '')
+        if not ds:
+            raise HTTPException(
+                status_code=400,
+                detail='device_sn not set in config',
+            )
+        loop = asyncio.get_running_loop()
+
+        def _save() -> None:
+            config_store.put_machine_settings_yaml(
+                ds, req.yaml_text,
+            )
+
+        await loop.run_in_executor(None, _save)
+        return {'ok': True, 'message': 'Saved to S3'}
+
+    @router.post('/config/sync-recipes')
+    async def config_sync_recipes():
+        '''Download global recipes and _shared/_common from S3.'''
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            config_store.sync_recipes_and_shared_from_s3,
+        )
+        return {'ok': True}
+
+    @router.get('/recipes/{slug}/yaml')
+    async def recipe_yaml_get(slug: str):
+        '''Return raw YAML for a recipe (S3 cache or packaged).'''
+        import os.path as op
+        from ultra.protocol import recipe_loader as rl
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+
+        def _read() -> str:
+            path = config_store.fetch_recipe_to_cache(slug)
+            if path and op.isfile(path):
+                with open(path, encoding='utf-8') as fh:
+                    return fh.read()
+            pack = op.join(
+                rl.RECIPES_DIR, f'{slug}.yaml',
+            )
+            if op.isfile(pack):
+                with open(pack, encoding='utf-8') as fh:
+                    return fh.read()
+            raise FileNotFoundError(slug)
+
+        try:
+            text = await loop.run_in_executor(None, _read)
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404, detail='Recipe not found',
+            )
+        return {'slug': slug, 'yaml_text': text}
+
+    @router.put('/recipes/{slug}/yaml')
+    async def recipe_yaml_put(slug: str, req: YamlTextBody):
+        '''Validate and save a global recipe to S3.'''
+        import yaml
+        from ultra.protocol import recipe_loader as rl
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+
+        def _validate_and_save() -> None:
+            raw = yaml.safe_load(req.yaml_text) or {}
+            recipe = rl.recipe_from_raw_dict(raw, slug)
+            rl._validate_recipe(recipe)
+            rl.lint_global_recipe_keys(recipe)
+            config_store.put_recipe_yaml(slug, req.yaml_text)
+
+        try:
+            await loop.run_in_executor(
+                None, _validate_and_save,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=str(exc),
+            )
+        return {'ok': True}
+
+    @router.get('/protocol/step-types')
+    async def protocol_step_types():
+        '''List registered protocol step type names.'''
+        from ultra.protocol.steps import STEP_REGISTRY
+        return {'step_types': sorted(STEP_REGISTRY.keys())}
 
     return router

@@ -4,6 +4,20 @@ description: >
   centrifuge separation, serum-prep dilution + 14 reagent
   transfers (including 2 back-and-forth), and final lock.
 
+reader:
+  acq_mode: continuous
+  acq_time_total_s: 20000
+  acq_time_step_s: 4
+
+peak_detect:
+  fit_type: detect_peaks
+  stitch_th: 1.15
+  config_fit:
+    dist: 100
+    ignore_start: 400
+    min_power: -45
+    prom: 1.5
+
 constants:
   air_slug_ul: 40
   reasp_ul: 12

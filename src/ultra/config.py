@@ -72,4 +72,25 @@ def load_config(
         config = _deep_merge(config, override)
         LOG.info('Merged override config from %s', override_path)
 
+    device_sn = config.get('device_sn', '')
+    if device_sn:
+        try:
+            from ultra.services import config_store
+            yaml_text = config_store.fetch_machine_settings_yaml(
+                device_sn,
+            )
+            if yaml_text:
+                s3_overlay: dict[str, Any] = (
+                    yaml.safe_load(yaml_text) or {}
+                )
+                config = _deep_merge(config, s3_overlay)
+                LOG.info(
+                    'Merged S3 machine settings for %s',
+                    device_sn,
+                )
+        except Exception as exc:
+            LOG.warning(
+                'S3 machine settings not merged: %s', exc,
+            )
+
     return config

@@ -1,15 +1,12 @@
+# Machine-specific defaults (offsets, angles, Z) come from
+# S3 machine_settings.yaml / local config ``calibration:``.
 defaults:
-  angle_open_initial_deg: 290
   move_rpm: 1
   aspirate_speed: 40.0
   well_disp_speed: 100.0
   lld_threshold: 20
-  default_cartridge_z_mm: -23.8
   shake_angle_deg: 45
   shake_cycles: 3
-  loc_offset_x_um: 0
-  loc_offset_y_um: 0
-  loc_offset_z_um: 0
 
 centrifuge_phase:
   steps:

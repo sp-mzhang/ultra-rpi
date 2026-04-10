@@ -115,6 +115,12 @@ class ReaderPipeline:
         self._resonance_props_fp: str | None = None
         self._sweep_idx: int = 0
 
+    def set_peak_config(
+            self, peak_cfg: dict[str, Any],
+    ) -> None:
+        '''Replace peak detection config (e.g. per-recipe).'''
+        self._peak_config = dict(peak_cfg)
+
     def set_run_dir(self, run_dir: str) -> None:
         '''Set the run directory for TlvToSpectra logs.
 
