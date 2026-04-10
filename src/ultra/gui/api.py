@@ -601,8 +601,6 @@ def create_api_router(
                        'allowed',
             )
         stm32 = _get_eng_stm32()
-        if stm32 is not None:
-            stm32.stop_telem_reader()
         if stm32 is None:
             raise HTTPException(
                 status_code=503,
@@ -649,7 +647,6 @@ def create_api_router(
                 status_code=503,
                 detail='STM32 not connected',
             )
-        stm32.stop_telem_reader()
         loop = asyncio.get_running_loop()
         r = await loop.run_in_executor(
             None,
