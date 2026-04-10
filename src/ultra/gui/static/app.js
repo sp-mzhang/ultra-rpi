@@ -3433,8 +3433,8 @@
             <div class="rb-step-header">
               <span class="rb-step-num">${idx + 1}</span>
               <span class="rb-step-type">${s.type}</span>
-              <input class="rb-input" value="${s.label}" placeholder="label"
-                style="width:140px;margin-left:6px" data-field="label">
+              <input class="rb-input rb-step-label-input" value="${s.label}" placeholder="label"
+                data-field="label">
               <button class="rb-step-del" title="Remove">&times;</button>
             </div>
             <div class="rb-step-params">${paramsHtml}</div>

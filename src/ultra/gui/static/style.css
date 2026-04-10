@@ -1999,6 +1999,11 @@ textarea {
   font-weight: 600;
   font-size: 0.78rem;
 }
+.rb-step-label-input {
+  flex: 1;
+  min-width: 80px;
+  margin-left: 6px;
+}
 .rb-step-del {
   margin-left: auto;
   background: none;
