@@ -2113,3 +2113,47 @@ textarea {
   color: var(--text-dim);
   margin-top: 2px;
 }
+
+/* ── Motor Current Sensing ─────────────────────────── */
+.motor-current-panel { margin-top: 8px; }
+.motor-current-grid {
+  display: flex; gap: 24px; justify-content: center;
+  margin-bottom: 10px;
+}
+.motor-ax-col {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 80px;
+}
+.motor-ax-label {
+  font-weight: 700; font-size: 1rem; margin-bottom: 4px;
+}
+.motor-bar-wrap {
+  width: 36px; height: 80px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; position: relative; overflow: hidden;
+}
+.motor-bar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: var(--blue); transition: height 0.15s ease;
+}
+.motor-val {
+  font-size: 0.76rem; margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.motor-faults {
+  font-size: 0.62rem; color: var(--red, #d44);
+  min-height: 14px; margin-top: 2px;
+}
+#mc-chart {
+  width: 100%; height: 160px;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg);
+}
+.motor-chart-legend {
+  display: flex; gap: 12px; justify-content: center;
+  margin-top: 4px; font-size: 0.72rem;
+}
+.mc-legend-x { color: #3b82f6; font-weight: 600; }
+.mc-legend-y { color: #22c55e; font-weight: 600; }
+.mc-legend-z { color: #f59e0b; font-weight: 600; }
+.mc-legend-stall { color: var(--red, #d44); font-weight: 600; }

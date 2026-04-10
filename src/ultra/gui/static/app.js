@@ -411,6 +411,7 @@
     elBtnPause.disabled = !running || paused;
     elBtnResume.disabled = !running || !paused;
     elBtnAbort.disabled = !running;
+    elBtnAbort.textContent = 'Abort';
     elBtnRun.textContent = 'Run';
     elBtnRun.classList.remove('btn-starting');
     if (running) {
@@ -1298,8 +1299,22 @@
     fetch('/api/pause', { method: 'POST' });
   elBtnResume.onclick = () =>
     fetch('/api/resume', { method: 'POST' });
-  elBtnAbort.onclick = () =>
-    fetch('/api/abort', { method: 'POST' });
+  elBtnAbort.onclick = async () => {
+    elBtnAbort.disabled = true;
+    elBtnAbort.textContent = 'Aborting…';
+    elLabel.textContent = 'Aborting…';
+    try {
+      const r = await fetch('/api/abort', { method: 'POST' });
+      const j = await r.json();
+      updateButtons(false, false);
+      elLabel.textContent = 'Aborted';
+      if (elBar) elBar.style.width = '0%';
+      showNewRun();
+    } catch (e) {
+      elBtnAbort.disabled = false;
+      elBtnAbort.textContent = 'Abort';
+    }
+  };
 
   elBtnSmStart.onclick = () =>
     fetch('/api/state-machine/start', {
@@ -1373,6 +1388,7 @@
     wireEngDevCmd();
     wireEngConsole();
     wireSimpleCommandButtons();
+    wireEngMotorCurrent();
     restoreEngConnection();
   }
 
@@ -2158,6 +2174,128 @@
       );
       engLog(`Set Max Out: ${JSON.stringify(r)}`);
     };
+  }
+
+  /* ---- Motor Current Sensing ---- */
+  function wireEngMotorCurrent() {
+    const MAX_CS = 31;
+    const CHART_HISTORY = 200;
+    const AXIS_COLORS = {x: '#3b82f6', y: '#22c55e', z: '#f59e0b'};
+
+    let evtSrc = null;
+    let streaming = false;
+    const history = {x: [], y: [], z: []};
+
+    function updateAxis(ax, cs, pwm, faultsObj) {
+      const pct = Math.round((cs / MAX_CS) * 100);
+      const bar = $(`#mc-bar-${ax}`);
+      const val = $(`#mc-val-${ax}`);
+      if (bar) bar.style.height = pct + '%';
+      if (val) val.textContent = `cs=${cs} pwm=${pwm}`;
+      const fd = $(`#mc-faults-${ax}`);
+      if (fd && faultsObj) {
+        const active = Object.entries(faultsObj)
+          .filter(([, v]) => v).map(([k]) => k);
+        fd.textContent = active.length ? active.join(' ') : '';
+      }
+    }
+
+    function pushHistory(sample) {
+      for (const ax of ['x', 'y', 'z']) {
+        history[ax].push(sample[ax]?.cs_actual ?? 0);
+        if (history[ax].length > CHART_HISTORY)
+          history[ax].shift();
+      }
+    }
+
+    function drawChart() {
+      const canvas = $('#mc-chart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width;
+      const H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
+
+      ctx.strokeStyle = 'rgba(128,128,128,0.15)';
+      ctx.lineWidth = 1;
+      for (let g = 0; g <= 4; g++) {
+        const gy = H - (g / 4) * H;
+        ctx.beginPath(); ctx.moveTo(0, gy);
+        ctx.lineTo(W, gy); ctx.stroke();
+      }
+
+      const len = history.x.length;
+      if (len < 2) return;
+
+      for (const ax of ['x', 'y', 'z']) {
+        ctx.strokeStyle = AXIS_COLORS[ax];
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < len; i++) {
+          const px = (i / (CHART_HISTORY - 1)) * W;
+          const py = H - (history[ax][i] / MAX_CS) * H;
+          i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+      }
+    }
+
+    $('#eng-motor-snap').onclick = async () => {
+      try {
+        const r = await fetch('/api/motor-status');
+        if (!r.ok) { engLog('Motor status: ' + r.statusText); return; }
+        const d = await r.json();
+        for (const ax of ['x', 'y', 'z']) {
+          const a = d[ax];
+          if (!a) continue;
+          updateAxis(ax, a.cs_actual, a.pwm_scale_sum, a.faults);
+        }
+        pushHistory(d);
+        drawChart();
+        engLog('Motor snapshot OK');
+      } catch (e) {
+        engLog('Motor snapshot error: ' + e);
+      }
+    };
+
+    const toggleBtn = $('#eng-motor-stream-toggle');
+
+    function stopStream() {
+      if (evtSrc) { evtSrc.close(); evtSrc = null; }
+      streaming = false;
+      if (toggleBtn) toggleBtn.textContent = 'Start Stream';
+    }
+
+    function startStream() {
+      history.x.length = 0;
+      history.y.length = 0;
+      history.z.length = 0;
+      evtSrc = new EventSource('/api/motor-telemetry/stream');
+      streaming = true;
+      if (toggleBtn) toggleBtn.textContent = 'Stop Stream';
+
+      evtSrc.onmessage = (ev) => {
+        try {
+          const d = JSON.parse(ev.data);
+          for (const ax of ['x', 'y', 'z']) {
+            const a = d[ax];
+            if (a) updateAxis(ax, a.cs_actual, a.pwm_scale_sum, null);
+          }
+          pushHistory(d);
+          drawChart();
+        } catch (_) { /* skip bad frame */ }
+      };
+      evtSrc.onerror = () => {
+        engLog('Motor telemetry stream disconnected');
+        stopStream();
+      };
+    }
+
+    if (toggleBtn) {
+      toggleBtn.onclick = () => {
+        streaming ? stopStream() : startStream();
+      };
+    }
   }
 
   /* ---- CARTRIDGE wiring ---- */

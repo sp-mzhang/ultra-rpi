@@ -902,6 +902,54 @@
 
       </div>
     </fieldset>
+
+    <!-- Motor Current Sensing -->
+    <fieldset class="eng-inner-fs">
+      <legend>Motor Current Sensing</legend>
+      <div class="eng-btn-row">
+        <button id="eng-motor-snap"
+          class="eng-cmd-btn">Snapshot</button>
+        <button id="eng-motor-stream-toggle"
+          class="eng-cmd-btn">Start Stream</button>
+      </div>
+
+      <div class="motor-current-panel">
+        <div class="motor-current-grid">
+          <div class="motor-ax-col">
+            <span class="motor-ax-label">X</span>
+            <div class="motor-bar-wrap">
+              <div class="motor-bar" id="mc-bar-x"></div>
+            </div>
+            <span class="motor-val" id="mc-val-x">--</span>
+            <div class="motor-faults" id="mc-faults-x"></div>
+          </div>
+          <div class="motor-ax-col">
+            <span class="motor-ax-label">Y</span>
+            <div class="motor-bar-wrap">
+              <div class="motor-bar" id="mc-bar-y"></div>
+            </div>
+            <span class="motor-val" id="mc-val-y">--</span>
+            <div class="motor-faults" id="mc-faults-y"></div>
+          </div>
+          <div class="motor-ax-col">
+            <span class="motor-ax-label">Z</span>
+            <div class="motor-bar-wrap">
+              <div class="motor-bar" id="mc-bar-z"></div>
+            </div>
+            <span class="motor-val" id="mc-val-z">--</span>
+            <div class="motor-faults" id="mc-faults-z"></div>
+          </div>
+        </div>
+
+        <canvas id="mc-chart" width="600" height="160"></canvas>
+        <div class="motor-chart-legend">
+          <span class="mc-legend-x">X</span>
+          <span class="mc-legend-y">Y</span>
+          <span class="mc-legend-z">Z</span>
+          <span class="mc-legend-stall">STALL</span>
+        </div>
+      </div>
+    </fieldset>
   </div>
 
   <!-- ===== CARTRIDGE ===== -->

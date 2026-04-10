@@ -134,14 +134,31 @@ class ProtocolRunner:
             self._pause_event.set()
 
     def abort(self) -> None:
-        '''Abort the running protocol.
+        '''Abort the running protocol immediately.
 
-        The current in-flight step completes before aborting.
+        Interrupts the current in-flight serial wait so the
+        step exits within ~50ms, then sends CMD_ABORT to the
+        firmware to halt all motors.
         '''
         if self._running:
             LOG.info('Protocol ABORT requested')
             self._abort_event.set()
             self._pause_event.set()
+            if self.stm32 is not None:
+                self.stm32.request_abort()
+
+    def _send_firmware_abort(self) -> None:
+        '''Send CMD_ABORT to firmware to halt all motors.'''
+        if self.stm32 is None:
+            return
+        try:
+            self.stm32.clear_abort()
+            self.stm32.send_command(
+                cmd={'cmd': 'abort'}, timeout_s=3.0,
+            )
+            LOG.info('Firmware CMD_ABORT sent')
+        except Exception as exc:
+            LOG.warning('Firmware abort failed: %s', exc)
 
     def check_pause(self) -> None:
         '''Check for pause at a step boundary.
@@ -687,6 +704,8 @@ class ProtocolRunner:
         self._abort_event.clear()
         self._pause_event.set()
         self._running = True
+        if self.stm32 is not None:
+            self.stm32.clear_abort()
         self._start_step = 1
 
         self._build_flat_steps()
@@ -742,6 +761,7 @@ class ProtocolRunner:
                     self.check_pause()
                     if self._abort_event.is_set():
                         LOG.warning('Protocol ABORTED')
+                        self._send_firmware_abort()
                         self._event_bus.emit_sync(
                             'protocol_aborted',
                             self.tracker.snapshot(

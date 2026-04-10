@@ -294,15 +294,27 @@ def create_api_router(
 
     @router.post('/abort')
     async def abort_protocol():
-        '''Abort the running protocol.'''
+        '''Abort the running protocol.
+
+        Sends CMD_ABORT to the firmware, interrupts the
+        current serial wait, and signals the runner to stop.
+        Always succeeds — also resets state if nothing is
+        running so the UI can recover from a stuck state.
+        '''
         runner = app.get_runner()
-        if not runner.is_running:
-            raise HTTPException(
-                status_code=409,
-                detail='No protocol running',
-            )
-        runner.abort()
-        return {'status': 'aborting'}
+        if runner.is_running:
+            runner.abort()
+            return {'status': 'aborting'}
+
+        runner._running = False
+        runner._abort_event.clear()
+        runner._pause_event.set()
+        await app.event_bus.emit(
+            'protocol_aborted', {'forced': True},
+        )
+        if app._monitor and not app._monitor._running:
+            app._monitor.start()
+        return {'status': 'reset'}
 
     @router.post('/restart_from')
     async def restart_from_step(req: RestartRequest):
@@ -625,6 +637,105 @@ def create_api_router(
             'ok': result is not None,
             'response': result or {},
         }
+
+    @router.get('/motor-status')
+    async def motor_status():
+        '''One-shot snapshot of X/Y/Z motor driver status.'''
+        stm32 = _get_eng_stm32()
+        if stm32 is None:
+            raise HTTPException(
+                status_code=503,
+                detail='STM32 not connected',
+            )
+        loop = asyncio.get_running_loop()
+        r = await loop.run_in_executor(
+            None,
+            lambda: stm32.send_command(
+                cmd={'cmd': 'get_motor_status'},
+                timeout_s=3.0,
+            ),
+        )
+        if r is None:
+            raise HTTPException(
+                status_code=504,
+                detail='Motor status timed out',
+            )
+        return r
+
+    @router.get('/motor-telemetry/stream')
+    async def motor_telemetry_stream():
+        '''SSE stream of motor telemetry samples.
+
+        Enables firmware telemetry on connect, disables
+        on disconnect. Yields JSON samples at ~10ms rate.
+        '''
+        from starlette.responses import StreamingResponse
+
+        stm32 = _get_eng_stm32()
+        if stm32 is None:
+            raise HTTPException(
+                status_code=503,
+                detail='STM32 not connected',
+            )
+
+        q: asyncio.Queue = asyncio.Queue(maxsize=500)
+        loop = asyncio.get_running_loop()
+
+        def _on_sample(d: dict):
+            try:
+                q.put_nowait(d)
+            except asyncio.QueueFull:
+                pass
+
+        stm32.set_motor_telem_callback(_on_sample)
+        await loop.run_in_executor(
+            None,
+            lambda: stm32.send_command(
+                cmd={'cmd': 'set_motor_telem', 'enable': True},
+                timeout_s=2.0,
+            ),
+        )
+
+        async def _generate():
+            import json as _json
+            try:
+                while True:
+                    try:
+                        sample = await asyncio.wait_for(
+                            q.get(), timeout=5.0,
+                        )
+                    except asyncio.TimeoutError:
+                        yield 'event: ping\ndata: {}\n\n'
+                        continue
+                    yield (
+                        f'data: {_json.dumps(sample)}\n\n'
+                    )
+            except asyncio.CancelledError:
+                pass
+            finally:
+                stm32.set_motor_telem_callback(None)
+                try:
+                    await loop.run_in_executor(
+                        None,
+                        lambda: stm32.send_command(
+                            cmd={
+                                'cmd': 'set_motor_telem',
+                                'enable': False,
+                            },
+                            timeout_s=2.0,
+                        ),
+                    )
+                except Exception:
+                    pass
+
+        return StreamingResponse(
+            _generate(),
+            media_type='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+            },
+        )
 
     @router.get('/stm32/status')
     async def stm32_status():

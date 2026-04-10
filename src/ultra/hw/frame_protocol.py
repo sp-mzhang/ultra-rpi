@@ -61,6 +61,8 @@ CMD_SET_LOC_OFFSET      = 0x820E
 CMD_TIP_SWAP            = 0x820F
 CMD_LID_MOVE            = 0x8210
 CMD_READ_Z_DRV          = 0x8211
+CMD_GET_MOTOR_STATUS    = 0x8212
+CMD_SET_MOTOR_TELEM     = 0x8213
 
 # Lift stepper (0x8Bxx)
 CMD_LIFT_HOME       = 0x8B01
@@ -246,6 +248,7 @@ MSG_ERROR           = 0xA006
 MSG_PUMP_DONE       = 0xA007
 MSG_GANTRY_DONE     = 0xA008
 MSG_LIFT_DONE       = 0xA009
+MSG_MOTOR_TELEMETRY = 0xA00A
 
 # Pump transfer flags
 PUMP_FLAG_STREAMING = 0x01
@@ -287,6 +290,8 @@ CMD_NAME_TO_ID = {
     'gantry_tip_swap':      CMD_TIP_SWAP,
     'lid_move':             CMD_LID_MOVE,
     'read_z_drv':           CMD_READ_Z_DRV,
+    'get_motor_status':     CMD_GET_MOTOR_STATUS,
+    'set_motor_telem':      CMD_SET_MOTOR_TELEM,
     'lift_home':            CMD_LIFT_HOME,
     'lift_stop':            CMD_LIFT_STOP,
     'lift_move':            CMD_LIFT_MOVE,
@@ -1859,6 +1864,65 @@ def unpack_rsp_read_z_drv(data: bytes) -> dict:
         'seq': seq, 'error': error,
         'uart_ok': bool(uart_ok),
         'drv_status': drv_status,
+    }
+
+
+def pack_set_motor_telem(seq: int, enable: bool) -> bytes:
+    '''Pack CMD_SET_MOTOR_TELEM (0x8213) payload.
+    Wire: seq(4) + enable(1) = 5 bytes.'''
+    return struct.pack('<IB', seq, int(enable))
+
+
+def _unpack_axis_status(data: bytes, offset: int) -> dict:
+    '''Unpack a single axis status block (4 bytes).'''
+    cs, stst, pwm, faults = struct.unpack_from(
+        '<BBBB', data, offset,
+    )
+    return {
+        'cs_actual': cs,
+        'stst': bool(stst),
+        'pwm_scale_sum': pwm,
+        'faults': {
+            'otpw': bool(faults & 0x01),
+            'ot':   bool(faults & 0x02),
+            's2ga': bool(faults & 0x04),
+            's2gb': bool(faults & 0x08),
+            'ola':  bool(faults & 0x10),
+            'olb':  bool(faults & 0x20),
+        },
+    }
+
+
+def unpack_rsp_motor_status(data: bytes) -> dict:
+    '''Unpack RSP_GET_MOTOR_STATUS (0x9212) payload.
+    Wire: seq(4) + error(1) + x(4) + y(4) + z(4) = 17 bytes.'''
+    if len(data) < 17:
+        return unpack_rsp_common(data)
+    seq, error = struct.unpack_from('<IB', data)
+    return {
+        'seq': seq,
+        'error': error,
+        'x': _unpack_axis_status(data, 5),
+        'y': _unpack_axis_status(data, 9),
+        'z': _unpack_axis_status(data, 13),
+    }
+
+
+def unpack_msg_motor_telemetry(data: bytes) -> dict:
+    '''Unpack MSG_MOTOR_TELEMETRY (0xA00A) async payload.
+    Wire: elapsed_ms(4) + x_cs(1) + x_pwm(1) + y_cs(1) + y_pwm(1)
+          + z_cs(1) + z_pwm(1) = 10 bytes.'''
+    if len(data) < 10:
+        return {'raw': data.hex()}
+    elapsed, = struct.unpack_from('<I', data)
+    x_cs, x_pwm = struct.unpack_from('<BB', data, 4)
+    y_cs, y_pwm = struct.unpack_from('<BB', data, 6)
+    z_cs, z_pwm = struct.unpack_from('<BB', data, 8)
+    return {
+        'elapsed_ms': elapsed,
+        'x': {'cs_actual': x_cs, 'pwm_scale_sum': x_pwm},
+        'y': {'cs_actual': y_cs, 'pwm_scale_sum': y_pwm},
+        'z': {'cs_actual': z_cs, 'pwm_scale_sum': z_pwm},
     }
 
 

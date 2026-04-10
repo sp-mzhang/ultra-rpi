@@ -70,6 +70,8 @@ class STM32Interface:
         self._seq = 0
         self._parser = fp.FrameParser()
         self._lock = threading.Lock()
+        self._abort_flag = threading.Event()
+        self._motor_telem_cb = None
         LOG.info(
             f'STM32Interface created: '
             f'{port=} {baud=}',
@@ -106,6 +108,44 @@ class STM32Interface:
             self._ser.close()
             self._ser = None
             LOG.info('Disconnected')
+
+    def _dispatch_motor_telem(
+            self, rsp_cmd: int, rsp_data: bytes,
+    ) -> None:
+        '''Forward motor telemetry to registered callback.'''
+        telem_low = fp.MSG_MOTOR_TELEMETRY & 0x00FF
+        if (rsp_cmd & 0x00FF) != telem_low:
+            return
+        cb = self._motor_telem_cb
+        if cb is None:
+            return
+        try:
+            d = fp.unpack_msg_motor_telemetry(rsp_data)
+            cb(d)
+        except Exception:
+            pass
+
+    def set_motor_telem_callback(self, cb) -> None:
+        '''Register a callback for motor telemetry samples.
+
+        Args:
+            cb: Callable(dict) or None to unregister.
+        '''
+        self._motor_telem_cb = cb
+
+    def request_abort(self) -> None:
+        '''Signal all in-flight waits to exit immediately.
+
+        Thread-safe — can be called from any thread while
+        send_command or send_command_wait_done is blocked.
+        After the wait exits the caller should send the
+        firmware CMD_ABORT separately.
+        '''
+        self._abort_flag.set()
+
+    def clear_abort(self) -> None:
+        '''Clear the abort flag for the next operation.'''
+        self._abort_flag.clear()
 
     def _next_seq(self) -> int:
         '''Get next sequence number.
@@ -247,6 +287,12 @@ class STM32Interface:
         pressure_samples: list[dict] = []
 
         while (time.time() - start_time) < timeout_s:
+            if self._abort_flag.is_set():
+                LOG.warning(
+                    f'ABORT: cancelling wait for '
+                    f'{cmd_name}',
+                )
+                return None
             remaining = timeout_s - (
                 time.time() - start_time
             )
@@ -271,6 +317,9 @@ class STM32Interface:
                             'pump_position', 0,
                         ),
                     })
+                self._dispatch_motor_telem(
+                    rsp_cmd, rsp_data,
+                )
                 continue
 
             if rsp_cmd != expected_rsp:
@@ -416,6 +465,12 @@ class STM32Interface:
         pressure_samples: list[dict] = []
 
         while (time.time() - start_time) < timeout_s:
+            if self._abort_flag.is_set():
+                LOG.warning(
+                    f'ABORT: cancelling wait_done '
+                    f'for {cmd_name}',
+                )
+                return None
             remaining = timeout_s - (
                 time.time() - start_time
             )
@@ -447,6 +502,9 @@ class STM32Interface:
                         ),
                     })
                     continue
+                self._dispatch_motor_telem(
+                    rsp_cmd, rsp_data,
+                )
                 done_low = done_msg & 0x00FF
                 if rsp_low == done_low:
                     msg = unpack_done(rsp_data)
@@ -816,6 +874,12 @@ class STM32Interface:
             return fp.pack_temp_get_status(seq)
         if cmd_name == 'read_z_drv':
             return fp.pack_seq(seq)
+        if cmd_name == 'get_motor_status':
+            return fp.pack_seq(seq)
+        if cmd_name == 'set_motor_telem':
+            return fp.pack_set_motor_telem(
+                seq, cmd.get('enable', False),
+            )
         if cmd_name == 'lld_perform':
             return fp.pack_lld_perform(
                 seq=seq,
@@ -1162,6 +1226,11 @@ class STM32Interface:
         elif cmd_name == 'read_z_drv':
             d = fp.unpack_rsp_read_z_drv(data)
             result.update(d)
+        elif cmd_name == 'get_motor_status':
+            d = fp.unpack_rsp_motor_status(data)
+            result.update(d)
+        elif cmd_name == 'set_motor_telem':
+            pass
         elif cmd_name == 'centrifuge_bldc_cmd':
             d = fp.unpack_rsp_centrifuge_bldc(data)
             result['error_code'] = d.get('error', 0xFF)
