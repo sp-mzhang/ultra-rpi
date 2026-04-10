@@ -545,7 +545,10 @@ class ReagentTransferStep(StepExecutor):
         asp_vol = params['asp_vol']
         cart_vol = params['cart_vol']
         consts = runner.recipe.constants
-        reasp = consts.get('reasp_ul', 12)
+        reasp = params.get(
+            'reasp_ul',
+            consts.get('reasp_ul', 12),
+        )
         remainder = asp_vol - cart_vol + reasp
 
         if params.get('skip_aspirate'):
@@ -561,15 +564,17 @@ class ReagentTransferStep(StepExecutor):
             sa = runner.stm32.smart_aspirate_at(
                 loc_id=source.loc_id,
                 volume_ul=asp_vol,
-                speed_ul_s=consts.get(
-                    'aspirate_speed', 40.0,
+                speed_ul_s=params.get(
+                    'asp_speed',
+                    consts.get('aspirate_speed', 40.0),
                 ),
                 lld_threshold=consts.get(
                     'lld_threshold', 20,
                 ),
                 piston_reset=True,
-                air_slug_ul=consts.get(
-                    'air_slug_ul', 40,
+                air_slug_ul=params.get(
+                    'air_slug',
+                    consts.get('air_slug_ul', 40),
                 ),
                 stream=False,
             )
@@ -614,8 +619,9 @@ class ReagentTransferStep(StepExecutor):
         ok = runner.stm32.well_dispense_at(
             loc_id=source.loc_id,
             volume_ul=int(remainder),
-            speed_ul_s=consts.get(
-                'well_disp_speed', 100.0,
+            speed_ul_s=params.get(
+                'return_speed',
+                consts.get('well_disp_speed', 100.0),
             ),
             blowout=True,
         )
@@ -660,7 +666,10 @@ class ReagentTransferBFStep(StepExecutor):
         cart_vol = params['cart_vol']
         duration_s = params['duration_s']
         consts = runner.recipe.constants
-        reasp = consts.get('reasp_ul', 12)
+        reasp = params.get(
+            'reasp_ul',
+            consts.get('reasp_ul', 12),
+        )
         remainder = asp_vol - cart_vol + reasp
 
         if params.get('skip_aspirate'):
@@ -676,15 +685,17 @@ class ReagentTransferBFStep(StepExecutor):
             sa = runner.stm32.smart_aspirate_at(
                 loc_id=source.loc_id,
                 volume_ul=asp_vol,
-                speed_ul_s=consts.get(
-                    'aspirate_speed', 40.0,
+                speed_ul_s=params.get(
+                    'asp_speed',
+                    consts.get('aspirate_speed', 40.0),
                 ),
                 lld_threshold=consts.get(
                     'lld_threshold', 20,
                 ),
                 piston_reset=True,
-                air_slug_ul=consts.get(
-                    'air_slug_ul', 40,
+                air_slug_ul=params.get(
+                    'air_slug',
+                    consts.get('air_slug_ul', 40),
                 ),
                 stream=False,
             )
@@ -732,8 +743,9 @@ class ReagentTransferBFStep(StepExecutor):
         ok = runner.stm32.well_dispense_at(
             loc_id=source.loc_id,
             volume_ul=int(remainder),
-            speed_ul_s=consts.get(
-                'well_disp_speed', 100.0,
+            speed_ul_s=params.get(
+                'return_speed',
+                consts.get('well_disp_speed', 100.0),
             ),
             blowout=True,
         )
@@ -1101,8 +1113,9 @@ class DilutionTransferStep(StepExecutor):
                 'lld_threshold', 20,
             ),
             piston_reset=True,
-            air_slug_ul=consts.get(
-                'air_slug_ul', 40,
+            air_slug_ul=params.get(
+                'air_slug',
+                consts.get('air_slug_ul', 40),
             ),
             stream=params.get('stream', True),
         )
@@ -1420,7 +1433,11 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('target', 'string', well_ref=True, required=True),
         _p('asp_vol', required=True, volume_out=True),
         _p('cart_vol', required=True, volume_in=True),
+        _p('asp_speed', default=40.0),
         _p('cart_vel', default=1.5),
+        _p('air_slug', default=40),
+        _p('reasp_ul', default=12),
+        _p('return_speed', default=100.0),
         _p('skip_aspirate', 'boolean', default=False),
     ],
     'reagent_transfer_bf': [
@@ -1429,10 +1446,14 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('asp_vol', required=True, volume_out=True),
         _p('cart_vol', required=True, volume_in=True),
         _p('duration_s', required=True),
+        _p('asp_speed', default=40.0),
         _p('cart_vel', default=1.5),
+        _p('air_slug', default=40),
+        _p('reasp_ul', default=12),
         _p('for_vol', default=60),
         _p('back_vol', default=30),
         _p('sleep_s', default=30),
+        _p('return_speed', default=100.0),
         _p('skip_aspirate', 'boolean', default=False),
     ],
     'well_transfer': [
@@ -1484,6 +1505,7 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('volume', required=True, volume_out=True, volume_in=True),
         _p('asp_speed', default=80.0),
         _p('disp_speed', default=100.0),
+        _p('air_slug', default=40),
         _p('blowout', 'boolean', default=True),
         _p('stream', 'boolean', default=True),
     ],

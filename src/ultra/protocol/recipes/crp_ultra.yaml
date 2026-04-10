@@ -210,7 +210,11 @@ phases:
         target: PP4
         asp_vol: 110
         cart_vol: 70
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       - type: tip_swap
         label: Tip swap 5 -> 6
@@ -224,7 +228,11 @@ phases:
         target: PP4
         asp_vol: 210
         cart_vol: 160
+        asp_speed: 40.0
         cart_vel: 1.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # PBST (simplified from slow+fast accel-boost)
       - type: reagent_transfer
@@ -233,7 +241,11 @@ phases:
         target: PP4
         asp_vol: 220
         cart_vol: 180
+        asp_speed: 40.0
         cart_vel: 1.0
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Lane4 Buffer 4.23 (first)
       - type: reagent_transfer
@@ -242,7 +254,11 @@ phases:
         target: PP4
         asp_vol: 90
         cart_vol: 60
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Dilution7 (750x from M9)
       - type: reagent_transfer
@@ -251,7 +267,11 @@ phases:
         target: PP4
         asp_vol: 150
         cart_vol: 120
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Lane4 Buffer 4.23 (second)
       - type: reagent_transfer
@@ -260,7 +280,11 @@ phases:
         target: PP4
         asp_vol: 90
         cart_vol: 60
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # GNP pre-mix then back-and-forth
       - type: tip_mix
@@ -278,10 +302,14 @@ phases:
         asp_vol: 200
         cart_vol: 145
         duration_s: 480
+        asp_speed: 40.0
         cart_vel: 1.5
+        air_slug: 40
+        reasp_ul: 12
         for_vol: 35
         back_vol: 25
         sleep_s: 0
+        return_speed: 100.0
         skip_aspirate: true
 
       - type: tip_return

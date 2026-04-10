@@ -141,7 +141,11 @@ phases:
         target: PP4
         asp_vol: 180
         cart_vol: 150
+        asp_speed: 40.0
         cart_vel: 10
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       - type: reagent_transfer
         label: DemoReagent1
@@ -149,7 +153,11 @@ phases:
         target: PP4
         asp_vol: 80
         cart_vol: 50
+        asp_speed: 40.0
         cart_vel: 10
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       - type: tip_swap
         label: Swap 4 -> 5
@@ -162,7 +170,11 @@ phases:
         target: PP4
         asp_vol: 100
         cart_vol: 60
+        asp_speed: 40.0
         cart_vel: 10
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       - type: well_transfer
         label: DemoTransfer

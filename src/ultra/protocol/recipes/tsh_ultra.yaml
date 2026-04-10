@@ -155,7 +155,11 @@ phases:
         target: PP4
         asp_vol: 110
         cart_vol: 70
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Tip swap 4 -> 5
       - type: tip_swap
@@ -170,7 +174,11 @@ phases:
         target: PP4
         asp_vol: 210
         cart_vol: 160
+        asp_speed: 40.0
         cart_vel: 1.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Step 12: PBST
       - type: reagent_transfer
@@ -179,7 +187,11 @@ phases:
         target: PP4
         asp_vol: 190
         cart_vol: 160
+        asp_speed: 40.0
         cart_vel: 1.0
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Step 13: SampleBuf1
       - type: reagent_transfer
@@ -188,7 +200,11 @@ phases:
         target: PP4
         asp_vol: 180
         cart_vol: 150
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Step 14: SampleBuf2
       - type: reagent_transfer
@@ -197,7 +213,11 @@ phases:
         target: PP4
         asp_vol: 180
         cart_vol: 150
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Step 15: SampleDil1A (back-and-forth)
       - type: reagent_transfer_bf
@@ -207,10 +227,14 @@ phases:
         asp_vol: 190
         cart_vol: 160
         duration_s: 1600
+        asp_speed: 40.0
         cart_vel: 0.25
+        air_slug: 40
+        reasp_ul: 12
         for_vol: 40
         back_vol: 20
         sleep_s: 30
+        return_speed: 100.0
 
       # Step 16: SampleBuf3
       - type: reagent_transfer
@@ -219,7 +243,11 @@ phases:
         target: PP4
         asp_vol: 90
         cart_vol: 60
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Step 17: TSH Antibody
       - type: reagent_transfer
@@ -228,7 +256,11 @@ phases:
         target: PP4
         asp_vol: 180
         cart_vol: 150
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Step 18: SampleBuf4
       - type: reagent_transfer
@@ -237,7 +269,11 @@ phases:
         target: PP4
         asp_vol: 60
         cart_vol: 30
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Step 19: PBS
       - type: reagent_transfer
@@ -246,7 +282,11 @@ phases:
         target: PP4
         asp_vol: 45
         cart_vol: 15
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Step 20: DetBuf1
       - type: reagent_transfer
@@ -255,7 +295,11 @@ phases:
         target: PP4
         asp_vol: 180
         cart_vol: 150
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Step 21: SA-GNP (tip mix + back-and-forth)
       - type: tip_mix
@@ -273,10 +317,14 @@ phases:
         asp_vol: 200
         cart_vol: 165
         duration_s: 430
+        asp_speed: 40.0
         cart_vel: 1.5
+        air_slug: 40
+        reasp_ul: 12
         for_vol: 45
         back_vol: 30
         sleep_s: 30
+        return_speed: 100.0
         skip_aspirate: true
 
       # Step 22: DetBuf3
@@ -286,7 +334,11 @@ phases:
         target: PP4
         asp_vol: 90
         cart_vol: 60
+        asp_speed: 40.0
         cart_vel: 0.5
+        air_slug: 40
+        reasp_ul: 12
+        return_speed: 100.0
 
       # Return tip
       - type: tip_return

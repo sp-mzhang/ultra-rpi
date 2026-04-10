@@ -1594,8 +1594,8 @@ textarea {
   overflow: hidden;
 }
 .cfg-sidebar {
-  width: 160px;
-  min-width: 160px;
+  width: 140px;
+  min-width: 140px;
   background: var(--surface);
   border-right: 1px solid var(--border);
   padding: 8px 0;
@@ -1670,17 +1670,21 @@ textarea {
 }
 
 .cfg-textarea {
+  display: block;
   width: 100%;
-  min-height: 300px;
+  min-height: 400px;
   font-family: ui-monospace, 'Cascadia Code', monospace;
-  font-size: 0.72rem;
-  line-height: 1.45;
-  padding: 8px 10px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  padding: 10px 12px;
   border-radius: 4px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
   resize: vertical;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 2;
 }
 
 .cfg-btn-row {
@@ -1786,7 +1790,7 @@ textarea {
 }
 
 /* Wells table */
-.rb-wells-wrap { overflow-x: auto; }
+.rb-wells-wrap { overflow: auto; max-height: 240px; }
 .rb-wells {
   width: 100%;
   border-collapse: collapse;
@@ -1803,6 +1807,9 @@ textarea {
   font-weight: 600;
   font-size: 0.72rem;
   color: var(--text-dim);
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 .rb-wells input {
   width: 100%;
