@@ -1749,6 +1749,13 @@ textarea {
 .btn-outline:hover {
   background: color-mix(in srgb, var(--blue) 10%, transparent);
 }
+.btn-danger {
+  background: var(--red);
+  color: #fff;
+}
+.btn-danger:hover {
+  background: color-mix(in srgb, var(--red) 80%, #000);
+}
 
 /* --- Recipe Builder --- */
 .rb-input {

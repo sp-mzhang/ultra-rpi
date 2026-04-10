@@ -1038,6 +1038,25 @@ def create_api_router(
             'message': f'Recipe "{slug}" saved to S3.',
         }
 
+    @router.delete('/recipes/{slug}')
+    async def recipe_delete(slug: str):
+        '''Delete a recipe from S3.'''
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                None, config_store.delete_recipe, slug,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f'Delete failed: {exc}',
+            )
+        return {
+            'ok': True,
+            'message': f'Recipe "{slug}" deleted.',
+        }
+
     @router.get('/common-protocol/yaml')
     async def common_protocol_get():
         '''Return raw YAML for _common.yaml (shared protocol phases).'''

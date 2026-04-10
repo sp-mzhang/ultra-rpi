@@ -209,6 +209,21 @@ def put_recipe_yaml(slug: str, yaml_text: str) -> None:
     _write_cache(key, yaml_text)
 
 
+def delete_recipe(slug: str) -> None:
+    '''Delete a recipe from S3 and remove local cache.'''
+    key = recipe_object_key(slug)
+    try:
+        _get_s3().delete_object(
+            Bucket=BUCKET, Key=key,
+        )
+    except Exception as exc:
+        LOG.warning('S3 delete %s: %s', key, exc)
+        raise
+    path = cache_path_for_key(key)
+    if os.path.exists(path):
+        os.remove(path)
+
+
 def put_shared_common_yaml(yaml_text: str) -> None:
     key = shared_common_key()
     put_object_bytes(key, yaml_text.encode('utf-8'))

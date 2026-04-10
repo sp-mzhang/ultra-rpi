@@ -3755,6 +3755,24 @@
       }
     });
 
+    /* Delete recipe */
+    $('#cfg-delete-recipe').addEventListener('click', async () => {
+      const slug = sel.value;
+      if (!slug) { setMsg(msgR, 'No recipe selected.', true); return; }
+      if (!confirm(`Delete recipe "${slug}" from S3? This cannot be undone.`)) return;
+      try {
+        const res = await fetch(`/api/recipes/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+        const j = await parseJson(res);
+        if (!res.ok) { setMsg(msgR, fmtApiErr(j, 'Delete failed'), true); return; }
+        await loadRecipeListForCfg();
+        await loadRecipes();
+        resetBuilderForNew();
+        setMsg(msgR, j.message || `Deleted "${slug}".`);
+      } catch (e) {
+        setMsg(msgR, String(e), true);
+      }
+    });
+
     /* Reload recipe */
     $('#cfg-recipe-load').addEventListener('click', loadRecipeYaml);
     sel.addEventListener('change', loadRecipeYaml);
