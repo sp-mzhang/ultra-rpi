@@ -94,30 +94,6 @@ def put_object_bytes(
     )
 
 
-def machine_settings_object_exists(device_sn: str) -> bool:
-    '''True if ``machines/{device_sn}/machine_settings.yaml`` exists in S3.'''
-    key = machine_settings_key(device_sn)
-    try:
-        _get_s3().head_object(
-            Bucket=config_bucket(),
-            Key=key,
-        )
-        return True
-    except Exception as exc:
-        try:
-            from botocore.exceptions import ClientError
-            if isinstance(exc, ClientError):
-                code = exc.response.get('Error', {}).get(
-                    'Code', '',
-                )
-                if code in ('404', 'NoSuchKey', 'NotFound'):
-                    return False
-        except Exception:
-            pass
-        LOG.debug('S3 head %s: %s', key, exc)
-        return False
-
-
 def fetch_machine_settings_yaml(device_sn: str) -> str | None:
     '''Return machine settings YAML text from S3, or None.'''
     key = machine_settings_key(device_sn)

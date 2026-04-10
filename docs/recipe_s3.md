@@ -36,13 +36,18 @@ Grant `s3:GetObject`, `s3:PutObject`, `s3:ListBucket`, `s3:ListObjectVersions` o
 2. `ULTRA_CONFIG` file (if set)
 3. S3 `machines/{device_sn}/machine_settings.yaml` (if present and download succeeds)
 
-`GET /api/machine-settings` always returns YAML for the **full** effective
-merged config (defaults + `ULTRA_CONFIG` + S3 overlay from startup), not the raw
-S3 file text — so a short legacy object in S3 does not hide other keys in the
-editor. **`PUT` or `POST /api/machine-settings`** writes the textarea to S3.
-After a successful save, reload the page or use **Reload** to refresh from
-`app.config` (comments you typed are only preserved in S3 until restart loads
-them into memory).
+`GET /api/machine-settings` returns the **raw** YAML from S3 when
+`machines/{device_sn}/machine_settings.yaml` exists and is non-empty (so
+**Reload** matches what was saved, including comments). If there is no object
+yet, it returns a draft built from the full effective merged in-memory config.
+**`PUT` or `POST /api/machine-settings`** uploads to S3 and **deep-merges** the
+parsed YAML into the running process’s `app.config` so hardware runs use the new
+values immediately; **Reload** re-downloads from S3 for the editor.
+
+`GET /api/recipes/{slug}/yaml` returns `source`: `s3` when
+`recipes/{slug}/recipe.yaml` exists in the bucket (raw downloaded text), else
+`packaged` from the repo. **`PUT` or `POST`** saves to S3 and updates the local
+cache file used by `load_recipe`.
 
 ## Seeding the bucket from the repo
 

@@ -849,12 +849,13 @@ def create_api_router(
 
     @router.get('/machine-settings')
     async def machine_settings_get():
-        '''Return full effective merged config as YAML for editing.
+        '''Return YAML for the machine settings editor.
 
-        Always dumps ``app.config`` (everything the process loaded), not the
-        raw S3 object text — so a legacy short upload in S3 does not hide
-        stm32, reader, gui, etc. ``source`` indicates whether an S3 object
-        exists for metadata only.
+        If ``machines/{device_sn}/machine_settings.yaml`` exists in S3 and is
+        non-empty, returns that **raw** text so Reload matches what was
+        saved (including comments). Otherwise returns the full effective
+        merged config from ``app.config`` (defaults + ULTRA_CONFIG + any S3
+        merged at startup) for first-time bootstrap.
         '''
         from ultra.services import config_store
         ds = app.config.get('device_sn', '')
@@ -866,11 +867,13 @@ def create_api_router(
         loop = asyncio.get_running_loop()
 
         def _load() -> tuple[str, str]:
-            exists = config_store.machine_settings_object_exists(
-                ds,
+            raw = config_store.fetch_machine_settings_yaml(ds)
+            if raw is not None and str(raw).strip():
+                return str(raw), 's3'
+            return (
+                _machine_settings_effective_yaml(app.config),
+                'defaults',
             )
-            text = _machine_settings_effective_yaml(app.config)
-            return text, ('s3' if exists else 'defaults')
 
         yaml_text, source = await loop.run_in_executor(
             None, _load,
@@ -884,10 +887,12 @@ def create_api_router(
     @router.put('/machine-settings')
     @router.post('/machine-settings')
     async def machine_settings_put(req: YamlTextBody):
-        '''Write machine_settings.yaml to S3 for this device.
+        '''Write machine_settings.yaml to S3 and merge into ``app.config``.
 
         POST is an alias for PUT (some reverse proxies block PUT).
         '''
+        import yaml
+        from ultra.config import merge_config
         from ultra.services import config_store
         ds = app.config.get('device_sn', '')
         if not ds:
@@ -897,13 +902,33 @@ def create_api_router(
             )
         loop = asyncio.get_running_loop()
 
-        def _save() -> None:
+        def _save_and_apply() -> None:
+            try:
+                parsed = yaml.safe_load(req.yaml_text)
+            except yaml.YAMLError as exc:
+                raise ValueError(
+                    f'Invalid YAML: {exc}',
+                ) from exc
+            if parsed is None:
+                parsed = {}
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    'Machine settings must be a top-level YAML '
+                    'mapping (object), not a list or scalar.',
+                )
             config_store.put_machine_settings_yaml(
                 ds, req.yaml_text,
             )
+            app.config = merge_config(app.config, parsed)
 
         try:
-            await loop.run_in_executor(None, _save)
+            await loop.run_in_executor(
+                None, _save_and_apply,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=str(exc),
+            ) from exc
         except Exception as exc:
             LOG.exception('S3 put machine_settings failed')
             raise HTTPException(
@@ -913,8 +938,8 @@ def create_api_router(
         return {
             'ok': True,
             'message': (
-                'Saved to S3. Restart the app to load this YAML into '
-                'memory; the editor shows what you saved until you Reload.'
+                'Saved to S3 and applied to this process (config in memory '
+                'updated for the next run). Reload re-downloads from S3.'
             ),
         }
 
@@ -931,36 +956,48 @@ def create_api_router(
 
     @router.get('/recipes/{slug}/yaml')
     async def recipe_yaml_get(slug: str):
-        '''Return raw YAML for a recipe (S3 cache or packaged).'''
+        '''Return raw YAML for a recipe.
+
+        Prefer S3 (download to cache) when the object exists; otherwise
+        packaged ``recipes/{slug}.yaml``. ``source`` is ``s3`` or
+        ``packaged`` so Reload matches machine-settings behavior.
+        '''
         import os.path as op
         from ultra.protocol import recipe_loader as rl
         from ultra.services import config_store
         loop = asyncio.get_running_loop()
 
-        def _read() -> str:
+        def _read() -> tuple[str, str]:
             path = config_store.fetch_recipe_to_cache(slug)
             if path and op.isfile(path):
                 with open(path, encoding='utf-8') as fh:
-                    return fh.read()
+                    return fh.read(), 's3'
             pack = op.join(
                 rl.RECIPES_DIR, f'{slug}.yaml',
             )
             if op.isfile(pack):
                 with open(pack, encoding='utf-8') as fh:
-                    return fh.read()
+                    return fh.read(), 'packaged'
             raise FileNotFoundError(slug)
 
         try:
-            text = await loop.run_in_executor(None, _read)
+            text, source = await loop.run_in_executor(
+                None, _read,
+            )
         except FileNotFoundError:
             raise HTTPException(
                 status_code=404, detail='Recipe not found',
             )
-        return {'slug': slug, 'yaml_text': text}
+        return {
+            'slug': slug,
+            'yaml_text': text,
+            'source': source,
+        }
 
     @router.put('/recipes/{slug}/yaml')
+    @router.post('/recipes/{slug}/yaml')
     async def recipe_yaml_put(slug: str, req: YamlTextBody):
-        '''Validate and save a global recipe to S3.'''
+        '''Validate and save a global recipe to S3 (POST mirrors PUT).'''
         import yaml
         from ultra.protocol import recipe_loader as rl
         from ultra.services import config_store

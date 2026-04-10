@@ -44,6 +44,18 @@ def _deep_merge(
     return merged
 
 
+def merge_config(
+        base: dict[str, Any],
+        overlay: dict[str, Any],
+) -> dict[str, Any]:
+    '''Deep-merge *overlay* into *base*.
+
+    Same rules as merging ``machine_settings.yaml`` from S3 at startup.
+    Returns a new dict.
+    '''
+    return _deep_merge(base, overlay)
+
+
 def load_config(
         path: str | None = None,
 ) -> dict[str, Any]:

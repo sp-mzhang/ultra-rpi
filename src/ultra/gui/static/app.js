@@ -2878,7 +2878,7 @@
       setMsg(msgM, '');
       try {
         const res = await fetch('/api/machine-settings');
-        const j = await res.json();
+        const j = await parseJsonResponse(res);
         if (!res.ok) {
           setMsg(
             msgM,
@@ -2899,6 +2899,14 @@
             false,
             true,
           );
+        } else if (j.source === 's3') {
+          setMsg(
+            msgM,
+            'Showing raw YAML from S3 (Reload re-downloads this object). '
+              + 'Restart the app to apply changes to memory.',
+            false,
+            true,
+          );
         }
       } catch (e) {
         setMsg(msgM, String(e), true);
@@ -2914,7 +2922,7 @@
         const res = await fetch(
           `/api/recipes/${encodeURIComponent(slug)}/yaml`,
         );
-        const j = await res.json();
+        const j = await parseJsonResponse(res);
         if (!res.ok) {
           setMsg(
             msgR,
@@ -2925,6 +2933,22 @@
           return;
         }
         taR.value = j.yaml_text || '';
+        if (j.source === 's3') {
+          setMsg(
+            msgR,
+            'Loaded from S3 (Reload re-downloads this object).',
+            false,
+            true,
+          );
+        } else if (j.source === 'packaged') {
+          setMsg(
+            msgR,
+            'No object in S3 for this slug; showing packaged recipe from '
+              + 'disk. Save to S3 to create the bucket copy.',
+            false,
+            true,
+          );
+        }
       } catch (e) {
         setMsg(msgR, String(e), true);
         taR.value = '';
@@ -2976,9 +3000,7 @@
             );
             return;
           }
-          // Do not call loadMachineSettings() here: GET dumps app.config,
-          // which drops YAML comments and makes a successful S3 save look
-          // like it was reverted.
+          await loadMachineSettings();
           setMsg(
             msgM,
             j.message || 'Saved to S3.',
@@ -3030,14 +3052,14 @@
           const res = await fetch(
             `/api/recipes/${encodeURIComponent(slug)}/yaml`,
             {
-              method: 'PUT',
+              method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 yaml_text: taR.value,
               }),
             },
           );
-          const j = await res.json();
+          const j = await parseJsonResponse(res);
           if (!res.ok) {
             setMsg(
               msgR,
@@ -3046,9 +3068,10 @@
             );
             return;
           }
-          setMsg(msgR, 'Saved and validated.');
           await loadRecipes();
           await loadRecipeListForCfg();
+          await loadRecipeYaml();
+          setMsg(msgR, 'Saved and validated.', false, false);
         } catch (e) {
           setMsg(msgR, String(e), true);
         }
