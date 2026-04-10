@@ -133,6 +133,59 @@ class STM32Interface:
         '''
         self._motor_telem_cb = cb
 
+    def start_telem_reader(self) -> None:
+        '''Start a background thread that reads UART frames
+        and dispatches motor telemetry to the callback.
+
+        Must be called while no command is in flight (the
+        reader acquires _lock in short bursts).
+        '''
+        if getattr(self, '_telem_stop', None) is not None:
+            return
+        self._telem_stop = threading.Event()
+
+        def _loop():
+            while not self._telem_stop.is_set():
+                if not self._ser or not self._ser.is_open:
+                    self._telem_stop.wait(0.1)
+                    continue
+                acquired = self._lock.acquire(timeout=0.05)
+                if not acquired:
+                    continue
+                try:
+                    result = self._recv_frame(
+                        timeout_s=0.05,
+                    )
+                finally:
+                    self._lock.release()
+                if result is None:
+                    continue
+                rsp_cmd, rsp_data = result
+                if fp.is_async_msg(rsp_cmd):
+                    self._dispatch_motor_telem(
+                        rsp_cmd, rsp_data,
+                    )
+
+        self._telem_thread = threading.Thread(
+            target=_loop, daemon=True,
+            name='telem-reader',
+        )
+        self._telem_thread.start()
+        LOG.info('Telemetry reader started')
+
+    def stop_telem_reader(self) -> None:
+        '''Stop the background telemetry reader thread.'''
+        stop = getattr(self, '_telem_stop', None)
+        if stop is None:
+            return
+        stop.set()
+        t = getattr(self, '_telem_thread', None)
+        if t is not None:
+            t.join(timeout=2.0)
+        self._telem_stop = None
+        self._telem_thread = None
+        LOG.info('Telemetry reader stopped')
+
     def request_abort(self) -> None:
         '''Signal all in-flight waits to exit immediately.
 

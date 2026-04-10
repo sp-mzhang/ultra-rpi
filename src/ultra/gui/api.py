@@ -683,8 +683,10 @@ def create_api_router(
 
         def _on_sample(d: dict):
             try:
-                q.put_nowait(d)
-            except asyncio.QueueFull:
+                loop.call_soon_threadsafe(
+                    q.put_nowait, d,
+                )
+            except (asyncio.QueueFull, RuntimeError):
                 pass
 
         stm32.set_motor_telem_callback(_on_sample)
@@ -695,6 +697,7 @@ def create_api_router(
                 timeout_s=2.0,
             ),
         )
+        stm32.start_telem_reader()
 
         async def _generate():
             import json as _json
@@ -713,6 +716,7 @@ def create_api_router(
             except asyncio.CancelledError:
                 pass
             finally:
+                stm32.stop_telem_reader()
                 stm32.set_motor_telem_callback(None)
                 try:
                     await loop.run_in_executor(
