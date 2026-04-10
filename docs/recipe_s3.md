@@ -37,12 +37,17 @@ Grant `s3:GetObject`, `s3:PutObject`, `s3:ListBucket`, `s3:ListObjectVersions` o
 3. S3 `machines/{device_sn}/machine_settings.yaml` (if present and download succeeds)
 
 `GET /api/machine-settings` returns the **raw** YAML from S3 when
-`machines/{device_sn}/machine_settings.yaml` exists and is non-empty (so
-**Reload** matches what was saved, including comments). If there is no object
-yet, it returns a draft built from the full effective merged in-memory config.
-**`PUT` or `POST /api/machine-settings`** uploads to S3 and **deep-merges** the
-parsed YAML into the running process’s `app.config` so hardware runs use the new
-values immediately; **Reload** re-downloads from S3 for the editor.
+`machines/{device_sn}/machine_settings.yaml` exists and is non-empty (so the
+editor matches the bucket, including comments). If there is no object yet, it
+returns a draft built from the full effective merged in-memory config.
+
+Use **`GET /api/machine-settings?apply=1`** (the **Reload** button) to
+re-download from S3 **and** deep-merge that YAML into `app.config` for the next
+run — **no process restart**.
+
+**`PUT` or `POST /api/machine-settings`** uploads to S3 and merges into
+`app.config` immediately (same as Reload with `apply=1`, but from your edited
+text).
 
 `GET /api/recipes/{slug}/yaml` returns `source`: `s3` when
 `recipes/{slug}/recipe.yaml` exists in the bucket (raw downloaded text), else

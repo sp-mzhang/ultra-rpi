@@ -2874,10 +2874,13 @@
       );
     }
 
-    async function loadMachineSettings() {
+    async function loadMachineSettings(applyFromS3) {
       setMsg(msgM, '');
+      const q = applyFromS3 ? '?apply=1' : '';
       try {
-        const res = await fetch('/api/machine-settings');
+        const res = await fetch(
+          `/api/machine-settings${q}`,
+        );
         const j = await parseJsonResponse(res);
         if (!res.ok) {
           setMsg(
@@ -2900,13 +2903,23 @@
             true,
           );
         } else if (j.source === 's3') {
-          setMsg(
-            msgM,
-            'Showing raw YAML from S3 (Reload re-downloads this object). '
-              + 'Restart the app to apply changes to memory.',
-            false,
-            true,
-          );
+          if (j.applied) {
+            setMsg(
+              msgM,
+              'Re-downloaded from S3 and applied for the next run '
+                + '(no restart).',
+              false,
+              true,
+            );
+          } else {
+            setMsg(
+              msgM,
+              'YAML from S3. Use Reload to apply the bucket copy to the '
+                + 'next run; Save applies your edits after changing the text.',
+              false,
+              true,
+            );
+          }
         }
       } catch (e) {
         setMsg(msgM, String(e), true);
@@ -2971,13 +2984,13 @@
 
     window.__cfgTabActivate = async function () {
       await loadRecipeListForCfg();
-      await loadMachineSettings();
+      await loadMachineSettings(false);
       await loadRecipeYaml();
       await loadStepTypesOnce();
     };
 
     $('#cfg-machine-load').addEventListener(
-      'click', loadMachineSettings,
+      'click', () => loadMachineSettings(true),
     );
     $('#cfg-machine-save').addEventListener(
       'click', async () => {
@@ -3000,7 +3013,7 @@
             );
             return;
           }
-          await loadMachineSettings();
+          await loadMachineSettings(false);
           setMsg(
             msgM,
             j.message || 'Saved to S3.',

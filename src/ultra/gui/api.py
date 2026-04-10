@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -848,15 +848,26 @@ def create_api_router(
     # -------------------------------------------------------
 
     @router.get('/machine-settings')
-    async def machine_settings_get():
+    async def machine_settings_get(
+            apply: bool = Query(
+                False,
+                description=(
+                    'If true, merge YAML from S3 into app.config after '
+                    'download (same as Save). Use for Reload button.'
+                ),
+            ),
+    ):
         '''Return YAML for the machine settings editor.
 
         If ``machines/{device_sn}/machine_settings.yaml`` exists in S3 and is
-        non-empty, returns that **raw** text so Reload matches what was
-        saved (including comments). Otherwise returns the full effective
-        merged config from ``app.config`` (defaults + ULTRA_CONFIG + any S3
-        merged at startup) for first-time bootstrap.
+        non-empty, returns that **raw** text. With ``apply=true``, also
+        deep-merges that YAML into ``app.config`` so the next run uses it
+        without restarting the process.
+
+        If there is no S3 object yet, returns a draft from ``app.config``.
         '''
+        import yaml
+        from ultra.config import merge_config
         from ultra.services import config_store
         ds = app.config.get('device_sn', '')
         if not ds:
@@ -866,22 +877,40 @@ def create_api_router(
             )
         loop = asyncio.get_running_loop()
 
-        def _load() -> tuple[str, str]:
+        def _load() -> tuple[str, str, bool]:
+            applied = False
             raw = config_store.fetch_machine_settings_yaml(ds)
             if raw is not None and str(raw).strip():
-                return str(raw), 's3'
+                text = str(raw)
+                if apply:
+                    try:
+                        parsed = yaml.safe_load(text)
+                    except yaml.YAMLError as exc:
+                        LOG.warning(
+                            'machine_settings apply: invalid YAML: %s',
+                            exc,
+                        )
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        app.config = merge_config(
+                            app.config, parsed,
+                        )
+                        applied = True
+                return text, 's3', applied
             return (
                 _machine_settings_effective_yaml(app.config),
                 'defaults',
+                False,
             )
 
-        yaml_text, source = await loop.run_in_executor(
+        yaml_text, source, applied = await loop.run_in_executor(
             None, _load,
         )
         return {
             'device_sn': ds,
             'yaml_text': yaml_text,
             'source': source,
+            'applied': applied,
         }
 
     @router.put('/machine-settings')
@@ -938,8 +967,8 @@ def create_api_router(
         return {
             'ok': True,
             'message': (
-                'Saved to S3 and applied to this process (config in memory '
-                'updated for the next run). Reload re-downloads from S3.'
+                'Saved to S3 and applied for the next run (no restart). '
+                'Use Reload to re-fetch from S3 and apply again if needed.'
             ),
         }
 
