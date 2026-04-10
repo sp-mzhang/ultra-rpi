@@ -23,6 +23,25 @@
 #   AWS_DEFAULT_REGION   (default: us-east-2)
 set -euo pipefail
 
+# --- Install required packages if missing ---
+install_if_missing() {
+  if ! command -v "$1" &>/dev/null; then
+    echo "$1 not found — installing ..."
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq "$2"
+  fi
+}
+
+install_if_missing python3 python3
+install_if_missing aws awscli
+install_if_missing pip3 python3-pip
+
+# boto3 is needed by the app at runtime
+if ! python3 -c "import boto3" &>/dev/null; then
+  echo "boto3 not found — installing ..."
+  pip3 install --quiet boto3
+fi
+
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <machine_name>  (e.g. ultra2)" >&2
   exit 1
