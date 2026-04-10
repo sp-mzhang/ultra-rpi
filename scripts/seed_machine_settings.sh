@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Seed a single machine's settings in S3 and configure the local device.
+# Provision a new Ultra device: credentials, IoT certs, machine identity.
 #
 # Usage:
 #   ./scripts/seed_machine_settings.sh <machine_name>
 #
 # Example:
-#   ./scripts/seed_machine_settings.sh ultra2
+#   ./scripts/seed_machine_settings.sh ultra4
 #
-# What it does:
-#   1. Generates machines/<machine_name>/machine_settings.yaml in S3
-#      with device_sn and machine_name updated to match the argument.
-#   2. Writes /etc/ultra/machine.yaml on this device so the app picks
-#      up the correct device_sn and machine_name at boot.
+# What it does (in order):
+#   1. Installs required packages (python3, awscli, boto3).
+#   2. Writes ~/.aws/credentials and ~/.aws/config if missing.
+#   3. Copies IoT fleet-provisioning certs to /etc/siphox/.
+#   4. Generates machines/<machine_name>/machine_settings.yaml in S3.
+#   5. Writes /etc/ultra/machine.yaml for local identity.
+#   6. Patches the systemd service if needed.
 #
-# NOTE: Currently device_sn is set to the machine name (e.g. "ultra2").
+# NOTE: Currently device_sn is set to the machine name (e.g. "ultra4").
 #       In the future device_sn will be replaced by a real hardware UID.
 #       When that happens, update this script to read the UID from the
 #       hardware and use it for device_sn (the S3 key will change too).
@@ -23,7 +25,11 @@
 #   AWS_DEFAULT_REGION   (default: us-east-2)
 set -euo pipefail
 
-# --- Install required packages if missing ---
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# ------------------------------------------------------------------ #
+# 1. Install required packages if missing                            #
+# ------------------------------------------------------------------ #
 install_if_missing() {
   if ! command -v "$1" &>/dev/null; then
     echo "$1 not found — installing ..."
@@ -36,7 +42,6 @@ install_if_missing python3 python3
 install_if_missing aws awscli
 install_if_missing pip3 python3-pip
 
-# boto3 is needed by the app at runtime
 if ! python3 -c "import boto3" &>/dev/null; then
   echo "boto3 not found — installing ..."
   if apt-cache show python3-boto3 &>/dev/null 2>&1; then
@@ -46,13 +51,97 @@ if ! python3 -c "import boto3" &>/dev/null; then
   fi
 fi
 
+# ------------------------------------------------------------------ #
+# 2. AWS credentials (~/.aws)                                        #
+# ------------------------------------------------------------------ #
+AWS_DIR="${HOME}/.aws"
+AWS_CREDS="${AWS_DIR}/credentials"
+AWS_CONFIG="${AWS_DIR}/config"
+
+PROV_AWS_CREDS="${ROOT}/provisioning/aws_credentials"
+PROV_AWS_CONFIG="${ROOT}/provisioning/aws_config"
+
+if [[ -f "$AWS_CREDS" ]]; then
+  echo "AWS credentials already present at ${AWS_CREDS} — skipping."
+else
+  echo "=== AWS Credentials Setup ==="
+  if [[ ! -f "$PROV_AWS_CREDS" ]]; then
+    echo "[ERROR] Missing ${PROV_AWS_CREDS}"
+    echo "  Place the aws_credentials file in provisioning/ and re-run."
+    echo "  Format:"
+    echo "    [default]"
+    echo "    aws_access_key_id = YOUR_KEY"
+    echo "    aws_secret_access_key = YOUR_SECRET"
+    exit 1
+  fi
+
+  mkdir -p "${AWS_DIR}"
+  chmod 700 "${AWS_DIR}"
+
+  cp "${PROV_AWS_CREDS}" "${AWS_CREDS}"
+  chmod 600 "${AWS_CREDS}"
+
+  if [[ -f "$PROV_AWS_CONFIG" ]]; then
+    cp "${PROV_AWS_CONFIG}" "${AWS_CONFIG}"
+  else
+    cat > "${AWS_CONFIG}" << 'AWSCONFIG'
+[default]
+region = us-east-2
+AWSCONFIG
+  fi
+  chmod 600 "${AWS_CONFIG}"
+
+  echo "[OK] AWS credentials written to ${AWS_CREDS}"
+fi
+
+# ------------------------------------------------------------------ #
+# 3. IoT fleet-provisioning certificates -> /etc/siphox/             #
+# ------------------------------------------------------------------ #
+CERTS_DIR="${ROOT}/provisioning/certs"
+IOT_DEST="/etc/siphox"
+CURRENT_USER="$(logname 2>/dev/null || whoami)"
+
+REQUIRED_CERTS=(
+  "claim.cert.pem"
+  "claim.private.key"
+  "root-CA.crt"
+)
+
+ALL_CERTS_PRESENT=true
+for f in "${REQUIRED_CERTS[@]}"; do
+  if [[ ! -f "${CERTS_DIR}/${f}" ]]; then
+    ALL_CERTS_PRESENT=false
+    break
+  fi
+done
+
+if $ALL_CERTS_PRESENT; then
+  echo "=== IoT Provisioning Certs ==="
+  sudo mkdir -p "${IOT_DEST}"
+  for f in "${REQUIRED_CERTS[@]}"; do
+    sudo cp "${CERTS_DIR}/${f}" "${IOT_DEST}/${f}"
+  done
+  sudo chmod 644 "${IOT_DEST}/claim.cert.pem"
+  sudo chmod 600 "${IOT_DEST}/claim.private.key"
+  sudo chmod 644 "${IOT_DEST}/root-CA.crt"
+  sudo chown "${CURRENT_USER}:${CURRENT_USER}" "${IOT_DEST}"/*
+  echo "[OK] Certs installed to ${IOT_DEST}"
+else
+  echo "IoT certs not found in ${CERTS_DIR} — skipping."
+  echo "  Place claim.cert.pem, claim.private.key, root-CA.crt there and re-run."
+fi
+
+# ------------------------------------------------------------------ #
+# 4-6. Machine identity (requires <machine_name> argument)           #
+# ------------------------------------------------------------------ #
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <machine_name>  (e.g. ultra2)" >&2
+  echo ""
+  echo "Usage: $0 <machine_name>  (e.g. ultra4)" >&2
+  echo "  (Steps 1-3 completed above; pass a machine name to continue.)"
   exit 1
 fi
 
 MACHINE="$1"
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUCKET="${ULTRA_CONFIG_BUCKET:-siphox-ultra-config}"
 REGION="${AWS_DEFAULT_REGION:-us-east-2}"
 SRC="${ROOT}/config/ultra_default.yaml"
@@ -65,7 +154,6 @@ if [[ ! -f "$SRC" ]]; then
   exit 1
 fi
 
-# Derive a human-friendly display name: ultra2 -> Ultra 2
 DISPLAY=$(echo "$MACHINE" | sed -E 's/^ultra([0-9]+)$/Ultra \1/')
 
 # --- Generate the full machine_settings.yaml for S3 ---
@@ -99,14 +187,16 @@ Path(out_path).write_text("\n".join(out) + "\n", encoding="utf-8")
 PY
 
 # --- Upload to S3 ---
-echo "Uploading ${TMP} -> s3://${BUCKET}/machines/${MACHINE}/machine_settings.yaml (region ${REGION})"
+echo "=== S3 Machine Settings ==="
+echo "Uploading ${TMP} -> s3://${BUCKET}/machines/${MACHINE}/machine_settings.yaml"
 aws s3 cp "$TMP" \
   "s3://${BUCKET}/machines/${MACHINE}/machine_settings.yaml" \
   --region "$REGION"
-echo "S3 seed complete."
+echo "[OK] S3 seed complete."
 
 # --- Write local /etc/ultra/machine.yaml ---
-echo "Writing local config ${LOCAL_CFG} ..."
+echo "=== Local Machine Identity ==="
+echo "Writing ${LOCAL_CFG} ..."
 sudo mkdir -p "$LOCAL_CFG_DIR"
 sudo tee "$LOCAL_CFG" > /dev/null << EOF
 # Local machine identity — read via ULTRA_CONFIG=/etc/ultra/machine.yaml
@@ -114,6 +204,7 @@ sudo tee "$LOCAL_CFG" > /dev/null << EOF
 device_sn: ${MACHINE}
 machine_name: ${DISPLAY}
 EOF
+echo "[OK] ${LOCAL_CFG} written."
 
 # --- Ensure the systemd service picks up ULTRA_CONFIG ---
 SERVICE_FILE="/etc/systemd/system/ultra-rpi.service"
@@ -127,8 +218,10 @@ if [[ -f "$SERVICE_FILE" ]]; then
     echo "ULTRA_CONFIG already set in ${SERVICE_FILE}."
   fi
 else
-  echo "No ${SERVICE_FILE} found — add Environment=ULTRA_CONFIG=${LOCAL_CFG} to your service manually."
+  echo "No ${SERVICE_FILE} found — run ./scripts/start.sh after this to create it."
 fi
 
 echo ""
-echo "Done: ${MACHINE} seeded in S3 and configured locally."
+echo "=== Done ==="
+echo "${MACHINE} fully provisioned: AWS creds, IoT certs, S3 settings, local identity."
+echo "Next: ./scripts/start.sh"
