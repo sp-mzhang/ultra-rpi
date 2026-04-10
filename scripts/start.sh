@@ -87,14 +87,29 @@ setup_env
 
 # --------------- service mode (default) ---------------
 if [ "$MODE" = "service" ]; then
-    UNIT_SRC="$PROJECT_DIR/deploy/$SERVICE_FILE"
-    if [ ! -f "$UNIT_SRC" ]; then
-        echo "ERROR: $UNIT_SRC not found."
-        exit 1
-    fi
+    CURRENT_USER="$(whoami)"
 
-    echo "Installing systemd service..."
-    sudo cp "$UNIT_SRC" "/etc/systemd/system/$SERVICE_FILE"
+    echo "Installing systemd service (User=$CURRENT_USER)..."
+    sudo tee "/etc/systemd/system/$SERVICE_FILE" > /dev/null << UNIT
+[Unit]
+Description=Ultra RPi Controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+WorkingDirectory=$PROJECT_DIR
+Environment=ULTRA_CONFIG=/etc/ultra/machine.yaml
+ExecStart=$VENV_DIR/bin/python -m ultra.app
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+UNIT
     sudo systemctl daemon-reload
     sudo systemctl enable "$SERVICE_FILE"
     sudo systemctl restart "$SERVICE_FILE"
