@@ -48,37 +48,37 @@ def _machine_settings_fallback_yaml(
 ) -> str:
     '''YAML text when S3 has no machine_settings.yaml yet.
 
-    Shows effective ``calibration`` from merged local config so the
-    operator can edit and Save to S3.
+    Serializes the **full** merged in-memory config (same shape as
+    ``ultra_default.yaml`` after ``ULTRA_CONFIG``). For testing, treat the
+    S3 object as the complete editable machine file; startup deep-merge
+    applies whatever keys are present.
     '''
     import yaml
 
-    lines = [
-        '# machine_settings.yaml — not in S3 yet.',
-        '# Values below reflect current merged config '
-        '(defaults + ULTRA_CONFIG).',
-        '# Edit and Save to S3 to store per-device calibration.',
-        '',
-    ]
-    cal = cfg.get('calibration')
-    if cal is not None:
-        body = {'calibration': cal}
-        dumped = yaml.dump(
-            body,
+    header = (
+        '# machine_settings.yaml — not in S3 yet.\n'
+        '# Full merged config (defaults + ULTRA_CONFIG), before any S3 '
+        'file.\n'
+        '# Edit any keys and Save to S3 for this device.\n'
+        '# On startup this YAML is deep-merged over defaults (keys here win).\n\n'
+    )
+    try:
+        body = yaml.dump(
+            cfg,
             default_flow_style=False,
             allow_unicode=True,
             sort_keys=False,
         )
-        lines.append(dumped.rstrip())
-    else:
-        lines.extend([
-            '# Example:',
-            '# calibration:',
-            '#   loc_offset_x_um: 0',
-            '#   loc_offset_y_um: 0',
-            '#   loc_offset_z_um: 0',
-        ])
-    return '\n'.join(lines) + '\n'
+    except Exception:
+        LOG.exception(
+            'Could not serialize config dict to YAML for '
+            'machine_settings fallback',
+        )
+        return (
+            header
+            + '# Error: could not serialize config (see server log).\n'
+        )
+    return header + body
 
 
 class SMRequest(BaseModel):
@@ -853,9 +853,9 @@ def create_api_router(
     async def machine_settings_get():
         '''Return S3 machine_settings.yaml for this device.
 
-        If the object is missing or empty, returns effective calibration
-        from merged local config (``source``: ``defaults``) so the UI is
-        populated; Save to S3 creates the overlay.
+        If the object is missing or empty, returns the full merged local
+        config as YAML (``source``: ``defaults``) so the editor shows every
+        key; Save to S3 writes the machine file.
         '''
         from ultra.services import config_store
         ds = app.config.get('device_sn', '')

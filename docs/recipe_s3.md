@@ -12,7 +12,7 @@ Ultra can load **global protocol recipes** and **per-machine settings** from an 
 
 | Prefix | Purpose |
 |--------|---------|
-| `machines/{device_sn}/machine_settings.yaml` | Per-unit calibration (offsets, angles, Z defaults). |
+| `machines/{device_sn}/machine_settings.yaml` | Full per-machine YAML (same shape as `ultra_default.yaml`), merged over defaults. |
 | `recipes/{slug}/recipe.yaml` | Global recipe (same for all instruments). |
 | `recipes/_shared/_common.yaml` | Shared includes for `include: _common.yaml#section`. |
 
@@ -37,8 +37,9 @@ Grant `s3:GetObject`, `s3:PutObject`, `s3:ListBucket`, `s3:ListObjectVersions` o
 3. S3 `machines/{device_sn}/machine_settings.yaml` (if present and download succeeds)
 
 `GET /api/machine-settings` returns that S3 object when it exists; if not, it
-returns a YAML draft built from the effective merged **`calibration`** in
-memory so the Config tab is not empty (save to S3 to create the object).
+returns a YAML draft of the **full** merged in-memory config (same scope as
+`ultra_default.yaml` plus `ULTRA_CONFIG`) so every key is editable; save to S3
+to store the machine file. Merge is always deep: keys in S3 override defaults.
 
 ## Seeding the bucket from the repo
 
@@ -52,6 +53,17 @@ export AWS_PROFILE=...   # or rely on instance role on the RPi
 ```
 
 Override the bucket with `ULTRA_CONFIG_BUCKET` if it differs from the default.
+
+## Seeding machine settings (ultra1–ultra6)
+
+To push **full** `machine_settings.yaml` copies derived from
+`config/ultra_default.yaml` (with `device_sn: ultraN` and `machine_name: Ultra N`):
+
+```bash
+chmod +x scripts/seed_machine_settings_ultra1_6.sh
+export AWS_DEFAULT_REGION=us-east-2   # match bucket
+./scripts/seed_machine_settings_ultra1_6.sh
+```
 
 ## Recipe resolution
 

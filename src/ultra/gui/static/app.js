@@ -2886,9 +2886,9 @@
         if (j.source === 'defaults') {
           setMsg(
             msgM,
-            'No machine_settings.yaml in S3 yet. Showing '
-              + 'calibration from merged local config; '
-              + 'Save to S3 to create the per-device file.',
+            'No machine_settings.yaml in S3 yet. Showing full merged '
+              + 'config (defaults + ULTRA_CONFIG). Save to S3 to create '
+              + 'the per-machine file.',
             false,
             true,
           );

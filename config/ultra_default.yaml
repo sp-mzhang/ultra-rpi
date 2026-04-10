@@ -1,3 +1,4 @@
+# device_sn: use the real hardware UID in production (S3 key machines/{device_sn}/).
 device_sn: DEV-1e10e696-cfec-4e5c-ac06-b2951a20aa8a
 station_id: 100
 machine_name: Ultra 3
@@ -12,7 +13,7 @@ reader:
   port: auto
   dollop_name: reader7
 
-# Per-unit calibration (override via S3 machine_settings.yaml).
+# Per-unit calibration (editable in full machine_settings.yaml on S3).
 calibration:
   loc_offset_x_um: 0
   loc_offset_y_um: 0
