@@ -30,15 +30,6 @@ RECIPES_DIR = op.join(
     op.dirname(op.abspath(__file__)), 'recipes',
 )
 
-# Keys that belong in per-machine S3 overlay, not global recipes.
-FORBIDDEN_IN_GLOBAL_RECIPE: frozenset[str] = frozenset({
-    'loc_offset_x_um',
-    'loc_offset_y_um',
-    'loc_offset_z_um',
-    'angle_open_initial_deg',
-    'default_cartridge_z_mm',
-})
-
 MACHINE_CALIBRATION_KEYS: frozenset[str] = frozenset({
     'loc_offset_x_um',
     'loc_offset_y_um',
@@ -46,6 +37,8 @@ MACHINE_CALIBRATION_KEYS: frozenset[str] = frozenset({
     'angle_open_initial_deg',
     'default_cartridge_z_mm',
 })
+
+FORBIDDEN_IN_GLOBAL_RECIPE = MACHINE_CALIBRATION_KEYS
 
 
 def _resolve_recipe_path(name: str) -> str:
@@ -158,7 +151,7 @@ def load_recipe(name: str) -> Recipe:
         raw: dict = yaml.safe_load(fh) or {}
 
     recipe = recipe_from_raw_dict(raw, name)
-    _validate_recipe(recipe)
+    validate_recipe(recipe)
     lint_global_recipe_keys(recipe)
 
     LOG.info(
@@ -197,7 +190,7 @@ def merge_protocol_config(
         recipe: Recipe,
 ) -> dict[str, Any]:
     '''Merge recipe reader/peak_detect over app config for one run.'''
-    from ultra.config import _deep_merge
+    from ultra.config import merge_config
 
     patch: dict[str, Any] = {}
     if recipe.reader:
@@ -206,7 +199,7 @@ def merge_protocol_config(
         patch['peak_detect'] = recipe.peak_detect
     if not patch:
         return dict(base)
-    return _deep_merge(dict(base), patch)
+    return merge_config(dict(base), patch)
 
 
 def lint_global_recipe_keys(recipe: Recipe) -> None:
@@ -329,7 +322,7 @@ def _parse_steps(
     return steps
 
 
-def _validate_recipe(recipe: Recipe) -> None:
+def validate_recipe(recipe: Recipe) -> None:
     '''Validate a loaded recipe.
 
     Checks:

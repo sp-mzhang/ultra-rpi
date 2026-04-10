@@ -70,18 +70,33 @@
     initLogs();
   }
 
+  let _recipeListCache = null;
+
+  async function fetchRecipeList() {
+    const res = await fetch('/api/recipes');
+    _recipeListCache = await res.json();
+    return _recipeListCache;
+  }
+
+  function _fillSelect(selectEl, list) {
+    const prev = selectEl.value;
+    selectEl.innerHTML = '';
+    list.forEach((r) => {
+      const opt = document.createElement('option');
+      opt.value = r.file;
+      const src = r.source ? ` (${r.source})` : '';
+      opt.textContent = r.name + src;
+      selectEl.appendChild(opt);
+    });
+    if (prev && [...selectEl.options].some((o) => o.value === prev)) {
+      selectEl.value = prev;
+    }
+  }
+
   async function loadRecipes() {
     try {
-      const res = await fetch('/api/recipes');
-      const list = await res.json();
-      elRecipe.innerHTML = '';
-      list.forEach((r) => {
-        const opt = document.createElement('option');
-        opt.value = r.file;
-        const src = r.source ? ` (${r.source})` : '';
-        opt.textContent = r.name + src;
-        elRecipe.appendChild(opt);
-      });
+      const list = await fetchRecipeList();
+      _fillSelect(elRecipe, list);
     } catch (e) {
       console.warn('Failed to load recipes', e);
     }
@@ -2843,25 +2858,9 @@
       }
     }
 
-    async function fillRecipeSelects(list) {
-      const prev = sel.value;
-      sel.innerHTML = '';
-      list.forEach((r) => {
-        const opt = document.createElement('option');
-        opt.value = r.file;
-        const src = r.source ? ` (${r.source})` : '';
-        opt.textContent = r.name + src;
-        sel.appendChild(opt);
-      });
-      if (prev && [...sel.options].some((o) => o.value === prev)) {
-        sel.value = prev;
-      }
-    }
-
     async function loadRecipeListForCfg() {
-      const res = await fetch('/api/recipes');
-      const list = await res.json();
-      await fillRecipeSelects(list);
+      const list = await fetchRecipeList();
+      _fillSelect(sel, list);
     }
 
     function setMsg(pre, text, isErr, isInfo) {
@@ -2983,10 +2982,12 @@
     }
 
     window.__cfgTabActivate = async function () {
-      await loadRecipeListForCfg();
-      await loadMachineSettings(false);
+      await Promise.all([
+        loadRecipeListForCfg(),
+        loadMachineSettings(false),
+        loadStepTypesOnce(),
+      ]);
       await loadRecipeYaml();
-      await loadStepTypesOnce();
     };
 
     $('#cfg-machine-load').addEventListener(

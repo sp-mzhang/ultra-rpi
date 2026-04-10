@@ -46,19 +46,15 @@ class YamlTextBody(BaseModel):
 def _machine_settings_effective_yaml(
         cfg: dict[str, Any],
 ) -> str:
-    '''YAML for the machine settings editor: full effective merged config.
+    '''Serialize the full effective in-memory config as YAML.
 
-    Always serializes the in-memory dict (defaults + ULTRA_CONFIG + S3
-    overlay applied at process start). The GUI always shows every key,
-    not the raw short object that may still exist in S3.
+    Used as the editor fallback when no S3 object exists yet.
     '''
     import yaml
 
     header = (
-        '# machine_settings.yaml — full effective config for this process.\n'
-        '# Built from: defaults, ULTRA_CONFIG, and S3 (merged at startup).\n'
-        '# Edit any keys and Save to S3 to replace '
-        'machines/{device_sn}/machine_settings.yaml.\n\n'
+        '# machine_settings.yaml — full effective config.\n'
+        '# Edit any keys and Save to S3.\n\n'
     )
     try:
         body = yaml.dump(
@@ -68,15 +64,34 @@ def _machine_settings_effective_yaml(
             sort_keys=False,
         )
     except Exception:
-        LOG.exception(
-            'Could not serialize config dict to YAML for '
-            'machine_settings editor',
-        )
-        return (
-            header
-            + '# Error: could not serialize config (see server log).\n'
-        )
+        LOG.exception('Cannot serialize config to YAML')
+        return header + '# Error: see server log.\n'
     return header + body
+
+
+def _parse_and_merge_machine_yaml(
+        yaml_text: str,
+        app_config: dict[str, Any],
+) -> dict[str, Any]:
+    '''Parse *yaml_text*, deep-merge into *app_config*, return new config.
+
+    Raises ``ValueError`` when the YAML is not a mapping.
+    '''
+    import yaml
+    from ultra.config import merge_config
+
+    try:
+        parsed = yaml.safe_load(yaml_text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f'Invalid YAML: {exc}') from exc
+    if parsed is None:
+        parsed = {}
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            'Machine settings must be a YAML mapping, '
+            'not a list or scalar.',
+        )
+    return merge_config(app_config, parsed)
 
 
 class SMRequest(BaseModel):
@@ -851,23 +866,15 @@ def create_api_router(
     async def machine_settings_get(
             apply: bool = Query(
                 False,
-                description=(
-                    'If true, merge YAML from S3 into app.config after '
-                    'download (same as Save). Use for Reload button.'
-                ),
+                description='Reload from S3 and merge into app.config.',
             ),
     ):
         '''Return YAML for the machine settings editor.
 
-        If ``machines/{device_sn}/machine_settings.yaml`` exists in S3 and is
-        non-empty, returns that **raw** text. With ``apply=true``, also
-        deep-merges that YAML into ``app.config`` so the next run uses it
-        without restarting the process.
-
-        If there is no S3 object yet, returns a draft from ``app.config``.
+        Returns the raw S3 object when present; otherwise a dump of
+        ``app.config``.  With ``apply=true`` (Reload button) the S3
+        content is also deep-merged into ``app.config``.
         '''
-        import yaml
-        from ultra.config import merge_config
         from ultra.services import config_store
         ds = app.config.get('device_sn', '')
         if not ds:
@@ -878,25 +885,20 @@ def create_api_router(
         loop = asyncio.get_running_loop()
 
         def _load() -> tuple[str, str, bool]:
-            applied = False
-            raw = config_store.fetch_machine_settings_yaml(ds)
-            if raw is not None and str(raw).strip():
-                text = str(raw)
+            raw = config_store.fetch_machine_settings_yaml(
+                ds, force=apply,
+            )
+            if raw and raw.strip():
+                applied = False
                 if apply:
                     try:
-                        parsed = yaml.safe_load(text)
-                    except yaml.YAMLError as exc:
-                        LOG.warning(
-                            'machine_settings apply: invalid YAML: %s',
-                            exc,
-                        )
-                        parsed = None
-                    if isinstance(parsed, dict):
-                        app.config = merge_config(
-                            app.config, parsed,
+                        app.config = _parse_and_merge_machine_yaml(
+                            raw, app.config,
                         )
                         applied = True
-                return text, 's3', applied
+                    except ValueError as exc:
+                        LOG.warning('apply machine_settings: %s', exc)
+                return raw, 's3', applied
             return (
                 _machine_settings_effective_yaml(app.config),
                 'defaults',
@@ -916,12 +918,7 @@ def create_api_router(
     @router.put('/machine-settings')
     @router.post('/machine-settings')
     async def machine_settings_put(req: YamlTextBody):
-        '''Write machine_settings.yaml to S3 and merge into ``app.config``.
-
-        POST is an alias for PUT (some reverse proxies block PUT).
-        '''
-        import yaml
-        from ultra.config import merge_config
+        '''Save machine_settings.yaml to S3 and merge into app.config.'''
         from ultra.services import config_store
         ds = app.config.get('device_sn', '')
         if not ds:
@@ -932,23 +929,12 @@ def create_api_router(
         loop = asyncio.get_running_loop()
 
         def _save_and_apply() -> None:
-            try:
-                parsed = yaml.safe_load(req.yaml_text)
-            except yaml.YAMLError as exc:
-                raise ValueError(
-                    f'Invalid YAML: {exc}',
-                ) from exc
-            if parsed is None:
-                parsed = {}
-            if not isinstance(parsed, dict):
-                raise ValueError(
-                    'Machine settings must be a top-level YAML '
-                    'mapping (object), not a list or scalar.',
-                )
+            app.config = _parse_and_merge_machine_yaml(
+                req.yaml_text, app.config,
+            )
             config_store.put_machine_settings_yaml(
                 ds, req.yaml_text,
             )
-            app.config = merge_config(app.config, parsed)
 
         try:
             await loop.run_in_executor(
@@ -967,8 +953,7 @@ def create_api_router(
         return {
             'ok': True,
             'message': (
-                'Saved to S3 and applied for the next run (no restart). '
-                'Use Reload to re-fetch from S3 and apply again if needed.'
+                'Saved to S3 and applied (no restart needed).'
             ),
         }
 
@@ -1026,7 +1011,7 @@ def create_api_router(
     @router.put('/recipes/{slug}/yaml')
     @router.post('/recipes/{slug}/yaml')
     async def recipe_yaml_put(slug: str, req: YamlTextBody):
-        '''Validate and save a global recipe to S3 (POST mirrors PUT).'''
+        '''Validate and save a global recipe to S3.'''
         import yaml
         from ultra.protocol import recipe_loader as rl
         from ultra.services import config_store
@@ -1035,7 +1020,7 @@ def create_api_router(
         def _validate_and_save() -> None:
             raw = yaml.safe_load(req.yaml_text) or {}
             recipe = rl.recipe_from_raw_dict(raw, slug)
-            rl._validate_recipe(recipe)
+            rl.validate_recipe(recipe)
             rl.lint_global_recipe_keys(recipe)
             config_store.put_recipe_yaml(slug, req.yaml_text)
 
@@ -1047,7 +1032,11 @@ def create_api_router(
             raise HTTPException(
                 status_code=400, detail=str(exc),
             )
-        return {'ok': True}
+        return {
+            'ok': True,
+            'slug': slug,
+            'message': f'Recipe "{slug}" saved to S3.',
+        }
 
     @router.get('/protocol/step-types')
     async def protocol_step_types():

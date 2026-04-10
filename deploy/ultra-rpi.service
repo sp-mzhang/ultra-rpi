@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 User=ultra3
 WorkingDirectory=/home/ultra3/ultra-rpi
+Environment=ULTRA_CONFIG=/etc/ultra/machine.yaml
 ExecStart=/home/ultra3/ultra-rpi/.venv/bin/python -m ultra.app
 Restart=on-failure
 RestartSec=5

@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 
 LOG = logging.getLogger(__name__)
 
 DEFAULT_BUCKET = 'siphox-ultra-config'
-DEFAULT_REGION = 'us-east-1'
+DEFAULT_REGION = 'us-east-2'
 DEFAULT_CACHE = '/tmp/ultra_config_cache'
+CACHE_MAX_AGE_S = 60
 
 _s3_client: Any = None
 
@@ -69,6 +71,28 @@ def cache_path_for_key(key: str) -> str:
     return os.path.join(cache_root(), key)
 
 
+def _cache_fresh(path: str, max_age_s: float = CACHE_MAX_AGE_S) -> bool:
+    '''True if *path* exists and was written less than *max_age_s* ago.'''
+    try:
+        age = time.time() - os.path.getmtime(path)
+        return age < max_age_s
+    except OSError:
+        return False
+
+
+def _write_cache(key: str, data: bytes | str) -> str:
+    '''Write *data* to the cache path for *key*; return the path.'''
+    path = cache_path_for_key(key)
+    _ensure_dir(os.path.dirname(path))
+    if isinstance(data, bytes):
+        with open(path, 'wb') as fh:
+            fh.write(data)
+    else:
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write(data)
+    return path
+
+
 def fetch_object_bytes(key: str) -> bytes | None:
     '''Download object body or None if missing / error.'''
     try:
@@ -94,17 +118,21 @@ def put_object_bytes(
     )
 
 
-def fetch_machine_settings_yaml(device_sn: str) -> str | None:
-    '''Return machine settings YAML text from S3, or None.'''
+def fetch_machine_settings_yaml(
+        device_sn: str,
+        force: bool = False,
+) -> str | None:
+    '''Return machine settings YAML text, preferring cache when fresh.'''
     key = machine_settings_key(device_sn)
+    path = cache_path_for_key(key)
+    if not force and _cache_fresh(path):
+        with open(path, 'r', encoding='utf-8') as fh:
+            return fh.read()
     raw = fetch_object_bytes(key)
     if raw is None:
         return None
     text = raw.decode('utf-8')
-    path = cache_path_for_key(key)
-    _ensure_dir(os.path.dirname(path))
-    with open(path, 'w', encoding='utf-8') as fh:
-        fh.write(text)
+    _write_cache(key, text)
     return text
 
 
@@ -115,11 +143,7 @@ def put_machine_settings_yaml(
         machine_settings_key(device_sn),
         yaml_text.encode('utf-8'),
     )
-    key = machine_settings_key(device_sn)
-    path = cache_path_for_key(key)
-    _ensure_dir(os.path.dirname(path))
-    with open(path, 'w', encoding='utf-8') as fh:
-        fh.write(yaml_text)
+    _write_cache(machine_settings_key(device_sn), yaml_text)
 
 
 def list_recipe_slugs() -> list[str]:
@@ -145,65 +169,49 @@ def list_recipe_slugs() -> list[str]:
     return sorted(slugs)
 
 
-def fetch_recipe_to_cache(slug: str) -> str | None:
-    '''Download recipes/{slug}/recipe.yaml to cache; return path or None.'''
+def fetch_recipe_to_cache(
+        slug: str,
+        force: bool = False,
+) -> str | None:
+    '''Download recipes/{slug}/recipe.yaml to cache; return path or None.
+
+    Skips S3 when the cache file is younger than ``CACHE_MAX_AGE_S``
+    unless *force* is True.
+    '''
     key = recipe_object_key(slug)
+    path = cache_path_for_key(key)
+    if not force and _cache_fresh(path):
+        return path
     raw = fetch_object_bytes(key)
     if raw is None:
         return None
-    path = cache_path_for_key(key)
-    _ensure_dir(os.path.dirname(path))
-    with open(path, 'wb') as fh:
-        fh.write(raw)
+    _write_cache(key, raw)
     return path
 
 
-def fetch_shared_common_to_cache() -> str | None:
+def fetch_shared_common_to_cache(
+        force: bool = False,
+) -> str | None:
     key = shared_common_key()
+    path = cache_path_for_key(key)
+    if not force and _cache_fresh(path):
+        return path
     raw = fetch_object_bytes(key)
     if raw is None:
         return None
-    path = cache_path_for_key(key)
-    _ensure_dir(os.path.dirname(path))
-    with open(path, 'wb') as fh:
-        fh.write(raw)
+    _write_cache(key, raw)
     return path
 
 
 def put_recipe_yaml(slug: str, yaml_text: str) -> None:
     key = recipe_object_key(slug)
     put_object_bytes(key, yaml_text.encode('utf-8'))
-    path = cache_path_for_key(key)
-    _ensure_dir(os.path.dirname(path))
-    with open(path, 'w', encoding='utf-8') as fh:
-        fh.write(yaml_text)
+    _write_cache(key, yaml_text)
 
 
 def sync_recipes_and_shared_from_s3() -> None:
     '''Best-effort download of all recipe.yaml and _shared/_common.'''
     slugs = list_recipe_slugs()
     for s in slugs:
-        fetch_recipe_to_cache(s)
-    fetch_shared_common_to_cache()
-
-
-def object_version_ids(key: str, max_items: int = 20) -> list[dict]:
-    '''Return recent version metadata for a key (newest first).'''
-    try:
-        resp = _get_s3().list_object_versions(
-            Bucket=config_bucket(),
-            Prefix=key,
-        )
-        out = []
-        for v in resp.get('Versions', [])[:max_items]:
-            if v['Key'] != key:
-                continue
-            out.append({
-                'VersionId': v['VersionId'],
-                'LastModified': v['LastModified'].isoformat(),
-                'IsLatest': v['IsLatest'],
-            })
-        return out
-    except Exception as exc:
-        LOG.warning('object_version_ids: %s', exc)
-        return []
+        fetch_recipe_to_cache(s, force=True)
+    fetch_shared_common_to_cache(force=True)
