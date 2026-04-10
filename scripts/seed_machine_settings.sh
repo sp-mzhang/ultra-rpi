@@ -39,7 +39,11 @@ install_if_missing pip3 python3-pip
 # boto3 is needed by the app at runtime
 if ! python3 -c "import boto3" &>/dev/null; then
   echo "boto3 not found — installing ..."
-  pip3 install --quiet boto3
+  if apt-cache show python3-boto3 &>/dev/null 2>&1; then
+    sudo apt-get install -y -qq python3-boto3
+  else
+    pip3 install --quiet --break-system-packages boto3
+  fi
 fi
 
 if [[ $# -lt 1 ]]; then
