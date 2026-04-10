@@ -2835,264 +2835,927 @@
     const taR = $('#cfg-recipe-yaml');
     const msgM = $('#cfg-machine-msg');
     const msgR = $('#cfg-recipe-msg');
+    const msgY = $('#cfg-yaml-msg');
     const snEl = $('#cfg-device-sn');
-    const stEl = $('#cfg-step-types');
     if (!sel || !taM || !taR) return;
 
-    function fmtApiErr(j, fallback) {
-      if (!j || j.detail === undefined) return fallback;
+    /* --- helpers --- */
+    function fmtApiErr(j, fb) {
+      if (!j || j.detail === undefined) return fb;
       const d = j.detail;
-      if (typeof d === 'string') return d;
-      try {
-        return JSON.stringify(d);
-      } catch (_) {
-        return String(d);
-      }
+      return typeof d === 'string' ? d : JSON.stringify(d);
     }
-
-    async function parseJsonResponse(res) {
-      try {
-        return await res.json();
-      } catch (_) {
-        return {};
-      }
+    async function parseJson(r) {
+      try { return await r.json(); } catch (_) { return {}; }
     }
-
-    async function loadRecipeListForCfg() {
-      const list = await fetchRecipeList();
-      _fillSelect(sel, list);
-    }
-
     function setMsg(pre, text, isErr, isInfo) {
       if (!pre) return;
       pre.textContent = text || '';
       pre.classList.toggle('cfg-msg-err', !!isErr);
-      pre.classList.toggle(
-        'cfg-msg-info',
-        !!isInfo && !isErr,
-      );
+      pre.classList.toggle('cfg-msg-info', !!isInfo && !isErr);
+    }
+    function btnLoad(btn, on) {
+      if (!btn) return;
+      btn.classList.toggle('btn-loading', on);
+      btn.disabled = on;
+      if (on) btn.dataset.origText = btn.textContent;
+    }
+    function btnDone(btn) {
+      if (!btn) return;
+      btn.classList.remove('btn-loading');
+      btn.disabled = false;
     }
 
-    async function loadMachineSettings(applyFromS3) {
-      setMsg(msgM, '');
-      const q = applyFromS3 ? '?apply=1' : '';
-      try {
-        const res = await fetch(
-          `/api/machine-settings${q}`,
+    /* --- sidebar nav --- */
+    document.querySelectorAll('.cfg-nav-btn').forEach((b) => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.cfg-nav-btn').forEach(
+          (x) => x.classList.remove('cfg-nav-active'),
         );
-        const j = await parseJsonResponse(res);
-        if (!res.ok) {
-          setMsg(
-            msgM,
-            fmtApiErr(j, res.statusText || 'Failed'),
-            true,
+        b.classList.add('cfg-nav-active');
+        const p = b.dataset.panel;
+        document.querySelectorAll('.cfg-main > .cfg-panel').forEach((s) => {
+          s.classList.toggle(
+            'cfg-panel-visible',
+            s.id === `cfg-panel-${p}`,
           );
+        });
+      });
+    });
+
+    /* --- sub-tabs (visual / yaml) --- */
+    document.querySelectorAll('.cfg-subtab').forEach((b) => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.cfg-subtab').forEach(
+          (x) => x.classList.remove('cfg-subtab-active'),
+        );
+        b.classList.add('cfg-subtab-active');
+        const t = b.dataset.subtab;
+        document.querySelectorAll('.cfg-subtab-content').forEach((c) => {
+          c.classList.toggle(
+            'cfg-subtab-visible',
+            c.id === `cfg-subtab-${t}`,
+          );
+        });
+        if (t === 'yaml') builderToYaml();
+        if (t === 'visual') yamlToBuilder();
+      });
+    });
+
+    /* === Machine Settings === */
+    const btnMLoad = $('#cfg-machine-load');
+    const btnMSave = $('#cfg-machine-save');
+
+    async function loadMachineSettings(apply) {
+      btnLoad(btnMLoad, true);
+      setMsg(msgM, apply ? 'Reloading…' : '');
+      const q = apply ? '?apply=1' : '';
+      try {
+        const res = await fetch(`/api/machine-settings${q}`);
+        const j = await parseJson(res);
+        if (!res.ok) {
+          setMsg(msgM, fmtApiErr(j, 'Failed'), true);
           taM.value = '';
-          if (snEl) snEl.textContent = '';
           return;
         }
         taM.value = j.yaml_text || '';
         if (snEl) snEl.textContent = j.device_sn || '';
         if (j.source === 'defaults') {
-          setMsg(
-            msgM,
-            'No machine_settings.yaml in S3 yet. Editor shows full '
-              + 'effective config; Save to S3 to create the object.',
-            false,
-            true,
-          );
-        } else if (j.source === 's3') {
-          if (j.applied) {
-            setMsg(
-              msgM,
-              'Re-downloaded from S3 and applied for the next run '
-                + '(no restart).',
-              false,
-              true,
-            );
-          } else {
-            setMsg(
-              msgM,
-              'YAML from S3. Use Reload to apply the bucket copy to the '
-                + 'next run; Save applies your edits after changing the text.',
-              false,
-              true,
-            );
-          }
+          setMsg(msgM, 'No S3 object yet — showing effective config.', false, true);
+        } else if (j.applied) {
+          setMsg(msgM, 'Reloaded from S3 and applied.', false, true);
+        } else {
+          setMsg(msgM, 'Loaded from S3.', false, true);
         }
       } catch (e) {
         setMsg(msgM, String(e), true);
-        taM.value = '';
+      } finally {
+        btnDone(btnMLoad);
       }
     }
 
+    btnMLoad.addEventListener('click', () => loadMachineSettings(true));
+    btnMSave.addEventListener('click', async () => {
+      btnLoad(btnMSave, true);
+      setMsg(msgM, 'Saving…');
+      try {
+        const res = await fetch('/api/machine-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ yaml_text: taM.value }),
+        });
+        const j = await parseJson(res);
+        if (!res.ok) {
+          setMsg(msgM, fmtApiErr(j, 'Save failed'), true);
+          return;
+        }
+        setMsg(msgM, j.message || 'Saved.', false, false);
+      } catch (e) {
+        setMsg(msgM, String(e), true);
+      } finally {
+        btnDone(btnMSave);
+      }
+    });
+
+    /* === Recipe Editor State === */
+    let stepSchemas = {};
+    let builderModel = {
+      name: '', description: '',
+      constants: {}, reader: {}, peak_detect: {},
+      wells: {},
+      phases: [{ name: 'A', label: 'Main', steps: [] }],
+    };
+
+    /* --- fetch schemas once --- */
+    async function loadSchemas() {
+      if (Object.keys(stepSchemas).length) return;
+      try {
+        const res = await fetch('/api/protocol/step-schemas');
+        const j = await res.json();
+        stepSchemas = j.schemas || {};
+      } catch (_) {}
+    }
+
+    /* --- recipe list --- */
+    async function loadRecipeListForCfg() {
+      const list = await fetchRecipeList();
+      _fillSelect(sel, list);
+    }
+
+    /* --- load recipe YAML and parse into builder --- */
     async function loadRecipeYaml() {
       const slug = sel.value;
       if (!slug) return;
-      setMsg(msgR, '');
+      setMsg(msgR, ''); setMsg(msgY, '');
       try {
         const res = await fetch(
           `/api/recipes/${encodeURIComponent(slug)}/yaml`,
         );
-        const j = await parseJsonResponse(res);
+        const j = await parseJson(res);
         if (!res.ok) {
-          setMsg(
-            msgR,
-            fmtApiErr(j, res.statusText || 'Failed'),
-            true,
-          );
-          taR.value = '';
+          setMsg(msgR, fmtApiErr(j, 'Failed'), true);
           return;
         }
         taR.value = j.yaml_text || '';
-        if (j.source === 's3') {
-          setMsg(
-            msgR,
-            'Loaded from S3 (Reload re-downloads this object).',
-            false,
-            true,
-          );
-        } else if (j.source === 'packaged') {
-          setMsg(
-            msgR,
-            'No object in S3 for this slug; showing packaged recipe from '
-              + 'disk. Save to S3 to create the bucket copy.',
-            false,
-            true,
-          );
-        }
+        yamlToBuilder();
+        const hint = j.source === 's3' ? 'Loaded from S3.' : 'Packaged recipe.';
+        setMsg(msgR, hint, false, true);
+        setMsg(msgY, hint, false, true);
       } catch (e) {
         setMsg(msgR, String(e), true);
-        taR.value = '';
       }
     }
 
-    async function loadStepTypesOnce() {
-      if (!stEl || stEl.dataset.loaded) return;
+    /* === YAML <-> Builder model sync === */
+    function yamlToBuilder() {
       try {
-        const res = await fetch('/api/protocol/step-types');
-        const j = await res.json();
-        if (res.ok && j.step_types) {
-          stEl.textContent = j.step_types.join('\n');
-          stEl.dataset.loaded = '1';
+        const text = taR.value;
+        if (!text.trim()) return;
+        const lines = text.split('\n');
+        const raw = _miniYamlParse(text);
+        builderModel.name = raw.name || '';
+        builderModel.description = raw.description || '';
+        builderModel.constants = raw.constants || {};
+        builderModel.reader = raw.reader || {};
+        builderModel.peak_detect = raw.peak_detect || {};
+        builderModel.wells = {};
+        if (raw.wells && typeof raw.wells === 'object') {
+          for (const [k, v] of Object.entries(raw.wells)) {
+            builderModel.wells[k] = typeof v === 'object' ? v : {};
+          }
         }
+        builderModel.phases = [];
+        if (Array.isArray(raw.phases)) {
+          for (const ph of raw.phases) {
+            const phase = {
+              name: ph.name || '',
+              label: ph.label || '',
+              steps: [],
+            };
+            if (ph.include) {
+              phase.steps.push({
+                type: '_include',
+                label: String(ph.include),
+                params: { include: ph.include },
+              });
+            } else if (Array.isArray(ph.steps)) {
+              for (const s of ph.steps) {
+                const p = { ...s };
+                delete p.type; delete p.label;
+                phase.steps.push({
+                  type: s.type || '',
+                  label: s.label || '',
+                  params: p,
+                });
+              }
+            }
+            builderModel.phases.push(phase);
+          }
+        }
+        if (!builderModel.phases.length) {
+          builderModel.phases = [{ name: 'A', label: 'Main', steps: [] }];
+        }
+        renderBuilder();
       } catch (e) {
-        stEl.textContent = String(e);
+        console.warn('yamlToBuilder:', e);
       }
     }
 
+    function builderToYaml() {
+      const lines = [];
+      if (builderModel.name) lines.push(`name: ${builderModel.name}`);
+      if (builderModel.description) lines.push(`description: ${builderModel.description}`);
+      lines.push('');
+      if (Object.keys(builderModel.reader).length) {
+        lines.push('reader:');
+        for (const [k, v] of Object.entries(builderModel.reader)) {
+          if (typeof v === 'object') {
+            lines.push(`  ${k}:`);
+            for (const [kk, vv] of Object.entries(v)) {
+              lines.push(`    ${kk}: ${vv}`);
+            }
+          } else {
+            lines.push(`  ${k}: ${v}`);
+          }
+        }
+        lines.push('');
+      }
+      if (Object.keys(builderModel.peak_detect).length) {
+        lines.push('peak_detect:');
+        for (const [k, v] of Object.entries(builderModel.peak_detect)) {
+          if (typeof v === 'object') {
+            lines.push(`  ${k}:`);
+            for (const [kk, vv] of Object.entries(v)) {
+              lines.push(`    ${kk}: ${vv}`);
+            }
+          } else {
+            lines.push(`  ${k}: ${v}`);
+          }
+        }
+        lines.push('');
+      }
+      if (Object.keys(builderModel.constants).length) {
+        lines.push('constants:');
+        for (const [k, v] of Object.entries(builderModel.constants)) {
+          lines.push(`  ${k}: ${v}`);
+        }
+        lines.push('');
+      }
+      if (Object.keys(builderModel.wells).length) {
+        lines.push('wells:');
+        for (const [name, w] of Object.entries(builderModel.wells)) {
+          const parts = Object.entries(w).map(([k, v]) => `${k}: ${v}`);
+          lines.push(`  ${name}: {${parts.join(', ')}}`);
+        }
+        lines.push('');
+      }
+      lines.push('phases:');
+      for (const ph of builderModel.phases) {
+        lines.push(`  - name: ${ph.name}`);
+        lines.push(`    label: ${ph.label}`);
+        const incStep = ph.steps.find((s) => s.type === '_include');
+        if (incStep) {
+          lines.push(`    include: ${incStep.params.include}`);
+        } else if (ph.steps.length) {
+          lines.push('    steps:');
+          for (const s of ph.steps) {
+            lines.push(`      - type: ${s.type}`);
+            if (s.label) lines.push(`        label: ${s.label}`);
+            for (const [k, v] of Object.entries(s.params)) {
+              if (v !== '' && v !== undefined) {
+                lines.push(`        ${k}: ${v}`);
+              }
+            }
+          }
+        }
+      }
+      taR.value = lines.join('\n') + '\n';
+    }
+
+    /* Minimal YAML parser (handles the recipe subset we generate) */
+    function _miniYamlParse(text) {
+      try {
+        if (typeof jsyaml !== 'undefined') return jsyaml.load(text);
+      } catch (_) {}
+      const raw = {};
+      let curKey = null, curObj = null, curSub = null, curSubObj = null;
+      const listStack = [];
+      for (const line of text.split('\n')) {
+        const trimmed = line.replace(/#.*/, '').trimEnd();
+        if (!trimmed) continue;
+        const indent = line.length - line.trimStart().length;
+        const m = trimmed.match(/^(\w[\w_]*)\s*:\s*(.*)/);
+        if (indent === 0 && m) {
+          curKey = m[1];
+          const val = m[2].trim();
+          if (val === '' || val === '>') {
+            raw[curKey] = val === '>' ? '' : {};
+            curObj = typeof raw[curKey] === 'object' ? raw[curKey] : null;
+          } else if (val.startsWith('{')) {
+            try { raw[curKey] = JSON.parse(val.replace(/(\w+)\s*:/g, '"$1":')); }
+            catch (_) { raw[curKey] = val; }
+            curObj = null;
+          } else if (val.startsWith('[')) {
+            raw[curKey] = [];
+            curObj = raw[curKey];
+          } else {
+            raw[curKey] = _yamlVal(val);
+            curObj = null;
+          }
+          curSub = null; curSubObj = null;
+          continue;
+        }
+        if (indent === 2 && curKey) {
+          if (trimmed.startsWith('- ')) {
+            if (!Array.isArray(raw[curKey])) raw[curKey] = [];
+            const inner = trimmed.slice(2).trim();
+            const m2 = inner.match(/^(\w[\w_]*)\s*:\s*(.*)/);
+            if (m2) {
+              const obj = {};
+              obj[m2[1]] = _yamlVal(m2[2].trim());
+              raw[curKey].push(obj);
+              curObj = obj;
+            } else {
+              raw[curKey].push(_yamlVal(inner));
+              curObj = null;
+            }
+            curSub = null; curSubObj = null;
+            continue;
+          }
+          const m2 = trimmed.match(/^(\w[\w_]*)\s*:\s*(.*)/);
+          if (m2) {
+            if (typeof raw[curKey] !== 'object' || Array.isArray(raw[curKey])) {
+              raw[curKey] = {};
+            }
+            const val = m2[2].trim();
+            if (val.startsWith('{')) {
+              try { raw[curKey][m2[1]] = JSON.parse(val.replace(/(\w+)\s*:/g, '"$1":')); }
+              catch (_) { raw[curKey][m2[1]] = val; }
+            } else if (val === '' || val === '>') {
+              raw[curKey][m2[1]] = val === '>' ? '' : {};
+              curSub = m2[1]; curSubObj = raw[curKey][m2[1]];
+            } else {
+              raw[curKey][m2[1]] = _yamlVal(val);
+            }
+            curObj = raw[curKey];
+            continue;
+          }
+        }
+        if (indent === 4 && curObj) {
+          if (trimmed.startsWith('- ')) {
+            const inner = trimmed.slice(2).trim();
+            const m3 = inner.match(/^(\w[\w_]*)\s*:\s*(.*)/);
+            if (Array.isArray(curObj)) {
+              /* already array */
+            } else if (curSub && curObj[curSub]) {
+              if (!Array.isArray(curObj[curSub])) curObj[curSub] = [];
+            }
+            const target = curSub && Array.isArray(curObj[curSub]) ? curObj[curSub] : curObj;
+            if (m3) {
+              const o = {}; o[m3[1]] = _yamlVal(m3[2].trim());
+              if (Array.isArray(target)) target.push(o);
+              curSubObj = o;
+            }
+            continue;
+          }
+          const m3 = trimmed.match(/^(\w[\w_]*)\s*:\s*(.*)/);
+          if (m3) {
+            if (Array.isArray(curObj) && curObj.length) {
+              const last = curObj[curObj.length - 1];
+              if (typeof last === 'object') last[m3[1]] = _yamlVal(m3[2].trim());
+            } else if (curSub && typeof curObj[curSub] === 'object' && !Array.isArray(curObj[curSub])) {
+              curObj[curSub][m3[1]] = _yamlVal(m3[2].trim());
+            } else if (typeof curObj === 'object') {
+              curObj[m3[1]] = _yamlVal(m3[2].trim());
+            }
+            continue;
+          }
+        }
+        if (indent >= 6 && curObj) {
+          if (trimmed.startsWith('- ')) {
+            const inner = trimmed.slice(2).trim();
+            const m4 = inner.match(/^(\w[\w_]*)\s*:\s*(.*)/);
+            let target = null;
+            if (Array.isArray(curObj) && curObj.length) {
+              const last = curObj[curObj.length - 1];
+              if (last && last.steps === undefined) last.steps = [];
+              target = last.steps || last;
+            }
+            if (target && m4) {
+              const o = {}; o[m4[1]] = _yamlVal(m4[2].trim());
+              target.push(o);
+              curSubObj = o;
+            }
+            continue;
+          }
+          const m4 = trimmed.match(/^(\w[\w_]*)\s*:\s*(.*)/);
+          if (m4 && curSubObj) {
+            curSubObj[m4[1]] = _yamlVal(m4[2].trim());
+          } else if (m4 && Array.isArray(curObj) && curObj.length) {
+            const last = curObj[curObj.length - 1];
+            if (last && Array.isArray(last.steps) && last.steps.length) {
+              last.steps[last.steps.length - 1][m4[1]] = _yamlVal(m4[2].trim());
+            }
+          }
+        }
+      }
+      return raw;
+    }
+
+    function _yamlVal(s) {
+      if (s === 'true') return true;
+      if (s === 'false') return false;
+      if (s === 'null' || s === '~' || s === '') return '';
+      if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+      if (/^-?\d+\.\d+$/.test(s)) return parseFloat(s);
+      return s.replace(/^["']|["']$/g, '');
+    }
+
+    /* === Visual Builder Rendering === */
+    const paletteEl = $('#rb-step-palette');
+    const protoListEl = $('#rb-protocol-list');
+    const stepCountEl = $('#rb-step-count');
+    const wellsTbody = $('#rb-wells-table tbody');
+
+    function wellNames() {
+      return Object.keys(builderModel.wells);
+    }
+
+    function renderBuilder() {
+      $('#rb-name').value = builderModel.name || '';
+      $('#rb-desc').value = builderModel.description || '';
+      renderWellsTable();
+      renderProtocolList();
+      renderPalette();
+    }
+
+    /* --- wells table --- */
+    function renderWellsTable() {
+      wellsTbody.innerHTML = '';
+      for (const [name, w] of Object.entries(builderModel.wells)) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><input value="${name}" data-field="name" data-orig="${name}"></td>
+          <td><input type="number" value="${w.loc || 0}" data-field="loc"></td>
+          <td><input value="${w.reagent || ''}" data-field="reagent"></td>
+          <td><input type="number" value="${w.volume_ul || 0}" data-field="volume_ul"></td>
+          <td><button class="rb-well-del" title="Remove">&times;</button></td>
+        `;
+        tr.querySelector('.rb-well-del').addEventListener('click', () => {
+          delete builderModel.wells[name];
+          renderWellsTable();
+          refreshWellDropdowns();
+        });
+        tr.querySelectorAll('input').forEach((inp) => {
+          inp.addEventListener('change', () => {
+            const orig = inp.dataset.orig || name;
+            const field = inp.dataset.field;
+            if (field === 'name') {
+              const nv = inp.value.trim();
+              if (nv && nv !== orig) {
+                builderModel.wells[nv] = builderModel.wells[orig];
+                delete builderModel.wells[orig];
+                renderWellsTable();
+                refreshWellDropdowns();
+              }
+            } else {
+              const val = field === 'reagent' ? inp.value : Number(inp.value);
+              builderModel.wells[name][field] = val;
+            }
+          });
+        });
+        wellsTbody.appendChild(tr);
+      }
+    }
+    $('#rb-well-add').addEventListener('click', () => {
+      let n = 1;
+      while (builderModel.wells[`W${n}`]) n++;
+      builderModel.wells[`W${n}`] = { loc: 0, reagent: '', volume_ul: 0 };
+      renderWellsTable();
+      refreshWellDropdowns();
+    });
+
+    function refreshWellDropdowns() {
+      const names = wellNames();
+      protoListEl.querySelectorAll('select[data-wellref]').forEach((sel) => {
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">--</option>' +
+          names.map((n) => `<option${n === cur ? ' selected' : ''}>${n}</option>`).join('');
+      });
+    }
+
+    /* --- palette --- */
+    function renderPalette() {
+      paletteEl.innerHTML = '';
+      const types = Object.keys(stepSchemas).length
+        ? Object.keys(stepSchemas)
+        : Object.keys(builderModel.phases[0]?.steps || {});
+      for (const t of types.sort()) {
+        const card = document.createElement('div');
+        card.className = 'rb-step-card';
+        card.textContent = t;
+        card.draggable = true;
+        card.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', t);
+          e.dataTransfer.effectAllowed = 'copy';
+        });
+        card.addEventListener('dblclick', () => {
+          addStepToProtocol(t);
+        });
+        paletteEl.appendChild(card);
+      }
+    }
+
+    /* --- protocol list --- */
+    function allSteps() {
+      const out = [];
+      for (const ph of builderModel.phases) {
+        for (const s of ph.steps) out.push(s);
+      }
+      return out;
+    }
+
+    function renderProtocolList() {
+      protoListEl.innerHTML = '';
+      const steps = allSteps();
+      stepCountEl.textContent = `(${steps.length} steps)`;
+      if (!steps.length) {
+        protoListEl.innerHTML = '<p class="rb-drop-hint">Drag steps here or double-click to add</p>';
+        return;
+      }
+      steps.forEach((s, idx) => {
+        const div = document.createElement('div');
+        div.className = 'rb-proto-step';
+        div.draggable = true;
+        div.dataset.idx = idx;
+        const schema = stepSchemas[s.type] || [];
+
+        let paramsHtml = '';
+        if (s.type === '_include') {
+          paramsHtml = `<div class="rb-param"><label>include:</label>
+            <input value="${s.params.include || ''}" data-pkey="include"></div>`;
+        } else {
+          for (const p of schema) {
+            const val = s.params[p.name] !== undefined ? s.params[p.name] : (p.default !== undefined ? p.default : '');
+            if (p.well_ref) {
+              const opts = wellNames().map((n) =>
+                `<option${n === String(val) ? ' selected' : ''}>${n}</option>`
+              ).join('');
+              paramsHtml += `<div class="rb-param"><label>${p.name}</label>
+                <select data-pkey="${p.name}" data-wellref="1">
+                  <option value="">--</option>${opts}
+                </select></div>`;
+            } else if (p.type === 'boolean') {
+              const ck = val === true || val === 'true' ? ' checked' : '';
+              paramsHtml += `<div class="rb-param"><label>${p.name}</label>
+                <input type="checkbox" data-pkey="${p.name}"${ck}></div>`;
+            } else {
+              paramsHtml += `<div class="rb-param"><label>${p.name}</label>
+                <input value="${val}" data-pkey="${p.name}"></div>`;
+            }
+          }
+        }
+
+        div.innerHTML = `
+          <div class="rb-step-header">
+            <span class="rb-step-num">${idx + 1}</span>
+            <span class="rb-step-type">${s.type}</span>
+            <input class="rb-input" value="${s.label}" placeholder="label"
+              style="width:140px;margin-left:6px" data-field="label">
+            <button class="rb-step-del" title="Remove">&times;</button>
+          </div>
+          <div class="rb-step-params">${paramsHtml}</div>
+        `;
+
+        div.querySelector('.rb-step-del').addEventListener('click', () => {
+          removeStep(idx);
+        });
+        div.querySelector('[data-field="label"]').addEventListener('change', (e) => {
+          s.label = e.target.value;
+        });
+        div.querySelectorAll('[data-pkey]').forEach((inp) => {
+          const ev = inp.type === 'checkbox' ? 'change' : 'change';
+          inp.addEventListener(ev, () => {
+            const k = inp.dataset.pkey;
+            if (inp.type === 'checkbox') {
+              s.params[k] = inp.checked;
+            } else {
+              const v = inp.value;
+              s.params[k] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v;
+            }
+          });
+        });
+
+        /* drag reorder */
+        div.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('application/x-step-idx', String(idx));
+          e.dataTransfer.effectAllowed = 'move';
+        });
+        div.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          div.classList.add('rb-drag-over');
+        });
+        div.addEventListener('dragleave', () => {
+          div.classList.remove('rb-drag-over');
+        });
+        div.addEventListener('drop', (e) => {
+          e.preventDefault();
+          div.classList.remove('rb-drag-over');
+          const fromIdx = e.dataTransfer.getData('application/x-step-idx');
+          if (fromIdx !== '') {
+            reorderStep(parseInt(fromIdx, 10), idx);
+          } else {
+            const typ = e.dataTransfer.getData('text/plain');
+            if (typ) insertStepAt(typ, idx);
+          }
+        });
+
+        protoListEl.appendChild(div);
+      });
+    }
+
+    function addStepToProtocol(type) {
+      const schema = stepSchemas[type] || [];
+      const params = {};
+      for (const p of schema) {
+        if (p.default !== undefined) params[p.name] = p.default;
+      }
+      const phase = builderModel.phases[builderModel.phases.length - 1];
+      phase.steps.push({ type, label: '', params });
+      renderProtocolList();
+    }
+
+    function insertStepAt(type, beforeIdx) {
+      const schema = stepSchemas[type] || [];
+      const params = {};
+      for (const p of schema) {
+        if (p.default !== undefined) params[p.name] = p.default;
+      }
+      const flat = allSteps();
+      let count = 0;
+      for (const ph of builderModel.phases) {
+        for (let i = 0; i <= ph.steps.length; i++) {
+          if (count === beforeIdx) {
+            ph.steps.splice(i, 0, { type, label: '', params });
+            renderProtocolList();
+            return;
+          }
+          if (i < ph.steps.length) count++;
+        }
+      }
+      addStepToProtocol(type);
+    }
+
+    function removeStep(flatIdx) {
+      let count = 0;
+      for (const ph of builderModel.phases) {
+        for (let i = 0; i < ph.steps.length; i++) {
+          if (count === flatIdx) {
+            ph.steps.splice(i, 1);
+            renderProtocolList();
+            return;
+          }
+          count++;
+        }
+      }
+    }
+
+    function reorderStep(fromIdx, toIdx) {
+      if (fromIdx === toIdx) return;
+      const flat = allSteps();
+      const item = flat[fromIdx];
+      removeStep(fromIdx);
+      const adjustedTo = fromIdx < toIdx ? toIdx - 1 : toIdx;
+      let count = 0;
+      for (const ph of builderModel.phases) {
+        for (let i = 0; i <= ph.steps.length; i++) {
+          if (count === adjustedTo) {
+            ph.steps.splice(i, 0, item);
+            renderProtocolList();
+            return;
+          }
+          if (i < ph.steps.length) count++;
+        }
+      }
+      builderModel.phases[builderModel.phases.length - 1].steps.push(item);
+      renderProtocolList();
+    }
+
+    /* drop zone on protocol list itself */
+    protoListEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      protoListEl.classList.add('rb-drop-over');
+    });
+    protoListEl.addEventListener('dragleave', (e) => {
+      if (!protoListEl.contains(e.relatedTarget)) {
+        protoListEl.classList.remove('rb-drop-over');
+      }
+    });
+    protoListEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      protoListEl.classList.remove('rb-drop-over');
+      if (e.target.closest('.rb-proto-step')) return;
+      const typ = e.dataTransfer.getData('text/plain');
+      if (typ) addStepToProtocol(typ);
+    });
+
+    /* metadata inputs */
+    $('#rb-name').addEventListener('change', (e) => {
+      builderModel.name = e.target.value;
+    });
+    $('#rb-desc').addEventListener('change', (e) => {
+      builderModel.description = e.target.value;
+    });
+
+    /* === Liquid Simulation === */
+    let simTimer = null;
+    let simIdx = 0;
+    const simWellsEl = $('#rb-sim-wells');
+    const simLabel = $('#rb-sim-step-label');
+    let simVolumes = {};
+
+    function simReset() {
+      simIdx = 0;
+      simVolumes = {};
+      for (const [name, w] of Object.entries(builderModel.wells)) {
+        simVolumes[name] = w.volume_ul || 0;
+      }
+      renderSimWells();
+      highlightStep(-1);
+      simLabel.textContent = '';
+      if (simTimer) { clearInterval(simTimer); simTimer = null; }
+      $('#rb-sim-play').disabled = false;
+      $('#rb-sim-pause').disabled = true;
+    }
+
+    function renderSimWells() {
+      simWellsEl.innerHTML = '';
+      const maxVol = Math.max(1, ...Object.values(simVolumes).map(Math.abs));
+      for (const [name, vol] of Object.entries(simVolumes)) {
+        const pct = Math.min(100, Math.max(0, (Math.abs(vol) / maxVol) * 100));
+        const div = document.createElement('div');
+        div.className = 'rb-sim-well';
+        div.innerHTML = `
+          <span class="rb-sim-well-name">${name}</span>
+          <div class="rb-sim-bar-wrap">
+            <div class="rb-sim-bar" style="height:${pct}%"></div>
+          </div>
+          <span class="rb-sim-vol">${Math.round(vol)}</span>
+        `;
+        simWellsEl.appendChild(div);
+      }
+    }
+
+    function highlightStep(idx) {
+      protoListEl.querySelectorAll('.rb-proto-step').forEach((el, i) => {
+        el.classList.toggle('rb-sim-active', i === idx);
+        if (i === idx) el.scrollIntoView({ block: 'nearest' });
+      });
+    }
+
+    function simStep() {
+      const steps = allSteps();
+      if (simIdx >= steps.length) {
+        clearInterval(simTimer); simTimer = null;
+        $('#rb-sim-play').disabled = false;
+        $('#rb-sim-pause').disabled = true;
+        simLabel.textContent = 'Done';
+        highlightStep(-1);
+        return;
+      }
+      const s = steps[simIdx];
+      highlightStep(simIdx);
+      simLabel.textContent = `Step ${simIdx + 1}: ${s.type} ${s.label || ''}`;
+
+      const schema = stepSchemas[s.type] || [];
+      const srcKey = s.params.source || s.params.well || '';
+      const dstKey = s.params.target || s.params.dest || '';
+
+      for (const p of schema) {
+        if (p.volume_out && srcKey && simVolumes[srcKey] !== undefined) {
+          const vol = Number(s.params[p.name]) || 0;
+          if (vol > 0) simVolumes[srcKey] -= vol;
+        }
+        if (p.volume_in && dstKey && simVolumes[dstKey] !== undefined) {
+          const vol = Number(s.params[p.name]) || 0;
+          if (vol > 0) simVolumes[dstKey] += vol;
+        }
+        if (p.volume_out && p.volume_in && srcKey && dstKey) {
+          break;
+        }
+      }
+      renderSimWells();
+      simIdx++;
+    }
+
+    $('#rb-sim-play').addEventListener('click', () => {
+      if (simIdx === 0) simReset();
+      const speed = parseInt($('#rb-sim-speed').value, 10) || 5;
+      const ms = Math.max(50, 1000 / speed);
+      simTimer = setInterval(simStep, ms);
+      $('#rb-sim-play').disabled = true;
+      $('#rb-sim-pause').disabled = false;
+    });
+    $('#rb-sim-pause').addEventListener('click', () => {
+      if (simTimer) { clearInterval(simTimer); simTimer = null; }
+      $('#rb-sim-play').disabled = false;
+      $('#rb-sim-pause').disabled = true;
+    });
+    $('#rb-sim-reset').addEventListener('click', simReset);
+
+    /* === Save functions === */
+    async function saveRecipeYaml(slug, yamlText, msgEl) {
+      setMsg(msgEl, 'Saving…');
+      try {
+        const res = await fetch(
+          `/api/recipes/${encodeURIComponent(slug)}/yaml`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ yaml_text: yamlText }),
+          },
+        );
+        const j = await parseJson(res);
+        if (!res.ok) {
+          setMsg(msgEl, fmtApiErr(j, 'Save failed'), true);
+          return false;
+        }
+        await loadRecipes();
+        await loadRecipeListForCfg();
+        setMsg(msgEl, j.message || `Saved "${slug}".`, false, false);
+        return true;
+      } catch (e) {
+        setMsg(msgEl, String(e), true);
+        return false;
+      }
+    }
+
+    /* Visual builder save */
+    $('#cfg-recipe-save').addEventListener('click', async () => {
+      const slug = sel.value;
+      if (!slug) return;
+      builderToYaml();
+      await saveRecipeYaml(slug, taR.value, msgR);
+    });
+    /* Visual builder save-as */
+    $('#cfg-save-as').addEventListener('click', async () => {
+      const slug = $('#cfg-save-as-slug').value.trim();
+      if (!slug) { setMsg(msgR, 'Enter a slug name.', true); return; }
+      builderToYaml();
+      if (await saveRecipeYaml(slug, taR.value, msgR)) {
+        await loadRecipeListForCfg();
+        sel.value = slug;
+      }
+    });
+    /* Raw YAML save */
+    $('#cfg-yaml-save').addEventListener('click', async () => {
+      const slug = sel.value;
+      if (!slug) return;
+      await saveRecipeYaml(slug, taR.value, msgY);
+    });
+    /* Raw YAML save-as */
+    $('#cfg-yaml-save-as').addEventListener('click', async () => {
+      const slug = $('#cfg-yaml-save-as-slug').value.trim();
+      if (!slug) { setMsg(msgY, 'Enter a slug name.', true); return; }
+      if (await saveRecipeYaml(slug, taR.value, msgY)) {
+        await loadRecipeListForCfg();
+        sel.value = slug;
+      }
+    });
+
+    /* Sync button */
+    $('#cfg-sync').addEventListener('click', async () => {
+      setMsg(msgR, 'Syncing…');
+      try {
+        const res = await fetch('/api/config/sync-recipes', { method: 'POST' });
+        const j = await res.json();
+        if (!res.ok) {
+          setMsg(msgR, fmtApiErr(j, 'Sync failed'), true);
+          return;
+        }
+        await loadRecipeListForCfg();
+        await loadRecipes();
+        await loadRecipeYaml();
+        setMsg(msgR, 'Synced from S3.');
+      } catch (e) {
+        setMsg(msgR, String(e), true);
+      }
+    });
+
+    /* Reload recipe */
+    $('#cfg-recipe-load').addEventListener('click', loadRecipeYaml);
+    sel.addEventListener('change', loadRecipeYaml);
+
+    /* === Tab activation === */
     window.__cfgTabActivate = async function () {
       await Promise.all([
         loadRecipeListForCfg(),
         loadMachineSettings(false),
-        loadStepTypesOnce(),
+        loadSchemas(),
       ]);
+      renderPalette();
       await loadRecipeYaml();
     };
-
-    $('#cfg-machine-load').addEventListener(
-      'click', () => loadMachineSettings(true),
-    );
-    $('#cfg-machine-save').addEventListener(
-      'click', async () => {
-        setMsg(msgM, '');
-        try {
-          // POST alias: some proxies block PUT to /api/*
-          const res = await fetch('/api/machine-settings', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              yaml_text: taM.value,
-            }),
-          });
-          const j = await parseJsonResponse(res);
-          if (!res.ok) {
-            setMsg(
-              msgM,
-              fmtApiErr(j, res.statusText || 'Save failed'),
-              true,
-            );
-            return;
-          }
-          await loadMachineSettings(false);
-          setMsg(
-            msgM,
-            j.message || 'Saved to S3.',
-            false,
-            false,
-          );
-        } catch (e) {
-          setMsg(msgM, String(e), true);
-        }
-      },
-    );
-
-    $('#cfg-sync').addEventListener(
-      'click', async () => {
-        setMsg(msgR, 'Syncing…');
-        try {
-          const res = await fetch(
-            '/api/config/sync-recipes',
-            { method: 'POST' },
-          );
-          const j = await res.json();
-          if (!res.ok) {
-            setMsg(
-              msgR,
-              fmtApiErr(j, res.statusText || 'Sync failed'),
-              true,
-            );
-            return;
-          }
-          await loadRecipeListForCfg();
-          await loadRecipes();
-          await loadRecipeYaml();
-          setMsg(msgR, j.message || 'Synced from S3.');
-        } catch (e) {
-          setMsg(msgR, String(e), true);
-        }
-      },
-    );
-
-    $('#cfg-recipe-load').addEventListener(
-      'click', loadRecipeYaml,
-    );
-    $('#cfg-recipe-save').addEventListener(
-      'click', async () => {
-        const slug = sel.value;
-        if (!slug) return;
-        setMsg(msgR, '');
-        try {
-          const res = await fetch(
-            `/api/recipes/${encodeURIComponent(slug)}/yaml`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                yaml_text: taR.value,
-              }),
-            },
-          );
-          const j = await parseJsonResponse(res);
-          if (!res.ok) {
-            setMsg(
-              msgR,
-              fmtApiErr(j, res.statusText || 'Save failed'),
-              true,
-            );
-            return;
-          }
-          await loadRecipes();
-          await loadRecipeListForCfg();
-          await loadRecipeYaml();
-          setMsg(msgR, 'Saved and validated.', false, false);
-        } catch (e) {
-          setMsg(msgR, String(e), true);
-        }
-      },
-    );
-
-    sel.addEventListener('change', loadRecipeYaml);
   }
 
   /* ---- Boot ---- */

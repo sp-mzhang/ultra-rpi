@@ -1044,4 +1044,10 @@ def create_api_router(
         from ultra.protocol.steps import STEP_REGISTRY
         return {'step_types': sorted(STEP_REGISTRY.keys())}
 
+    @router.get('/protocol/step-schemas')
+    async def protocol_step_schemas():
+        '''Return step types with parameter schemas for the GUI builder.'''
+        from ultra.protocol.steps import STEP_SCHEMAS
+        return {'schemas': STEP_SCHEMAS}
+
     return router

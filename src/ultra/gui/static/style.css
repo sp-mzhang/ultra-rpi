@@ -845,6 +845,7 @@ textarea {
   height: calc(100vh - 40px - 32px);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 #cfg-view[hidden] { display: none; }
 
@@ -1584,41 +1585,53 @@ textarea {
 }
 
 /* --- Config & recipes (S3) --- */
-#cfg-view:not([hidden]) {
+
+/* Layout: sidebar + main */
+.cfg-layout {
+  display: flex;
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 8px 12px 16px;
+  overflow: hidden;
 }
-
-.cfg-container {
-  max-width: 1400px;
-  margin: 0 auto;
-}
-
-.cfg-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  align-items: start;
-}
-
-@media (max-width: 1100px) {
-  .cfg-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.cfg-panel {
+.cfg-sidebar {
+  width: 160px;
+  min-width: 160px;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px 14px;
+  border-right: 1px solid var(--border);
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cfg-nav-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+.cfg-nav-btn:hover { background: var(--bg); }
+.cfg-nav-active {
+  color: var(--text);
+  font-weight: 600;
+  border-left-color: var(--blue);
+  background: var(--bg);
+}
+.cfg-main {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 10px 14px 20px;
 }
 
-.cfg-panel-wide {
-  grid-column: 1 / -1;
-}
+/* Panels (only one visible at a time) */
+.cfg-panel { display: none; }
+.cfg-panel-visible { display: block; }
 
 .cfg-panel h2 {
   font-size: 1rem;
@@ -1626,15 +1639,13 @@ textarea {
   margin-bottom: 8px;
 }
 
-.cfg-hint {
-  font-size: 0.8rem;
+.cfg-sn {
+  font-size: 0.78rem;
   color: var(--text-dim);
-  margin-bottom: 8px;
+  margin-left: 8px;
 }
-
 .cfg-sn:empty::before {
   content: '(device_sn not loaded)';
-  color: var(--text-dim);
 }
 
 .cfg-row {
@@ -1644,12 +1655,10 @@ textarea {
   gap: 8px;
   margin-bottom: 8px;
 }
-
 .cfg-row label {
   font-size: 0.85rem;
   color: var(--text-dim);
 }
-
 .cfg-row select {
   flex: 1;
   min-width: 160px;
@@ -1662,7 +1671,7 @@ textarea {
 
 .cfg-textarea {
   width: 100%;
-  min-height: 280px;
+  min-height: 300px;
   font-family: ui-monospace, 'Cascadia Code', monospace;
   font-size: 0.72rem;
   line-height: 1.45;
@@ -1676,35 +1685,335 @@ textarea {
 
 .cfg-btn-row {
   display: flex;
+  align-items: center;
   gap: 8px;
   margin-top: 8px;
 }
 
 .cfg-msg {
-  margin-top: 8px;
+  margin-top: 6px;
   min-height: 1.2em;
   font-size: 0.75rem;
   color: var(--text-dim);
   white-space: pre-wrap;
   word-break: break-word;
 }
+.cfg-msg-err { color: var(--red); }
+.cfg-msg-info { color: var(--blue); }
 
-.cfg-msg-err {
-  color: var(--red);
+/* Sub-tabs (Visual / Raw YAML) */
+.cfg-subtabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+.cfg-subtab {
+  padding: 6px 16px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.cfg-subtab:hover { color: var(--text); }
+.cfg-subtab-active {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--blue);
+}
+.cfg-subtab-content { display: none; }
+.cfg-subtab-visible { display: block; }
+
+/* Button loading state */
+.btn-loading {
+  opacity: 0.6;
+  pointer-events: none;
 }
 
-.cfg-msg-info {
-  color: var(--blue);
+/* --- Recipe Builder --- */
+.rb-input {
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.8rem;
+}
+.rb-input-wide { flex: 1; min-width: 200px; }
+
+.rb-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.rb-meta label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
 }
 
-.cfg-step-types {
-  max-height: 220px;
-  overflow: auto;
+.rb-section {
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
   padding: 8px 10px;
+  background: var(--surface);
+}
+.rb-section summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+  user-select: none;
+}
+
+/* Wells table */
+.rb-wells-wrap { overflow-x: auto; }
+.rb-wells {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  margin: 6px 0;
+}
+.rb-wells th, .rb-wells td {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+.rb-wells th {
+  background: var(--bg);
+  font-weight: 600;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+.rb-wells input {
+  width: 100%;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.76rem;
+}
+.rb-wells .rb-well-del {
+  background: none;
+  border: none;
+  color: var(--red);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0 4px;
+}
+
+/* Step palette */
+.rb-builder {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 10px;
+  min-height: 280px;
+  margin-bottom: 10px;
+}
+@media (max-width: 900px) {
+  .rb-builder { grid-template-columns: 1fr; }
+}
+
+.rb-palette {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-y: auto;
+  max-height: 420px;
+}
+.rb-palette h3 {
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.rb-palette-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.rb-step-card {
+  padding: 4px 8px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 0.72rem;
-  line-height: 1.5;
+  cursor: grab;
+  user-select: none;
+  white-space: nowrap;
+}
+.rb-step-card:hover {
+  border-color: var(--blue);
+}
+.rb-step-card:active { cursor: grabbing; }
+
+/* Protocol list */
+.rb-protocol-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  min-height: 200px;
+  overflow-y: auto;
+  max-height: 500px;
+}
+.rb-protocol-wrap h3 {
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.rb-count {
+  font-weight: 400;
+  font-size: 0.72rem;
   color: var(--text-dim);
+}
+.rb-protocol-list {
+  min-height: 100px;
+}
+.rb-drop-hint {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  text-align: center;
+  padding: 30px 0;
+}
+.rb-drop-over {
+  outline: 2px dashed var(--blue);
+  outline-offset: -2px;
+}
+
+/* Protocol step instance card */
+.rb-proto-step {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  cursor: grab;
+  font-size: 0.76rem;
+}
+.rb-proto-step:active { cursor: grabbing; }
+.rb-proto-step.rb-drag-over {
+  border-top: 2px solid var(--blue);
+}
+.rb-proto-step.rb-sim-active {
+  border-left: 3px solid var(--green);
+  background: color-mix(in srgb, var(--green) 8%, var(--bg));
+}
+.rb-step-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.rb-step-num {
+  font-weight: 700;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  min-width: 20px;
+}
+.rb-step-type {
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+.rb-step-del {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--red);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0 4px;
+}
+.rb-step-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.rb-param {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+}
+.rb-param label {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.rb-param input, .rb-param select {
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.72rem;
+  width: 80px;
+}
+.rb-param select { width: 90px; }
+.rb-param input[type="checkbox"] {
+  width: auto;
+}
+
+/* Liquid simulation */
+.rb-sim-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.rb-sim-controls label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.rb-sim-label {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+}
+.rb-sim-wells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rb-sim-well {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 56px;
+  font-size: 0.68rem;
+}
+.rb-sim-well-name {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.rb-sim-bar-wrap {
+  width: 28px;
+  height: 50px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+.rb-sim-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--blue);
+  transition: height 0.3s ease;
+}
+.rb-sim-vol {
+  font-size: 0.64rem;
+  color: var(--text-dim);
+  margin-top: 2px;
 }

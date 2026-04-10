@@ -1391,17 +1391,21 @@
   </div><!-- #fw-view -->
 
   <div id="cfg-view" hidden>
-    <div class="cfg-container">
-      <div class="cfg-grid">
-        <section class="cfg-panel">
-          <h2>Machine settings (S3)</h2>
-          <p class="cfg-hint">
-            Full merged config for this device (defaults + ULTRA_CONFIG + S3).
+    <div class="cfg-layout">
+      <nav class="cfg-sidebar">
+        <button class="cfg-nav-btn cfg-nav-active" data-panel="machine">Machine Config</button>
+        <button class="cfg-nav-btn" data-panel="recipe">Recipe Editor</button>
+      </nav>
+      <div class="cfg-main">
+
+        <!-- Machine Config Panel -->
+        <section id="cfg-panel-machine" class="cfg-panel cfg-panel-visible">
+          <h2>Machine settings (S3)
             <code id="cfg-device-sn" class="cfg-sn"></code>
-          </p>
+          </h2>
           <textarea id="cfg-machine-yaml" class="cfg-textarea"
-            rows="20" spellcheck="false"
-            placeholder="# machine_settings.yaml (full YAML)"></textarea>
+            rows="28" spellcheck="false"
+            placeholder="# machine_settings.yaml"></textarea>
           <div class="cfg-btn-row">
             <button id="cfg-machine-load" type="button"
               class="btn btn-sm">Reload</button>
@@ -1410,29 +1414,121 @@
           </div>
           <pre id="cfg-machine-msg" class="cfg-msg"></pre>
         </section>
-        <section class="cfg-panel">
-          <h2>Global recipes</h2>
+
+        <!-- Recipe Editor Panel -->
+        <section id="cfg-panel-recipe" class="cfg-panel">
+          <!-- recipe selector row -->
           <div class="cfg-row">
             <label for="cfg-recipe-select">Recipe:</label>
             <select id="cfg-recipe-select"></select>
             <button id="cfg-sync" type="button"
               class="btn btn-sm">Sync from S3</button>
-          </div>
-          <textarea id="cfg-recipe-yaml" class="cfg-textarea"
-            rows="20" spellcheck="false"
-            placeholder="# recipe.yaml"></textarea>
-          <div class="cfg-btn-row">
             <button id="cfg-recipe-load" type="button"
               class="btn btn-sm">Reload</button>
-            <button id="cfg-recipe-save" type="button"
-              class="btn btn-green btn-sm">Save to S3</button>
           </div>
-          <pre id="cfg-recipe-msg" class="cfg-msg"></pre>
+
+          <!-- sub-tabs: Visual / Raw YAML -->
+          <div class="cfg-subtabs">
+            <button class="cfg-subtab cfg-subtab-active"
+              data-subtab="visual">Visual Builder</button>
+            <button class="cfg-subtab"
+              data-subtab="yaml">Raw YAML</button>
+          </div>
+
+          <!-- Visual Builder sub-tab -->
+          <div id="cfg-subtab-visual" class="cfg-subtab-content cfg-subtab-visible">
+            <!-- Recipe metadata -->
+            <div class="rb-meta">
+              <label>Name <input id="rb-name" type="text" class="rb-input"
+                placeholder="My Recipe"></label>
+              <label>Description <input id="rb-desc" type="text" class="rb-input rb-input-wide"
+                placeholder="Short description"></label>
+            </div>
+
+            <!-- Wells editor -->
+            <details class="rb-section" open>
+              <summary>Wells</summary>
+              <div class="rb-wells-wrap">
+                <table id="rb-wells-table" class="rb-wells">
+                  <thead>
+                    <tr>
+                      <th>Name</th><th>Loc</th><th>Reagent</th>
+                      <th>Volume (uL)</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+                <button id="rb-well-add" type="button"
+                  class="btn btn-sm">+ Add well</button>
+              </div>
+            </details>
+
+            <!-- Step palette + protocol list -->
+            <div class="rb-builder">
+              <div class="rb-palette">
+                <h3>Available Steps</h3>
+                <div id="rb-step-palette" class="rb-palette-cards"></div>
+              </div>
+              <div class="rb-protocol-wrap">
+                <h3>Protocol Steps
+                  <span id="rb-step-count" class="rb-count"></span>
+                </h3>
+                <div id="rb-protocol-list" class="rb-protocol-list">
+                  <p class="rb-drop-hint">Drag steps here to build the protocol</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Simulation bar -->
+            <details class="rb-section">
+              <summary>Liquid Simulation</summary>
+              <div class="rb-sim">
+                <div class="rb-sim-controls">
+                  <button id="rb-sim-play" type="button"
+                    class="btn btn-sm">Play</button>
+                  <button id="rb-sim-pause" type="button"
+                    class="btn btn-sm" disabled>Pause</button>
+                  <button id="rb-sim-reset" type="button"
+                    class="btn btn-sm">Reset</button>
+                  <label>Speed
+                    <input id="rb-sim-speed" type="range"
+                      min="1" max="20" value="5">
+                  </label>
+                  <span id="rb-sim-step-label" class="rb-sim-label"></span>
+                </div>
+                <div id="rb-sim-wells" class="rb-sim-wells"></div>
+              </div>
+            </details>
+
+            <!-- save row -->
+            <div class="cfg-btn-row">
+              <button id="cfg-recipe-save" type="button"
+                class="btn btn-green btn-sm">Save to S3</button>
+              <input id="cfg-save-as-slug" type="text" class="rb-input"
+                placeholder="new_slug_name">
+              <button id="cfg-save-as" type="button"
+                class="btn btn-sm">Save as new</button>
+            </div>
+            <pre id="cfg-recipe-msg" class="cfg-msg"></pre>
+          </div>
+
+          <!-- Raw YAML sub-tab -->
+          <div id="cfg-subtab-yaml" class="cfg-subtab-content">
+            <textarea id="cfg-recipe-yaml" class="cfg-textarea"
+              rows="30" spellcheck="false"
+              placeholder="# recipe.yaml"></textarea>
+            <div class="cfg-btn-row">
+              <button id="cfg-yaml-save" type="button"
+                class="btn btn-green btn-sm">Save to S3</button>
+              <input id="cfg-yaml-save-as-slug" type="text" class="rb-input"
+                placeholder="new_slug_name">
+              <button id="cfg-yaml-save-as" type="button"
+                class="btn btn-sm">Save as new</button>
+            </div>
+            <pre id="cfg-yaml-msg" class="cfg-msg"></pre>
+          </div>
         </section>
-        <section class="cfg-panel cfg-panel-wide">
-          <h2>Protocol step types</h2>
-          <pre id="cfg-step-types" class="cfg-step-types"></pre>
-        </section>
+
       </div>
     </div>
   </div><!-- #cfg-view -->

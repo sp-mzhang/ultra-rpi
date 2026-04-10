@@ -1307,3 +1307,164 @@ class TimingMarkerStep(StepExecutor):
 def _ok(resp: dict | None) -> bool:
     '''Check if a command response indicates success.'''
     return bool(resp and resp.get('status') == 'OK')
+
+
+# ---------------------------------------------------------------------------
+# Parameter schemas for the GUI recipe builder.
+# Each entry: {name, type, default, well_ref, required}
+# well_ref=True means the param is a well name (rendered as dropdown).
+# volume_out/volume_in hint which params move liquid for the simulator.
+# ---------------------------------------------------------------------------
+
+def _p(
+    name, typ='number', default=None, *,
+    well_ref=False, required=False,
+    volume_out=False, volume_in=False,
+):
+    d = {'name': name, 'type': typ}
+    if default is not None:
+        d['default'] = default
+    if well_ref:
+        d['well_ref'] = True
+    if required:
+        d['required'] = True
+    if volume_out:
+        d['volume_out'] = True
+    if volume_in:
+        d['volume_in'] = True
+    return d
+
+
+STEP_SCHEMAS: dict[str, list[dict]] = {
+    'set_loc_offset': [
+        _p('dx_um', default=0),
+        _p('dy_um', default=0),
+        _p('dz_um', default=0),
+    ],
+    'centrifuge_unlock': [],
+    'centrifuge_lock': [],
+    'centrifuge_spin': [
+        _p('rpm', default=500),
+        _p('duration_s', default=5),
+    ],
+    'centrifuge_rotate': [
+        _p('angle_001deg', default=0),
+    ],
+    'centrifuge_shake': [
+        _p('centre_angle_001deg', default=29000),
+        _p('shake_angle_deg', default=45),
+        _p('cycles', default=3),
+    ],
+    'centrifuge_goto_serum': [],
+    'centrifuge_goto_pipette': [],
+    'lift_move': [
+        _p('target_mm', default=18.0),
+    ],
+    'lid': [
+        _p('open', 'boolean', default=True),
+    ],
+    'move_to_location': [
+        _p('well', 'string', well_ref=True, required=True),
+        _p('speed_01mms', default=250),
+    ],
+    'tip_pick': [
+        _p('tip_id', default=4),
+    ],
+    'tip_swap': [
+        _p('from_id', default=4),
+        _p('to_id', default=5),
+    ],
+    'tip_return': [
+        _p('tip_id', default=5),
+    ],
+    'lld': [
+        _p('threshold', default=20),
+    ],
+    'reagent_transfer': [
+        _p('source', 'string', well_ref=True, required=True),
+        _p('target', 'string', well_ref=True, required=True),
+        _p('asp_vol', required=True, volume_out=True),
+        _p('cart_vol', required=True, volume_in=True),
+        _p('cart_vel', default=1.5),
+        _p('skip_aspirate', 'boolean', default=False),
+    ],
+    'reagent_transfer_bf': [
+        _p('source', 'string', well_ref=True, required=True),
+        _p('target', 'string', well_ref=True, required=True),
+        _p('asp_vol', required=True, volume_out=True),
+        _p('cart_vol', required=True, volume_in=True),
+        _p('duration_s', required=True),
+        _p('cart_vel', default=1.5),
+        _p('for_vol', default=60),
+        _p('back_vol', default=30),
+        _p('sleep_s', default=30),
+        _p('skip_aspirate', 'boolean', default=False),
+    ],
+    'well_transfer': [
+        _p('source', 'string', well_ref=True, required=True),
+        _p('dest', 'string', well_ref=True, required=True),
+        _p('volume', required=True, volume_out=True, volume_in=True),
+    ],
+    'well_transfer_return': [
+        _p('source', 'string', well_ref=True, required=True),
+        _p('dest', 'string', well_ref=True, required=True),
+        _p('asp_vol', required=True, volume_out=True),
+        _p('disp_vol', required=True, volume_in=True),
+        _p('vel', default=20.0),
+    ],
+    'well_to_chip': [
+        _p('source', 'string', well_ref=True, required=True),
+        _p('target', 'string', default='PP4', well_ref=True),
+        _p('chip_vol', required=True, volume_out=True, volume_in=True),
+        _p('overshoot_ul', default=10),
+        _p('chip_vel', default=1.0),
+        _p('stream', 'boolean', default=True),
+    ],
+    'tip_mix': [
+        _p('well', 'string', well_ref=True, required=True),
+        _p('mix_vol', default=150),
+        _p('speed', default=100.0),
+        _p('cycles', default=4),
+        _p('pull_vol', default=0),
+    ],
+    'home_z': [],
+    'well_dispense': [
+        _p('well', 'string', well_ref=True, required=True),
+        _p('volume', required=True, volume_in=True),
+        _p('speed', default=100.0),
+        _p('blowout', 'boolean', default=True),
+    ],
+    'smart_aspirate': [
+        _p('well', 'string', well_ref=True, required=True),
+        _p('volume', required=True, volume_out=True),
+        _p('speed', default=40.0),
+        _p('lld_threshold', default=20),
+        _p('piston_reset', 'boolean', default=True),
+        _p('air_slug', default=40),
+        _p('stream', 'boolean', default=False),
+    ],
+    'dilution_transfer': [
+        _p('source', 'string', well_ref=True, required=True),
+        _p('dest', 'string', well_ref=True, required=True),
+        _p('volume', required=True, volume_out=True, volume_in=True),
+        _p('asp_speed', default=80.0),
+        _p('disp_speed', default=100.0),
+        _p('blowout', 'boolean', default=True),
+        _p('stream', 'boolean', default=True),
+    ],
+    'home_all': [],
+    'home_close': [],
+    'pump_init': [],
+    'led_pattern': [
+        _p('pattern', default=0),
+        _p('stage', default=0),
+    ],
+    'delay': [
+        _p('seconds', default=1.0),
+    ],
+    'timing_marker': [
+        _p('label', 'string', default=''),
+        _p('event_type', 'string', default='start'),
+        _p('trigger_analysis', 'boolean', default=False),
+    ],
+}
