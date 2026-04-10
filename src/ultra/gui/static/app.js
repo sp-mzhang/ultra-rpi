@@ -2886,9 +2886,8 @@
         if (j.source === 'defaults') {
           setMsg(
             msgM,
-            'No machine_settings.yaml in S3 yet. Showing full merged '
-              + 'config (defaults + ULTRA_CONFIG). Save to S3 to create '
-              + 'the per-machine file.',
+            'No machine_settings.yaml in S3 yet. Editor shows full '
+              + 'effective config; Save to S3 to create the object.',
             false,
             true,
           );

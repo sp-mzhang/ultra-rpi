@@ -36,10 +36,10 @@ Grant `s3:GetObject`, `s3:PutObject`, `s3:ListBucket`, `s3:ListObjectVersions` o
 2. `ULTRA_CONFIG` file (if set)
 3. S3 `machines/{device_sn}/machine_settings.yaml` (if present and download succeeds)
 
-`GET /api/machine-settings` returns that S3 object when it exists; if not, it
-returns a YAML draft of the **full** merged in-memory config (same scope as
-`ultra_default.yaml` plus `ULTRA_CONFIG`) so every key is editable; save to S3
-to store the machine file. Merge is always deep: keys in S3 override defaults.
+`GET /api/machine-settings` always returns YAML for the **full** effective
+merged config (defaults + `ULTRA_CONFIG` + S3 overlay from startup), not the raw
+S3 file text — so a short legacy object in S3 does not hide other keys in the
+editor. Save writes the textarea back to S3 as the full replacement object.
 
 ## Seeding the bucket from the repo
 

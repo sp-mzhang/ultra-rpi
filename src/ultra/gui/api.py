@@ -43,24 +43,22 @@ class YamlTextBody(BaseModel):
     yaml_text: str = ''
 
 
-def _machine_settings_fallback_yaml(
+def _machine_settings_effective_yaml(
         cfg: dict[str, Any],
 ) -> str:
-    '''YAML text when S3 has no machine_settings.yaml yet.
+    '''YAML for the machine settings editor: full effective merged config.
 
-    Serializes the **full** merged in-memory config (same shape as
-    ``ultra_default.yaml`` after ``ULTRA_CONFIG``). For testing, treat the
-    S3 object as the complete editable machine file; startup deep-merge
-    applies whatever keys are present.
+    Always serializes the in-memory dict (defaults + ULTRA_CONFIG + S3
+    overlay applied at process start). The GUI always shows every key,
+    not the raw short object that may still exist in S3.
     '''
     import yaml
 
     header = (
-        '# machine_settings.yaml — not in S3 yet.\n'
-        '# Full merged config (defaults + ULTRA_CONFIG), before any S3 '
-        'file.\n'
-        '# Edit any keys and Save to S3 for this device.\n'
-        '# On startup this YAML is deep-merged over defaults (keys here win).\n\n'
+        '# machine_settings.yaml — full effective config for this process.\n'
+        '# Built from: defaults, ULTRA_CONFIG, and S3 (merged at startup).\n'
+        '# Edit any keys and Save to S3 to replace '
+        'machines/{device_sn}/machine_settings.yaml.\n\n'
     )
     try:
         body = yaml.dump(
@@ -72,7 +70,7 @@ def _machine_settings_fallback_yaml(
     except Exception:
         LOG.exception(
             'Could not serialize config dict to YAML for '
-            'machine_settings fallback',
+            'machine_settings editor',
         )
         return (
             header
@@ -851,11 +849,12 @@ def create_api_router(
 
     @router.get('/machine-settings')
     async def machine_settings_get():
-        '''Return S3 machine_settings.yaml for this device.
+        '''Return full effective merged config as YAML for editing.
 
-        If the object is missing or empty, returns the full merged local
-        config as YAML (``source``: ``defaults``) so the editor shows every
-        key; Save to S3 writes the machine file.
+        Always dumps ``app.config`` (everything the process loaded), not the
+        raw S3 object text — so a legacy short upload in S3 does not hide
+        stm32, reader, gui, etc. ``source`` indicates whether an S3 object
+        exists for metadata only.
         '''
         from ultra.services import config_store
         ds = app.config.get('device_sn', '')
@@ -867,13 +866,11 @@ def create_api_router(
         loop = asyncio.get_running_loop()
 
         def _load() -> tuple[str, str]:
-            t = config_store.fetch_machine_settings_yaml(ds)
-            if t is not None and str(t).strip():
-                return str(t), 's3'
-            return (
-                _machine_settings_fallback_yaml(app.config),
-                'defaults',
+            exists = config_store.machine_settings_object_exists(
+                ds,
             )
+            text = _machine_settings_effective_yaml(app.config)
+            return text, ('s3' if exists else 'defaults')
 
         yaml_text, source = await loop.run_in_executor(
             None, _load,
