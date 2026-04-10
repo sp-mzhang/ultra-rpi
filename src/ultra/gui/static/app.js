@@ -2835,6 +2835,14 @@
       }
     }
 
+    async function parseJsonResponse(res) {
+      try {
+        return await res.json();
+      } catch (_) {
+        return {};
+      }
+    }
+
     async function fillRecipeSelects(list) {
       const prev = sel.value;
       sel.innerHTML = '';
@@ -2951,14 +2959,15 @@
       'click', async () => {
         setMsg(msgM, '');
         try {
+          // POST alias: some proxies block PUT to /api/*
           const res = await fetch('/api/machine-settings', {
-            method: 'PUT',
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               yaml_text: taM.value,
             }),
           });
-          const j = await res.json();
+          const j = await parseJsonResponse(res);
           if (!res.ok) {
             setMsg(
               msgM,
@@ -2967,7 +2976,9 @@
             );
             return;
           }
-          await loadMachineSettings();
+          // Do not call loadMachineSettings() here: GET dumps app.config,
+          // which drops YAML comments and makes a successful S3 save look
+          // like it was reverted.
           setMsg(
             msgM,
             j.message || 'Saved to S3.',

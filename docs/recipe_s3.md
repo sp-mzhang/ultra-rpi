@@ -39,7 +39,10 @@ Grant `s3:GetObject`, `s3:PutObject`, `s3:ListBucket`, `s3:ListObjectVersions` o
 `GET /api/machine-settings` always returns YAML for the **full** effective
 merged config (defaults + `ULTRA_CONFIG` + S3 overlay from startup), not the raw
 S3 file text — so a short legacy object in S3 does not hide other keys in the
-editor. Save writes the textarea back to S3 as the full replacement object.
+editor. **`PUT` or `POST /api/machine-settings`** writes the textarea to S3.
+After a successful save, reload the page or use **Reload** to refresh from
+`app.config` (comments you typed are only preserved in S3 until restart loads
+them into memory).
 
 ## Seeding the bucket from the repo
 

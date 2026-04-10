@@ -882,8 +882,12 @@ def create_api_router(
         }
 
     @router.put('/machine-settings')
+    @router.post('/machine-settings')
     async def machine_settings_put(req: YamlTextBody):
-        '''Write machine_settings.yaml to S3 for this device.'''
+        '''Write machine_settings.yaml to S3 for this device.
+
+        POST is an alias for PUT (some reverse proxies block PUT).
+        '''
         from ultra.services import config_store
         ds = app.config.get('device_sn', '')
         if not ds:
@@ -898,8 +902,21 @@ def create_api_router(
                 ds, req.yaml_text,
             )
 
-        await loop.run_in_executor(None, _save)
-        return {'ok': True, 'message': 'Saved to S3'}
+        try:
+            await loop.run_in_executor(None, _save)
+        except Exception as exc:
+            LOG.exception('S3 put machine_settings failed')
+            raise HTTPException(
+                status_code=502,
+                detail=f'S3 upload failed: {exc}',
+            ) from exc
+        return {
+            'ok': True,
+            'message': (
+                'Saved to S3. Restart the app to load this YAML into '
+                'memory; the editor shows what you saved until you Reload.'
+            ),
+        }
 
     @router.post('/config/sync-recipes')
     async def config_sync_recipes():
