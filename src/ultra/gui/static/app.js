@@ -2856,10 +2856,14 @@
       await fillRecipeSelects(list);
     }
 
-    function setMsg(pre, text, isErr) {
+    function setMsg(pre, text, isErr, isInfo) {
       if (!pre) return;
       pre.textContent = text || '';
       pre.classList.toggle('cfg-msg-err', !!isErr);
+      pre.classList.toggle(
+        'cfg-msg-info',
+        !!isInfo && !isErr,
+      );
     }
 
     async function loadMachineSettings() {
@@ -2879,6 +2883,16 @@
         }
         taM.value = j.yaml_text || '';
         if (snEl) snEl.textContent = j.device_sn || '';
+        if (j.source === 'defaults') {
+          setMsg(
+            msgM,
+            'No machine_settings.yaml in S3 yet. Showing '
+              + 'calibration from merged local config; '
+              + 'Save to S3 to create the per-device file.',
+            false,
+            true,
+          );
+        }
       } catch (e) {
         setMsg(msgM, String(e), true);
         taM.value = '';
@@ -2954,7 +2968,13 @@
             );
             return;
           }
-          setMsg(msgM, j.message || 'Saved.');
+          await loadMachineSettings();
+          setMsg(
+            msgM,
+            j.message || 'Saved to S3.',
+            false,
+            false,
+          );
         } catch (e) {
           setMsg(msgM, String(e), true);
         }

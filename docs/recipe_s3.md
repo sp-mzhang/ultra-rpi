@@ -36,6 +36,10 @@ Grant `s3:GetObject`, `s3:PutObject`, `s3:ListBucket`, `s3:ListObjectVersions` o
 2. `ULTRA_CONFIG` file (if set)
 3. S3 `machines/{device_sn}/machine_settings.yaml` (if present and download succeeds)
 
+`GET /api/machine-settings` returns that S3 object when it exists; if not, it
+returns a YAML draft built from the effective merged **`calibration`** in
+memory so the Config tab is not empty (save to S3 to create the object).
+
 ## Seeding the bucket from the repo
 
 After editing packaged YAMLs under `src/ultra/protocol/recipes/`, upload the

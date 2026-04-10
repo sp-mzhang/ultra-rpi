@@ -43,6 +43,44 @@ class YamlTextBody(BaseModel):
     yaml_text: str = ''
 
 
+def _machine_settings_fallback_yaml(
+        cfg: dict[str, Any],
+) -> str:
+    '''YAML text when S3 has no machine_settings.yaml yet.
+
+    Shows effective ``calibration`` from merged local config so the
+    operator can edit and Save to S3.
+    '''
+    import yaml
+
+    lines = [
+        '# machine_settings.yaml — not in S3 yet.',
+        '# Values below reflect current merged config '
+        '(defaults + ULTRA_CONFIG).',
+        '# Edit and Save to S3 to store per-device calibration.',
+        '',
+    ]
+    cal = cfg.get('calibration')
+    if cal is not None:
+        body = {'calibration': cal}
+        dumped = yaml.dump(
+            body,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+        lines.append(dumped.rstrip())
+    else:
+        lines.extend([
+            '# Example:',
+            '# calibration:',
+            '#   loc_offset_x_um: 0',
+            '#   loc_offset_y_um: 0',
+            '#   loc_offset_z_um: 0',
+        ])
+    return '\n'.join(lines) + '\n'
+
+
 class SMRequest(BaseModel):
     '''Request body for state machine control.'''
     action: str = 'start'
@@ -813,7 +851,12 @@ def create_api_router(
 
     @router.get('/machine-settings')
     async def machine_settings_get():
-        '''Return S3 machine_settings.yaml for this device.'''
+        '''Return S3 machine_settings.yaml for this device.
+
+        If the object is missing or empty, returns effective calibration
+        from merged local config (``source``: ``defaults``) so the UI is
+        populated; Save to S3 creates the overlay.
+        '''
         from ultra.services import config_store
         ds = app.config.get('device_sn', '')
         if not ds:
@@ -823,12 +866,23 @@ def create_api_router(
             )
         loop = asyncio.get_running_loop()
 
-        def _load() -> str:
+        def _load() -> tuple[str, str]:
             t = config_store.fetch_machine_settings_yaml(ds)
-            return t if t is not None else ''
+            if t is not None and str(t).strip():
+                return str(t), 's3'
+            return (
+                _machine_settings_fallback_yaml(app.config),
+                'defaults',
+            )
 
-        yaml_text = await loop.run_in_executor(None, _load)
-        return {'device_sn': ds, 'yaml_text': yaml_text}
+        yaml_text, source = await loop.run_in_executor(
+            None, _load,
+        )
+        return {
+            'device_sn': ds,
+            'yaml_text': yaml_text,
+            'source': source,
+        }
 
     @router.put('/machine-settings')
     async def machine_settings_put(req: YamlTextBody):
