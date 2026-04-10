@@ -12,6 +12,7 @@ No frames are saved to disk.
 '''
 from __future__ import annotations
 
+import glob
 import logging
 import threading
 import time
@@ -61,6 +62,36 @@ class CameraStream:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
+    @staticmethod
+    def _try_open(device) -> 'cv2.VideoCapture | None':
+        '''Try to open a device, return cap if it reads a frame.'''
+        try:
+            dev = int(device) if str(device).isdigit() else device
+        except (ValueError, TypeError):
+            dev = device
+        cap = cv2.VideoCapture(dev)
+        if not cap.isOpened():
+            return None
+        ret, _ = cap.read()
+        if not ret:
+            cap.release()
+            return None
+        return cap
+
+    def _auto_detect(self) -> 'cv2.VideoCapture | None':
+        '''Scan /dev/video* for the first device that produces frames.'''
+        candidates = sorted(glob.glob('/dev/video[0-9]*'))
+        for dev in candidates:
+            LOG.debug('Probing camera: %s', dev)
+            cap = self._try_open(dev)
+            if cap is not None:
+                self._device = dev
+                LOG.info(
+                    'Auto-detected camera: %s', dev,
+                )
+                return cap
+        return None
+
     def start(self) -> bool:
         '''Open the camera and start the capture thread.
 
@@ -78,11 +109,15 @@ class CameraStream:
         if self._running:
             return True
 
-        cap = cv2.VideoCapture(self._device)
-        if not cap.isOpened():
+        cap = self._try_open(self._device)
+        if cap is None:
             LOG.warning(
-                'Failed to open camera: %s', self._device,
+                'Failed to open camera: %s — scanning…',
+                self._device,
             )
+            cap = self._auto_detect()
+        if cap is None:
+            LOG.warning('No working camera found.')
             return False
 
         self._cap = cap

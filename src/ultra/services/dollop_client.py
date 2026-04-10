@@ -52,12 +52,22 @@ def _runs_api() -> Any:
     return r.RunsAPI(client=_client())
 
 
+_dollop_err_logged = False
+
+
 def _safe_call(func: Any, **kwargs: Any) -> Any:
     '''Call a dollopclient method, return {} on error.'''
+    global _dollop_err_logged
     try:
-        return func(**kwargs)
+        result = func(**kwargs)
+        _dollop_err_logged = False
+        return result
     except Exception as err:
-        LOG.error('Dollop API error: %s -- %s', func, err)
+        if not _dollop_err_logged:
+            LOG.warning('Dollop API unreachable: %s', err)
+            _dollop_err_logged = True
+        else:
+            LOG.debug('Dollop API error: %s -- %s', func, err)
         return {}
 
 
