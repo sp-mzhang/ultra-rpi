@@ -1732,6 +1732,14 @@ textarea {
   opacity: 0.6;
   pointer-events: none;
 }
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--blue);
+  color: var(--blue);
+}
+.btn-outline:hover {
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+}
 
 /* --- Recipe Builder --- */
 .rb-input {
@@ -1836,21 +1844,21 @@ textarea {
 }
 .rb-palette-cards {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  flex-direction: column;
+  gap: 3px;
 }
 .rb-step-card {
-  padding: 4px 8px;
+  padding: 6px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 4px;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   cursor: grab;
   user-select: none;
-  white-space: nowrap;
 }
 .rb-step-card:hover {
   border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 6%, var(--bg));
 }
 .rb-step-card:active { cursor: grabbing; }
 

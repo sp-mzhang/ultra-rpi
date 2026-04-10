@@ -3007,12 +3007,29 @@
     }
 
     /* === YAML <-> Builder model sync === */
+    function parseYaml(text) {
+      if (typeof jsyaml !== 'undefined') return jsyaml.load(text) || {};
+      return {};
+    }
+
+    function dumpYaml(obj) {
+      if (typeof jsyaml !== 'undefined') {
+        return jsyaml.dump(obj, {
+          flowLevel: 3,
+          lineWidth: 120,
+          noRefs: true,
+          sortKeys: false,
+        });
+      }
+      return JSON.stringify(obj, null, 2);
+    }
+
     function yamlToBuilder() {
       try {
         const text = taR.value;
         if (!text.trim()) return;
-        const lines = text.split('\n');
-        const raw = _miniYamlParse(text);
+        const raw = parseYaml(text);
+        if (!raw || typeof raw !== 'object') return;
         builderModel.name = raw.name || '';
         builderModel.description = raw.description || '';
         builderModel.constants = raw.constants || {};
@@ -3021,7 +3038,7 @@
         builderModel.wells = {};
         if (raw.wells && typeof raw.wells === 'object') {
           for (const [k, v] of Object.entries(raw.wells)) {
-            builderModel.wells[k] = typeof v === 'object' ? v : {};
+            builderModel.wells[k] = typeof v === 'object' ? { ...v } : {};
           }
         }
         builderModel.phases = [];
@@ -3062,214 +3079,48 @@
     }
 
     function builderToYaml() {
-      const lines = [];
-      if (builderModel.name) lines.push(`name: ${builderModel.name}`);
-      if (builderModel.description) lines.push(`description: ${builderModel.description}`);
-      lines.push('');
-      if (Object.keys(builderModel.reader).length) {
-        lines.push('reader:');
-        for (const [k, v] of Object.entries(builderModel.reader)) {
-          if (typeof v === 'object') {
-            lines.push(`  ${k}:`);
-            for (const [kk, vv] of Object.entries(v)) {
-              lines.push(`    ${kk}: ${vv}`);
-            }
-          } else {
-            lines.push(`  ${k}: ${v}`);
-          }
-        }
-        lines.push('');
-      }
-      if (Object.keys(builderModel.peak_detect).length) {
-        lines.push('peak_detect:');
-        for (const [k, v] of Object.entries(builderModel.peak_detect)) {
-          if (typeof v === 'object') {
-            lines.push(`  ${k}:`);
-            for (const [kk, vv] of Object.entries(v)) {
-              lines.push(`    ${kk}: ${vv}`);
-            }
-          } else {
-            lines.push(`  ${k}: ${v}`);
-          }
-        }
-        lines.push('');
-      }
-      if (Object.keys(builderModel.constants).length) {
-        lines.push('constants:');
-        for (const [k, v] of Object.entries(builderModel.constants)) {
-          lines.push(`  ${k}: ${v}`);
-        }
-        lines.push('');
-      }
-      if (Object.keys(builderModel.wells).length) {
-        lines.push('wells:');
-        for (const [name, w] of Object.entries(builderModel.wells)) {
-          const parts = Object.entries(w).map(([k, v]) => `${k}: ${v}`);
-          lines.push(`  ${name}: {${parts.join(', ')}}`);
-        }
-        lines.push('');
-      }
-      lines.push('phases:');
-      for (const ph of builderModel.phases) {
-        lines.push(`  - name: ${ph.name}`);
-        lines.push(`    label: ${ph.label}`);
+      const obj = {};
+      if (builderModel.name) obj.name = builderModel.name;
+      if (builderModel.description) obj.description = builderModel.description;
+      if (Object.keys(builderModel.reader).length) obj.reader = builderModel.reader;
+      if (Object.keys(builderModel.peak_detect).length) obj.peak_detect = builderModel.peak_detect;
+      if (Object.keys(builderModel.constants).length) obj.constants = builderModel.constants;
+      if (Object.keys(builderModel.wells).length) obj.wells = builderModel.wells;
+      obj.phases = builderModel.phases.map((ph) => {
         const incStep = ph.steps.find((s) => s.type === '_include');
         if (incStep) {
-          lines.push(`    include: ${incStep.params.include}`);
-        } else if (ph.steps.length) {
-          lines.push('    steps:');
-          for (const s of ph.steps) {
-            lines.push(`      - type: ${s.type}`);
-            if (s.label) lines.push(`        label: ${s.label}`);
+          return { name: ph.name, label: ph.label, include: incStep.params.include };
+        }
+        return {
+          name: ph.name,
+          label: ph.label,
+          steps: ph.steps.map((s) => {
+            const step = { type: s.type };
+            if (s.label) step.label = s.label;
             for (const [k, v] of Object.entries(s.params)) {
-              if (v !== '' && v !== undefined) {
-                lines.push(`        ${k}: ${v}`);
-              }
+              if (v !== '' && v !== undefined) step[k] = v;
             }
-          }
-        }
-      }
-      taR.value = lines.join('\n') + '\n';
+            return step;
+          }),
+        };
+      });
+      taR.value = dumpYaml(obj);
     }
 
-    /* Minimal YAML parser (handles the recipe subset we generate) */
-    function _miniYamlParse(text) {
-      try {
-        if (typeof jsyaml !== 'undefined') return jsyaml.load(text);
-      } catch (_) {}
-      const raw = {};
-      let curKey = null, curObj = null, curSub = null, curSubObj = null;
-      const listStack = [];
-      for (const line of text.split('\n')) {
-        const trimmed = line.replace(/#.*/, '').trimEnd();
-        if (!trimmed) continue;
-        const indent = line.length - line.trimStart().length;
-        const m = trimmed.match(/^(\w[\w_]*)\s*:\s*(.*)/);
-        if (indent === 0 && m) {
-          curKey = m[1];
-          const val = m[2].trim();
-          if (val === '' || val === '>') {
-            raw[curKey] = val === '>' ? '' : {};
-            curObj = typeof raw[curKey] === 'object' ? raw[curKey] : null;
-          } else if (val.startsWith('{')) {
-            try { raw[curKey] = JSON.parse(val.replace(/(\w+)\s*:/g, '"$1":')); }
-            catch (_) { raw[curKey] = val; }
-            curObj = null;
-          } else if (val.startsWith('[')) {
-            raw[curKey] = [];
-            curObj = raw[curKey];
-          } else {
-            raw[curKey] = _yamlVal(val);
-            curObj = null;
-          }
-          curSub = null; curSubObj = null;
-          continue;
-        }
-        if (indent === 2 && curKey) {
-          if (trimmed.startsWith('- ')) {
-            if (!Array.isArray(raw[curKey])) raw[curKey] = [];
-            const inner = trimmed.slice(2).trim();
-            const m2 = inner.match(/^(\w[\w_]*)\s*:\s*(.*)/);
-            if (m2) {
-              const obj = {};
-              obj[m2[1]] = _yamlVal(m2[2].trim());
-              raw[curKey].push(obj);
-              curObj = obj;
-            } else {
-              raw[curKey].push(_yamlVal(inner));
-              curObj = null;
-            }
-            curSub = null; curSubObj = null;
-            continue;
-          }
-          const m2 = trimmed.match(/^(\w[\w_]*)\s*:\s*(.*)/);
-          if (m2) {
-            if (typeof raw[curKey] !== 'object' || Array.isArray(raw[curKey])) {
-              raw[curKey] = {};
-            }
-            const val = m2[2].trim();
-            if (val.startsWith('{')) {
-              try { raw[curKey][m2[1]] = JSON.parse(val.replace(/(\w+)\s*:/g, '"$1":')); }
-              catch (_) { raw[curKey][m2[1]] = val; }
-            } else if (val === '' || val === '>') {
-              raw[curKey][m2[1]] = val === '>' ? '' : {};
-              curSub = m2[1]; curSubObj = raw[curKey][m2[1]];
-            } else {
-              raw[curKey][m2[1]] = _yamlVal(val);
-            }
-            curObj = raw[curKey];
-            continue;
-          }
-        }
-        if (indent === 4 && curObj) {
-          if (trimmed.startsWith('- ')) {
-            const inner = trimmed.slice(2).trim();
-            const m3 = inner.match(/^(\w[\w_]*)\s*:\s*(.*)/);
-            if (Array.isArray(curObj)) {
-              /* already array */
-            } else if (curSub && curObj[curSub]) {
-              if (!Array.isArray(curObj[curSub])) curObj[curSub] = [];
-            }
-            const target = curSub && Array.isArray(curObj[curSub]) ? curObj[curSub] : curObj;
-            if (m3) {
-              const o = {}; o[m3[1]] = _yamlVal(m3[2].trim());
-              if (Array.isArray(target)) target.push(o);
-              curSubObj = o;
-            }
-            continue;
-          }
-          const m3 = trimmed.match(/^(\w[\w_]*)\s*:\s*(.*)/);
-          if (m3) {
-            if (Array.isArray(curObj) && curObj.length) {
-              const last = curObj[curObj.length - 1];
-              if (typeof last === 'object') last[m3[1]] = _yamlVal(m3[2].trim());
-            } else if (curSub && typeof curObj[curSub] === 'object' && !Array.isArray(curObj[curSub])) {
-              curObj[curSub][m3[1]] = _yamlVal(m3[2].trim());
-            } else if (typeof curObj === 'object') {
-              curObj[m3[1]] = _yamlVal(m3[2].trim());
-            }
-            continue;
-          }
-        }
-        if (indent >= 6 && curObj) {
-          if (trimmed.startsWith('- ')) {
-            const inner = trimmed.slice(2).trim();
-            const m4 = inner.match(/^(\w[\w_]*)\s*:\s*(.*)/);
-            let target = null;
-            if (Array.isArray(curObj) && curObj.length) {
-              const last = curObj[curObj.length - 1];
-              if (last && last.steps === undefined) last.steps = [];
-              target = last.steps || last;
-            }
-            if (target && m4) {
-              const o = {}; o[m4[1]] = _yamlVal(m4[2].trim());
-              target.push(o);
-              curSubObj = o;
-            }
-            continue;
-          }
-          const m4 = trimmed.match(/^(\w[\w_]*)\s*:\s*(.*)/);
-          if (m4 && curSubObj) {
-            curSubObj[m4[1]] = _yamlVal(m4[2].trim());
-          } else if (m4 && Array.isArray(curObj) && curObj.length) {
-            const last = curObj[curObj.length - 1];
-            if (last && Array.isArray(last.steps) && last.steps.length) {
-              last.steps[last.steps.length - 1][m4[1]] = _yamlVal(m4[2].trim());
-            }
-          }
-        }
-      }
-      return raw;
+    /* === New Recipe === */
+    function resetBuilderForNew() {
+      builderModel = {
+        name: '', description: '',
+        constants: {}, reader: {}, peak_detect: {},
+        wells: {},
+        phases: [{ name: 'A', label: 'Main', steps: [] }],
+      };
+      taR.value = '';
+      sel.value = '';
+      renderBuilder();
+      setMsg(msgR, 'New recipe — add wells and steps, then Save as new.', false, true);
     }
-
-    function _yamlVal(s) {
-      if (s === 'true') return true;
-      if (s === 'false') return false;
-      if (s === 'null' || s === '~' || s === '') return '';
-      if (/^-?\d+$/.test(s)) return parseInt(s, 10);
-      if (/^-?\d+\.\d+$/.test(s)) return parseFloat(s);
-      return s.replace(/^["']|["']$/g, '');
-    }
+    $('#cfg-new-recipe').addEventListener('click', resetBuilderForNew);
 
     /* === Visual Builder Rendering === */
     const paletteEl = $('#rb-step-palette');
