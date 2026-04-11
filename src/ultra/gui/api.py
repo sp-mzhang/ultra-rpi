@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -1232,11 +1233,11 @@ def create_api_router(
         return {'schemas': STEP_SCHEMAS, 'descriptions': STEP_DESCRIPTIONS}
 
     # ── FC Liquid Test Sequence ────────────────────────
-    _fc_seq_state: dict[str, Any] = {
+    _fc_seq_state = {
         'state': 'idle', 'step': '', 'thread': None,
     }
 
-    WELL_NAME_TO_LOC: dict[str, int] = {
+    WELL_NAME_TO_LOC = {
         'SERUM': 18,
         'S1': 21, 'S2': 22, 'S3': 23, 'S4': 24,
         'S5': 25, 'S6': 26, 'S7': 27, 'S8': 28, 'S9': 29,
@@ -1265,10 +1266,12 @@ def create_api_router(
                 detail=f'Unknown well: {src_name}',
             )
         pp4_loc = WELL_NAME_TO_LOC['PP4']
-
-        import threading
-
-        stm32 = app.get_stm32()
+        stm32 = _get_eng_stm32()
+        if stm32 is None:
+            raise HTTPException(
+                status_code=409,
+                detail='STM32 not connected',
+            )
 
         def _ok(r):
             if r is None:
