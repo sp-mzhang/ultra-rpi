@@ -2866,15 +2866,6 @@
       }, 500);
     }
 
-    $('#eng-fc-seq-stop').onclick = async () => {
-      if (seqStatus) seqStatus.textContent = 'ABORTING...';
-      try {
-        await fetch(
-          '/api/fc-liquid-sequence/stop',
-          { method: 'POST' },
-        );
-      } catch (_) {}
-    };
   }
 
   /* ---- FANS wiring ---- */
