@@ -1278,14 +1278,29 @@ def create_api_router(
                 return False
             if isinstance(r, bool):
                 return r
-            return r.get('error', 0xFF) == 0
+            return r.get('status') == 'OK'
 
         def _aborted():
             return stm32._abort_flag.is_set()
 
-        def _set(step_label: str):
+        def _set(step_label):
             _fc_seq_state['step'] = step_label
             LOG.info('FC liquid seq: %s', step_label)
+
+        def _check(r, label):
+            if _aborted():
+                return False
+            if not _ok(r):
+                LOG.error(
+                    'FC liquid seq FAILED at: %s  '
+                    'resp=%s', label, r,
+                )
+                _fc_seq_state['state'] = 'error'
+                _fc_seq_state['step'] = (
+                    f'FAILED: {label}'
+                )
+                return False
+            return True
 
         def _run():
             try:
@@ -1297,7 +1312,7 @@ def create_api_router(
                     cmd={'cmd': 'home_all'},
                     timeout_s=120.0,
                 )
-                if not _ok(r) or _aborted():
+                if not _check(r, 'Home all'):
                     return
 
                 _set('Tip pickup (slot 4)')
@@ -1308,13 +1323,14 @@ def create_api_router(
                     },
                     timeout_s=120.0,
                 )
-                if not _ok(r) or _aborted():
+                if not _check(r, 'Tip pickup'):
                     return
 
-                _set(
+                label = (
                     f'Aspirate {req.aspirate_vol_ul} uL '
-                    f'from {src_name}',
+                    f'from {src_name}'
                 )
+                _set(label)
                 r = stm32.smart_aspirate_at(
                     loc_id=src_loc,
                     volume_ul=int(req.aspirate_vol_ul),
@@ -1323,13 +1339,14 @@ def create_api_router(
                     air_slug_ul=40,
                     timeout_s=120.0,
                 )
-                if not _ok(r) or _aborted():
+                if not _check(r, label):
                     return
 
-                _set(
+                label = (
                     f'Dispense to PP4 @ '
-                    f'{req.cart_vel_ul_s} uL/s',
+                    f'{req.cart_vel_ul_s} uL/s'
                 )
+                _set(label)
                 r = stm32.cart_dispense_at(
                     loc_id=pp4_loc,
                     volume_ul=int(req.aspirate_vol_ul),
@@ -1337,13 +1354,14 @@ def create_api_router(
                     reasp_ul=12,
                     timeout_s=300.0,
                 )
-                if not r or _aborted():
+                if not _check(r, label):
                     return
 
-                _set(
+                label = (
                     f'Return remainder to {src_name} '
-                    f'(blowout)',
+                    f'(blowout)'
                 )
+                _set(label)
                 r = stm32.well_dispense_at(
                     loc_id=src_loc,
                     volume_ul=0,
@@ -1351,7 +1369,7 @@ def create_api_router(
                     blowout=True,
                     timeout_s=120.0,
                 )
-                if not r or _aborted():
+                if not _check(r, label):
                     return
 
                 _set('Tip return (slot 4)')
@@ -1362,7 +1380,7 @@ def create_api_router(
                     },
                     timeout_s=120.0,
                 )
-                if not _ok(r) or _aborted():
+                if not _check(r, 'Tip return'):
                     return
 
                 _set('Home all (final)')
