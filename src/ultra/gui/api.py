@@ -43,6 +43,14 @@ class YamlTextBody(BaseModel):
     yaml_text: str = ''
 
 
+class FcLiquidSeqRequest(BaseModel):
+    '''Request body for the FC liquid test sequence.'''
+    source_well: str = 'M1'
+    aspirate_vol_ul: float = 300
+    aspirate_speed_ul_s: float = 100
+    cart_vel_ul_s: float = 1.5
+
+
 def _machine_settings_effective_yaml(
         cfg: dict[str, Any],
 ) -> str:
@@ -1239,12 +1247,6 @@ def create_api_router(
         'PP1': 8, 'PP2': 9, 'PP3': 10, 'PP4': 11,
         'PP5': 12, 'PP6': 13, 'PP7': 14, 'PP8': 15,
     }
-
-    class FcLiquidSeqRequest(BaseModel):
-        source_well: str = 'M1'
-        aspirate_vol_ul: float = 300
-        aspirate_speed_ul_s: float = 100
-        cart_vel_ul_s: float = 1.5
 
     @router.post('/fc-liquid-sequence')
     async def fc_liquid_sequence_start(

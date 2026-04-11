@@ -2821,10 +2821,12 @@
           },
         );
         if (!r.ok) {
-          const e = await r.json();
+          const e = await r.json().catch(() => ({}));
+          const msg = typeof e.detail === 'string'
+            ? e.detail
+            : JSON.stringify(e.detail || e);
           if (seqStatus)
-            seqStatus.textContent =
-              'ERR: ' + (e.detail || r.status);
+            seqStatus.textContent = 'ERR: ' + msg;
           return;
         }
         if (seqStatus)
@@ -2832,7 +2834,8 @@
         pollSequenceStatus();
       } catch (e) {
         if (seqStatus)
-          seqStatus.textContent = 'ERR: ' + e;
+          seqStatus.textContent =
+            'ERR: ' + (e.message || e);
       }
     };
 
