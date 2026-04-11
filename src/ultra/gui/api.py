@@ -48,7 +48,7 @@ class FcLiquidSeqRequest(BaseModel):
     '''Request body for the FC liquid test sequence.'''
     source_well: str = 'M1'
     aspirate_vol_ul: float = 200
-    cart_vol_ul: float = 150
+    cart_vol_ul: float = 80
     aspirate_speed_ul_s: float = 80
     cart_vel_ul_s: float = 1.0
 
@@ -1390,14 +1390,20 @@ def create_api_router(
                 if not _check(r, label):
                     return
 
+                reasp = 12
+                remainder = int(
+                    req.aspirate_vol_ul
+                    - req.cart_vol_ul
+                    + reasp
+                )
                 label = (
-                    f'Return remainder to {src_name} '
-                    f'(blowout)'
+                    f'Return {remainder} uL to '
+                    f'{src_name} (blowout)'
                 )
                 _set(label)
                 r = stm32.well_dispense_at(
                     loc_id=src_loc,
-                    volume_ul=0,
+                    volume_ul=remainder,
                     speed_ul_s=100.0,
                     blowout=True,
                     timeout_s=120.0,
