@@ -47,9 +47,10 @@ class YamlTextBody(BaseModel):
 class FcLiquidSeqRequest(BaseModel):
     '''Request body for the FC liquid test sequence.'''
     source_well: str = 'M1'
-    aspirate_vol_ul: float = 300
-    aspirate_speed_ul_s: float = 100
-    cart_vel_ul_s: float = 1.5
+    aspirate_vol_ul: float = 200
+    cart_vol_ul: float = 150
+    aspirate_speed_ul_s: float = 80
+    cart_vel_ul_s: float = 1.0
 
 
 def _machine_settings_effective_yaml(
@@ -1334,6 +1335,29 @@ def create_api_router(
                 if not _check(r, 'Tip pickup'):
                     return
 
+                _set('LLD — detect cartridge Z')
+                from ultra.hw.stm32_interface import (
+                    Z_USTEPS_PER_MM,
+                )
+                lld_r = stm32.perform_lld(threshold=20)
+                cartridge_z = 0.0
+                if lld_r and lld_r.get('detected'):
+                    z_us = lld_r.get('z_position', 0)
+                    cartridge_z = z_us / Z_USTEPS_PER_MM
+                    LOG.info(
+                        'FC seq LLD: z=%d usteps '
+                        '= %.2f mm',
+                        z_us, cartridge_z,
+                    )
+                else:
+                    LOG.warning(
+                        'FC seq LLD not detected, '
+                        'using cartridge_z=0 (resp=%s)',
+                        lld_r,
+                    )
+                if _aborted():
+                    return
+
                 label = (
                     f'Aspirate {req.aspirate_vol_ul} uL '
                     f'from {src_name}'
@@ -1351,15 +1375,16 @@ def create_api_router(
                     return
 
                 label = (
-                    f'Dispense to PP4 @ '
-                    f'{req.cart_vel_ul_s} uL/s'
+                    f'Dispense {req.cart_vol_ul} uL '
+                    f'to PP4 @ {req.cart_vel_ul_s} uL/s'
                 )
                 _set(label)
                 r = stm32.cart_dispense_at(
                     loc_id=pp4_loc,
-                    volume_ul=int(req.aspirate_vol_ul),
+                    volume_ul=int(req.cart_vol_ul),
                     vel_ul_s=req.cart_vel_ul_s,
                     reasp_ul=12,
+                    cartridge_z=cartridge_z,
                     timeout_s=300.0,
                 )
                 if not _check(r, label):

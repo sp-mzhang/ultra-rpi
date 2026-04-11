@@ -2802,6 +2802,9 @@
         aspirate_vol_ul: parseFloat(
           $('#eng-fc-seq-asp-vol').value,
         ),
+        cart_vol_ul: parseFloat(
+          $('#eng-fc-seq-cart-vol').value,
+        ),
         aspirate_speed_ul_s: parseFloat(
           $('#eng-fc-seq-asp-speed').value,
         ),
