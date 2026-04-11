@@ -1315,6 +1315,14 @@ def create_api_router(
                 if not _check(r, 'Home all'):
                     return
 
+                _set('Pump init')
+                r = stm32.send_command_wait_done(
+                    cmd={'cmd': 'pump_init'},
+                    timeout_s=60.0,
+                )
+                if not _check(r, 'Pump init'):
+                    return
+
                 _set('Tip pickup (slot 4)')
                 r = stm32.send_command_wait_done(
                     cmd={
