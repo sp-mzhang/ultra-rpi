@@ -1450,4 +1450,15 @@ def create_api_router(
             'step': _fc_seq_state['step'],
         }
 
+    @router.post('/fc-liquid-sequence/stop')
+    async def fc_liquid_sequence_stop():
+        stm32 = _get_eng_stm32()
+        if stm32 is None:
+            return {'ok': False, 'detail': 'not connected'}
+        stm32.request_abort()
+        stm32.send_command(
+            cmd={'cmd': 'abort'}, timeout_s=3.0,
+        )
+        return {'ok': True}
+
     return router

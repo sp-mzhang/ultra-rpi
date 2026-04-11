@@ -2869,7 +2869,10 @@
     $('#eng-fc-seq-stop').onclick = async () => {
       if (seqStatus) seqStatus.textContent = 'ABORTING...';
       try {
-        await fetch('/api/abort', { method: 'POST' });
+        await fetch(
+          '/api/fc-liquid-sequence/stop',
+          { method: 'POST' },
+        );
       } catch (_) {}
     };
   }
