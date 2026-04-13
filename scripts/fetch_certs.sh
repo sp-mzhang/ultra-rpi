@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Download device IoT certificates from S3 to the local RPi.
+# Download fleet-provisioning claim certificates from S3 to the local RPi.
 #
 # Usage (run on the RPi):
-#   sudo ./scripts/fetch_certs.sh [device_sn]
+#   ./scripts/fetch_certs.sh [device_sn]
 #
 # If device_sn is omitted it is read from /etc/ultra/machine.yaml,
 # then falls back to config/ultra_default.yaml.
@@ -12,10 +12,8 @@
 # Into:
 #   /etc/ultra/certs/
 #
-# After downloading, files are renamed to what iot_client.py expects:
-#   claim.cert.pem   -> device.pem.crt
-#   claim.private.key -> device.pem.key
-#   root-CA.crt       -> AmazonRootCA1.pem
+# These are claim certs used for fleet provisioning. The provisioner
+# uses them to generate unique device certs (device.pem.crt, etc.).
 #
 # Environment:
 #   ULTRA_CONFIG_BUCKET  (default: siphox-ultra-config)
@@ -66,23 +64,6 @@ fi
 sudo mkdir -p "${CERT_DIR}"
 sudo cp "${TMP_DIR}"/* "${CERT_DIR}/"
 echo "  downloaded ${DL_COUNT} file(s)"
-
-# --- Rename to match iot_client.py expectations ---------------------------
-declare -A RENAME_MAP=(
-  ["claim.cert.pem"]="device.pem.crt"
-  ["claim.private.key"]="device.pem.key"
-  ["root-CA.crt"]="AmazonRootCA1.pem"
-)
-
-for src_name in "${!RENAME_MAP[@]}"; do
-  dst_name="${RENAME_MAP[$src_name]}"
-  src_path="${CERT_DIR}/${src_name}"
-  dst_path="${CERT_DIR}/${dst_name}"
-  if [[ -f "$src_path" && ! -f "$dst_path" ]]; then
-    sudo cp "$src_path" "$dst_path"
-    echo "  mapped ${src_name} -> ${dst_name}"
-  fi
-done
 
 # --- Lock down permissions ------------------------------------------------
 CURRENT_USER="$(logname 2>/dev/null || whoami)"
