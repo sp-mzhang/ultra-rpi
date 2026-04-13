@@ -6,7 +6,7 @@ requires-python = "==3.11.9"
 dependencies = [
     "analysis-tools",
     "analysis-lib",
-    "dollopclient==0.12.14",
+    "dollopclient>=0.12.13",
     "lmfit>=1.3",
     "pyserial>=3.5",
     "fastapi>=0.110",
@@ -42,10 +42,14 @@ packages = ["src/ultra"]
 
 [tool.uv]
 managed = true
+override-dependencies = [
+    "dollopclient @ git+ssh://git@github.com/siphox-inc/dollop-db.git@dollopclient_v0.12.13#subdirectory=dollopclient",
+]
 
 [tool.uv.sources]
 analysis-tools = { git = "ssh://git@github.com/siphox-inc/sway.git", subdirectory = "analysis_tools", tag = "v5.1.0" }
 analysis-lib = { git = "ssh://git@github.com/siphox-inc/analysis-model-store.git", subdirectory = "src/packages/analysis_lib", rev = "analysis-lib_v1.0.5" }
+dollopclient = { git = "ssh://git@github.com/siphox-inc/dollop-db.git", subdirectory = "dollopclient", rev = "dollopclient_v0.12.13" }
 
 [tool.hatch.metadata]
 allow-direct-references = true
