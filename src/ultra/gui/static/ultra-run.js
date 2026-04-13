@@ -33,11 +33,15 @@
     const prev = selectEl.value;
     selectEl.innerHTML = '';
     (list || []).forEach((r) => {
-      const o = document.createElement('option');
-      o.value = r; o.textContent = r;
-      selectEl.appendChild(o);
+      const opt = document.createElement('option');
+      opt.value = r.file;
+      const src = r.source ? ` (${r.source})` : '';
+      opt.textContent = r.name + src;
+      selectEl.appendChild(opt);
     });
-    if (prev && list && list.includes(prev)) {
+    if (prev && [...selectEl.options].some(
+      (o) => o.value === prev,
+    )) {
       selectEl.value = prev;
     }
   }
