@@ -44,9 +44,9 @@ def create_protocol_router(app: 'Application') -> APIRouter:
         result = snap.to_dict()
         result['is_running'] = runner.is_running
         result['is_paused'] = runner.is_paused
-        result['recipe'] = (
-            runner.recipe.name if runner.recipe else ''
-        )
+        result['recipe'] = getattr(
+            runner, '_recipe_slug', '',
+        ) or (runner.recipe.name if runner.recipe else '')
         result['calibration_version'] = getattr(
             runner, '_calibration_version', '',
         )
@@ -139,6 +139,7 @@ def create_protocol_router(app: 'Application') -> APIRouter:
                 )
         runner.stm32 = stm32
         runner._calibration_version = req.calibration_version
+        runner._recipe_slug = req.recipe
 
         def _hw_init_and_run():
             stm32.send_command_wait_done(
