@@ -6,7 +6,6 @@ requires-python = ">=3.11"
 dependencies = [
     "analysis-tools",
     "assay-3rd-party-validation",
-    "analysis-lib",
     "pyserial>=3.5",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
@@ -45,7 +44,6 @@ managed = true
 [tool.uv.sources]
 analysis-tools = { git = "ssh://git@github.com/siphox-inc/sway.git", branch = "main", subdirectory = "analysis_tools" }
 assay-3rd-party-validation = { git = "ssh://git@github.com/siphox-inc/analysis-model-store.git", branch = "main", subdirectory = "src/analyses/assay_3rd_party_validation" }
-analysis-lib = { git = "ssh://git@github.com/siphox-inc/analysis-model-store.git", branch = "main", subdirectory = "src/packages/analysis_lib" }
 
 [tool.hatch.metadata]
 allow-direct-references = true
