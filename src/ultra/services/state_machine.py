@@ -193,6 +193,18 @@ class UltraStateMachine:
                     f'IoT publish failed: {err}',
                 )
 
+    def _schedule_cartridge_inserted(self) -> None:
+        '''Publish cartridge_inserted after a 5 s delay.
+
+        Matches sway behaviour: drawer_open fires immediately,
+        cartridge_inserted follows on a daemon timer thread.
+        '''
+        threading.Timer(
+            5.0,
+            self._publish_event,
+            args=('cartridge_inserted',),
+        ).start()
+
     def _apply_iot_config_to_env(self) -> None:
         '''Bridge YAML iot config into env vars.
 
@@ -613,10 +625,12 @@ class UltraStateMachine:
         '''Wait for cartridge load and drawer close.'''
         self._set_led(LED_PROGRESS, stage=1)
         self._publish_event('drawer_open')
+        self._schedule_cartridge_inserted()
         LOG.info('Waiting for cartridge load + close')
         self.drawer_closed_event.clear()
         await self.drawer_closed_event.wait()
         LOG.info('Drawer closed')
+        self._publish_event('drawer_closed')
         await asyncio.sleep(5.0)
         self._set_state(SystemState.SELF_CHECK)
 
@@ -637,6 +651,8 @@ class UltraStateMachine:
         )
         self.drawer_opened_event.clear()
         await self.drawer_opened_event.wait()
+        self._publish_event('drawer_open')
+        self._schedule_cartridge_inserted()
         self._set_state(
             SystemState.AWAITING_PROTOCOL_START,
         )
@@ -651,6 +667,7 @@ class UltraStateMachine:
         self.drawer_closed_event.clear()
         await self.drawer_closed_event.wait()
         LOG.info('Drawer closed -- starting protocol')
+        self._publish_event('drawer_closed')
         await asyncio.sleep(8.0)
         self._set_state(SystemState.RUNNING_PROTOCOL)
 
