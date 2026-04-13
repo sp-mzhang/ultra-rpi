@@ -47,8 +47,12 @@
   }
 
   async function loadRecipes() {
-    const list = await fetchRecipeList();
-    _fillSelect(elRecipe, list);
+    try {
+      const list = await fetchRecipeList();
+      _fillSelect(elRecipe, list);
+    } catch (e) {
+      console.error('loadRecipes failed:', e);
+    }
   }
 
   async function loadQuickRunDefaults() {
