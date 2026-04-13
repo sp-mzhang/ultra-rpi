@@ -2,7 +2,7 @@
 name = "ultra-rpi"
 version = "0.1.0"
 description = "RPi controller for Ultra STM32 blood-analysis hardware"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "assay-3rd-party-validation",
     "pyserial>=3.5",
