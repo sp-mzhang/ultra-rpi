@@ -357,9 +357,57 @@ class EgressService:
         )
         self._update_dollop_run(fresh, ts)
         self._check_rungroup_complete(fresh)
+        self._cleanup_local(fresh)
         self._prev_rowid = None
         self._num_egressed += 1
         self._process_recovery()
+
+    # ----------------------------------------------------------
+    # post-upload cleanup
+    # ----------------------------------------------------------
+
+    def _cleanup_local(
+            self, tup: edb.EgressTuple,
+    ) -> None:
+        '''Remove local run data after successful egress.
+
+        Deletes the run directory, removes the DB row, and
+        cleans up the rungroup directory if now empty.
+        '''
+        run_dir = tup.run_dir_path
+        if run_dir and op.isdir(run_dir):
+            try:
+                shutil.rmtree(run_dir)
+                LOG.info(
+                    'Deleted local run dir: %s',
+                    run_dir,
+                )
+            except OSError as err:
+                LOG.warning(
+                    'Failed to delete run dir %s: %s',
+                    run_dir, err,
+                )
+
+        rg_dir = tup.rungroup_dir_path
+        if rg_dir and op.isdir(rg_dir):
+            remaining = [
+                e for e in os.listdir(rg_dir)
+                if op.isdir(op.join(rg_dir, e))
+            ]
+            if not remaining:
+                try:
+                    shutil.rmtree(rg_dir)
+                    LOG.info(
+                        'Deleted empty rungroup dir: %s',
+                        rg_dir,
+                    )
+                except OSError as err:
+                    LOG.warning(
+                        'Failed to delete rungroup dir '
+                        '%s: %s', rg_dir, err,
+                    )
+
+        self._db.clear_egressed()
 
     # ----------------------------------------------------------
     # egress one run
