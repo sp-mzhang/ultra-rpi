@@ -248,10 +248,19 @@ class UltraStateMachine:
         LOG.info('Ultra state machine exited')
 
     async def _state_initializing(self) -> None:
-        '''Initialize hardware and check connectivity.'''
+        '''Initialize hardware and check connectivity.
+
+        Routes through CLOUD_REGISTRATION when an IoT
+        client was provided; otherwise skips to IDLE.
+        '''
         self.chip_id = self._default_chip_id
         LOG.info('Initialization complete')
-        self._set_state(SystemState.IDLE)
+        if self._iot_client is not None:
+            self._set_state(
+                SystemState.CLOUD_REGISTRATION,
+            )
+        else:
+            self._set_state(SystemState.IDLE)
 
     async def _state_wifi_provisioning(self) -> None:
         '''Wait for WiFi to connect.
@@ -275,11 +284,23 @@ class UltraStateMachine:
         )
 
     async def _state_cloud_registration(self) -> None:
-        '''Cloud registration placeholder.'''
-        LOG.info('Cloud registration (placeholder)...')
+        '''Register with cloud via IoT client.
+
+        Publishes a device_ready event so the cloud knows
+        this device is online, then transitions to IDLE.
+        '''
+        LOG.info('Cloud registration...')
         if self._iot_client is not None:
-            self._publish_event('device_ready')
-        await asyncio.sleep(1.0)
+            try:
+                self._publish_event('device_ready')
+                LOG.info(
+                    'Cloud registration: device_ready sent',
+                )
+            except Exception as exc:
+                LOG.warning(
+                    'Cloud registration publish failed: %s',
+                    exc,
+                )
         self._set_state(SystemState.IDLE)
 
     async def _state_idle(self) -> None:

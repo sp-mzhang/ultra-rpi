@@ -34,7 +34,7 @@ gui:
   port: 8080
 
 iot:
-  endpoint: ""
+  endpoint: av6fq1kv2yjq0-ats.iot.us-east-1.amazonaws.com
   cert_dir: /etc/ultra/certs/
 
 egress:
