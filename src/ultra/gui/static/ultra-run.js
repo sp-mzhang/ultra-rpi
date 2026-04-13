@@ -105,6 +105,9 @@
         elRecipe.value = s.recipe;
         if (s.is_running) elLabel.textContent = s.recipe;
       }
+      if (s.calibration_version) {
+        elCalib.value = s.calibration_version;
+      }
       if (elMachine && s.machine_name) {
         elMachine.textContent = s.machine_name;
       }
@@ -449,6 +452,13 @@
   function renderAnalysisResults(data) {
     if (!elAnalysisModal || !elAnalysisBody) return;
     const analytes = data.analytes || [];
+    if (data.error) {
+      elAnalysisBody.innerHTML =
+        '<tr><td colspan="6" style="color:#f87171">'
+        + 'Analysis error: ' + escHtml(data.error) + '</td></tr>';
+      elAnalysisModal.hidden = false;
+      return;
+    }
     if (!analytes.length) return;
     elAnalysisBody.innerHTML = '';
     analytes.forEach((a) => {
@@ -575,6 +585,13 @@
     await Promise.all([loadRecipes(), loadCalibVersions()]);
     await loadQuickRunDefaults();
     await loadStatus();
+
+    if (!state.isRunning && elRecipe.value === '') {
+      const crpOpt = [...elRecipe.options].find(
+        (o) => o.value.startsWith('crp'),
+      );
+      if (crpOpt) elRecipe.value = crpOpt.value;
+    }
     connectWS();
   };
 })();

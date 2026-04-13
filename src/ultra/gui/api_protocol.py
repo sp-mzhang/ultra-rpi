@@ -47,6 +47,9 @@ def create_protocol_router(app: 'Application') -> APIRouter:
         result['recipe'] = (
             runner.recipe.name if runner.recipe else ''
         )
+        result['calibration_version'] = getattr(
+            runner, '_calibration_version', '',
+        )
         result['machine_name'] = app.config.get(
             'machine_name', '',
         )

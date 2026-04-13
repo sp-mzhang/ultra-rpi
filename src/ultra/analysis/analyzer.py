@@ -156,8 +156,31 @@ class AnalysisService:
         self._calib_dir = op.join(calib_cache, assay, version)
         self._chip_id = chip_id
 
+    def _ensure_calib_cached(self) -> None:
+        '''Sync calibration files from S3 if not already cached.'''
+        check = op.join(self._calib_dir, 'analysis_config.yaml')
+        if op.isfile(check):
+            return
+        try:
+            from ultra.services.config_store import (
+                sync_calibration_version,
+            )
+            paths = sync_calibration_version(
+                self._assay, self._version,
+            )
+            LOG.info(
+                'Synced %d calibration files for %s/%s',
+                len(paths), self._assay, self._version,
+            )
+        except Exception as exc:
+            LOG.warning(
+                'Failed to sync calibration from S3: %s',
+                exc,
+            )
+
     def _load_calib_config(self) -> dict[str, Any]:
         '''Load analysis_config.yaml from calibration dir.'''
+        self._ensure_calib_cached()
         path = op.join(self._calib_dir, 'analysis_config.yaml')
         if not op.isfile(path):
             raise FileNotFoundError(

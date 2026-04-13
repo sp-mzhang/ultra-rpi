@@ -1311,7 +1311,12 @@ class TimingMarkerStep(StepExecutor):
 
         _emit_timing_marker(runner, label, event_type)
 
+        LOG.info(
+            'TimingMarker %s: trigger_analysis=%r',
+            label, trigger,
+        )
         if trigger:
+            LOG.info('Calling runner.trigger_analysis()')
             runner.trigger_analysis()
 
         return True

@@ -894,8 +894,7 @@ class ProtocolRunner:
         '''Run concentration analysis in a background thread.
 
         Called when a ``timing_marker`` step has
-        ``trigger_analysis: true``. Launches analysis
-        asynchronously so it does not block the protocol.
+        ``trigger_analysis: true``.
         '''
         import threading
 
@@ -927,6 +926,7 @@ class ProtocolRunner:
         def _run() -> None:
             try:
                 from ultra.analysis import run_analysis
+                LOG.info('analysis-worker: starting')
                 result = run_analysis(
                     run_dir=run_dir,
                     assay=assay,
@@ -947,8 +947,18 @@ class ProtocolRunner:
                         'Analysis returned no results: %s',
                         result.error,
                     )
-            except Exception:
+                    self._event_bus.emit_sync(
+                        'analysis_complete',
+                        {'analytes': [], 'run_dir': run_dir,
+                         'error': result.error},
+                    )
+            except Exception as exc:
                 LOG.exception('Background analysis failed')
+                self._event_bus.emit_sync(
+                    'analysis_complete',
+                    {'analytes': [], 'run_dir': run_dir,
+                     'error': str(exc)},
+                )
 
         t = threading.Thread(
             target=_run, daemon=True,
