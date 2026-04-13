@@ -399,7 +399,7 @@ class AnalysisService:
             self._run_validation(meas, slope_units)
         )
 
-        analyte_params_list = parse_fit_protocol_sheet(
+        analyte_params_list, _ = parse_fit_protocol_sheet(
             fitting_sheet,
         )
 
