@@ -5,11 +5,17 @@ description = "RPi controller for Ultra STM32 blood-analysis hardware"
 requires-python = ">=3.11"
 dependencies = [
     "analysis-tools",
+    "assay-3rd-party-validation",
+    "analysis-lib",
     "pyserial>=3.5",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.6",
     "pyyaml>=6.0",
     "numpy>=1.24",
+    "scipy>=1.11",
+    "pandas>=2.1",
+    "openpyxl>=3.1",
     "boto3>=1.34",
     "opencv-python-headless>=4.8",
     "paho-mqtt>=2.0",
@@ -38,6 +44,11 @@ managed = true
 
 [tool.uv.sources]
 analysis-tools = { git = "ssh://git@github.com/siphox-inc/sway.git", branch = "main", subdirectory = "analysis_tools" }
+assay-3rd-party-validation = { git = "ssh://git@github.com/siphox-inc/analysis-model-store.git", branch = "main", subdirectory = "src/analyses/assay_3rd_party_validation" }
+analysis-lib = { git = "ssh://git@github.com/siphox-inc/analysis-model-store.git", branch = "main", subdirectory = "src/packages/analysis_lib" }
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [[tool.uv.index]]
 name = "siphox"

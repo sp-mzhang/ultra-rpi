@@ -236,3 +236,165 @@ def sync_recipes_and_shared_from_s3() -> None:
     for s in slugs:
         fetch_recipe_to_cache(s, force=True)
     fetch_shared_common_to_cache(force=True)
+
+
+# ------------------------------------------------------------------ #
+# Calibration data helpers                                           #
+# ------------------------------------------------------------------ #
+
+CALIB_PREFIX = 'calibration_data/'
+CALIB_FILES = [
+    'analysis_config.yaml',
+    'fitting_protocol_sheet.xlsx',
+    'validation_rules_sheet.xlsx',
+]
+
+
+def _calib_key(assay: str, version: str, filename: str) -> str:
+    return f'{CALIB_PREFIX}{assay}/{version}/{filename}'
+
+
+def list_calibration_assays() -> list[str]:
+    '''Return sorted assay names under calibration_data/.'''
+    assays: set[str] = set()
+    try:
+        paginator = _get_s3().get_paginator('list_objects_v2')
+        for page in paginator.paginate(
+                Bucket=config_bucket(),
+                Prefix=CALIB_PREFIX,
+                Delimiter='/',
+        ):
+            for cp in page.get('CommonPrefixes', []):
+                prefix = cp['Prefix']
+                parts = prefix.rstrip('/').split('/')
+                if len(parts) >= 2:
+                    assays.add(parts[1])
+    except Exception as exc:
+        LOG.warning('list_calibration_assays: %s', exc)
+    return sorted(assays)
+
+
+def list_calibration_versions(assay: str) -> list[str]:
+    '''Return sorted version names for a given assay.'''
+    versions: set[str] = set()
+    prefix = f'{CALIB_PREFIX}{assay}/'
+    try:
+        paginator = _get_s3().get_paginator('list_objects_v2')
+        for page in paginator.paginate(
+                Bucket=config_bucket(),
+                Prefix=prefix,
+                Delimiter='/',
+        ):
+            for cp in page.get('CommonPrefixes', []):
+                p = cp['Prefix']
+                parts = p.rstrip('/').split('/')
+                if len(parts) >= 3:
+                    versions.add(parts[2])
+    except Exception as exc:
+        LOG.warning('list_calibration_versions(%s): %s', assay, exc)
+    return sorted(versions)
+
+
+def list_calibration_tree() -> dict[str, list[str]]:
+    '''Return {assay: [versions]} for all calibration data.'''
+    tree: dict[str, set[str]] = {}
+    try:
+        paginator = _get_s3().get_paginator('list_objects_v2')
+        for page in paginator.paginate(
+                Bucket=config_bucket(),
+                Prefix=CALIB_PREFIX,
+        ):
+            for obj in page.get('Contents', []):
+                parts = obj['Key'].split('/')
+                if len(parts) >= 4:
+                    assay, ver = parts[1], parts[2]
+                    tree.setdefault(assay, set()).add(ver)
+    except Exception as exc:
+        LOG.warning('list_calibration_tree: %s', exc)
+    return {a: sorted(vs) for a, vs in sorted(tree.items())}
+
+
+def fetch_calibration_file(
+        assay: str,
+        version: str,
+        filename: str,
+        force: bool = False,
+) -> str | None:
+    '''Download a calibration file to cache; return path or None.'''
+    key = _calib_key(assay, version, filename)
+    path = cache_path_for_key(key)
+    if not force and _cache_fresh(path):
+        return path
+    raw = fetch_object_bytes(key)
+    if raw is None:
+        return None
+    _write_cache(key, raw)
+    return path
+
+
+def fetch_calibration_file_bytes(
+        assay: str,
+        version: str,
+        filename: str,
+) -> bytes | None:
+    '''Download raw bytes for a calibration file.'''
+    return fetch_object_bytes(
+        _calib_key(assay, version, filename),
+    )
+
+
+def put_calibration_file(
+        assay: str,
+        version: str,
+        filename: str,
+        data: bytes,
+        content_type: str = 'application/octet-stream',
+) -> None:
+    '''Upload a calibration file to S3 and update cache.'''
+    key = _calib_key(assay, version, filename)
+    put_object_bytes(key, data, content_type=content_type)
+    _write_cache(key, data)
+
+
+def delete_calibration_version(assay: str, version: str) -> None:
+    '''Delete all calibration files for a version from S3 and cache.'''
+    prefix = f'{CALIB_PREFIX}{assay}/{version}/'
+    try:
+        paginator = _get_s3().get_paginator('list_objects_v2')
+        keys: list[str] = []
+        for page in paginator.paginate(
+                Bucket=config_bucket(), Prefix=prefix,
+        ):
+            for obj in page.get('Contents', []):
+                keys.append(obj['Key'])
+        if keys:
+            _get_s3().delete_objects(
+                Bucket=config_bucket(),
+                Delete={
+                    'Objects': [{'Key': k} for k in keys],
+                },
+            )
+        for k in keys:
+            path = cache_path_for_key(k)
+            if os.path.exists(path):
+                os.remove(path)
+    except Exception as exc:
+        LOG.warning(
+            'delete_calibration_version(%s/%s): %s',
+            assay, version, exc,
+        )
+        raise
+
+
+def sync_calibration_version(
+        assay: str, version: str,
+) -> list[str]:
+    '''Download all files for a calibration version. Return paths.'''
+    paths: list[str] = []
+    for fname in CALIB_FILES:
+        p = fetch_calibration_file(
+            assay, version, fname, force=True,
+        )
+        if p:
+            paths.append(p)
+    return paths

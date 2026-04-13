@@ -113,6 +113,7 @@ class UltraStateMachine:
 
         self.protocol_trigger = asyncio.Event()
         self.protocol_done = asyncio.Event()
+        self._last_analysis_result: dict[str, Any] | None = None
 
         startup = config.get('startup', {})
         self._skip_nfc = startup.get(
@@ -308,11 +309,22 @@ class UltraStateMachine:
             return
         self._notify_device_ready_to_cloud()
 
+    def _on_analysis_complete(self, data: dict) -> None:
+        '''Store analysis results for cloud publishing.'''
+        self._last_analysis_result = data
+        LOG.info(
+            'Analysis result captured for cloud upload',
+        )
+
     async def run(self) -> None:
         '''Main state machine loop.'''
         LOG.info('Starting Ultra state machine...')
         self._running = True
         self._set_state(SystemState.INITIALIZING)
+        self._event_bus.on(
+            'analysis_complete',
+            self._on_analysis_complete,
+        )
 
         while self._running:
             try:
@@ -705,8 +717,23 @@ class UltraStateMachine:
         self._set_state(SystemState.PROTOCOL_COMPLETE)
 
     async def _state_protocol_complete(self) -> None:
-        '''Post-protocol: publish event, advance to upload.'''
+        '''Post-protocol: publish events, advance to upload.'''
         self._publish_event('test_completed')
+
+        if self._last_analysis_result:
+            analytes = self._last_analysis_result.get(
+                'analytes', [],
+            )
+            self._publish_event(
+                'analysis_complete',
+                analyte_data=analytes,
+            )
+            LOG.info(
+                'Analysis results published to cloud: '
+                '%d analytes', len(analytes),
+            )
+            self._last_analysis_result = None
+
         LOG.info('Protocol complete')
         self._set_state(SystemState.DATA_UPLOAD)
 

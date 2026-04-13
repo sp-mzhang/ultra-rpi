@@ -720,6 +720,7 @@ class ProtocolRunner:
                 )
             )
             self._run_dir = run_dir
+            self._chip_id = chip_id
             LOG.info('Run data dir: %s', run_dir)
         except Exception as exc:
             LOG.warning(
@@ -890,15 +891,70 @@ class ProtocolRunner:
         )
 
     def trigger_analysis(self) -> None:
-        '''Stub for analysis trigger at a timing marker.
+        '''Run concentration analysis in a background thread.
 
         Called when a ``timing_marker`` step has
-        ``trigger_analysis: true``. Currently logs and
-        returns; fill in when analysis integration is ready.
+        ``trigger_analysis: true``. Launches analysis
+        asynchronously so it does not block the protocol.
         '''
-        LOG.info(
-            'trigger_analysis called (stub -- no-op)',
+        import threading
+
+        run_dir = self._run_dir
+        if not run_dir:
+            LOG.warning(
+                'trigger_analysis: no run_dir set',
+            )
+            return
+
+        cfg = self._config or {}
+        analysis_cfg = cfg.get('analysis', {})
+        assay = analysis_cfg.get('default_assay', 'crp')
+        version = analysis_cfg.get(
+            'default_calibration_version', 'v1.0',
         )
+
+        calib_ver = getattr(self, '_calibration_version', '')
+        if calib_ver and '/' in calib_ver:
+            assay, version = calib_ver.split('/', 1)
+
+        chip_id = getattr(self, '_chip_id', '')
+
+        LOG.info(
+            'trigger_analysis: %s/%s on %s (chip=%s)',
+            assay, version, run_dir, chip_id or 'none',
+        )
+
+        def _run() -> None:
+            try:
+                from ultra.analysis import run_analysis
+                result = run_analysis(
+                    run_dir=run_dir,
+                    assay=assay,
+                    version=version,
+                    chip_id=chip_id,
+                )
+                if result.ok:
+                    self._event_bus.emit_sync(
+                        'analysis_complete',
+                        result.to_dict(),
+                    )
+                    LOG.info(
+                        'Analysis complete: %d analytes',
+                        len(result.analytes),
+                    )
+                else:
+                    LOG.warning(
+                        'Analysis returned no results: %s',
+                        result.error,
+                    )
+            except Exception:
+                LOG.exception('Background analysis failed')
+
+        t = threading.Thread(
+            target=_run, daemon=True,
+            name='analysis-worker',
+        )
+        t.start()
 
     def collect_pressure(
             self,

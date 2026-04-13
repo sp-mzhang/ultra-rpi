@@ -2157,3 +2157,77 @@ textarea {
 .mc-legend-y { color: #22c55e; font-weight: 600; }
 .mc-legend-z { color: #f59e0b; font-weight: 600; }
 .mc-legend-stall { color: var(--red, #d44); font-weight: 600; }
+
+/* Calibration panel */
+.cfg-calib-files { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.cfg-calib-file-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: var(--panel-bg, #1e293b);
+  border-radius: 4px;
+}
+.cfg-calib-file-row span { flex: 1; font-size: 0.85rem; }
+
+/* Analysis results modal */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9000;
+  backdrop-filter: blur(3px);
+}
+.modal-overlay[hidden] { display: none; }
+.modal-dialog {
+  background: var(--panel-bg, #1e293b);
+  border: 1px solid var(--border, #334155);
+  border-radius: 10px;
+  min-width: 420px; max-width: 600px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+  animation: modalIn 0.2s ease-out;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(-20px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--border, #334155);
+}
+.modal-header h2 { margin: 0; font-size: 1.05rem; }
+.modal-close {
+  background: none; border: none; color: var(--text-dim, #94a3b8);
+  font-size: 1.5rem; cursor: pointer; line-height: 1; padding: 0 4px;
+}
+.modal-close:hover { color: #fff; }
+.modal-body { padding: 14px 18px; }
+.modal-footer {
+  padding: 10px 18px 14px;
+  display: flex; justify-content: flex-end;
+  border-top: 1px solid var(--border, #334155);
+}
+
+/* Analysis results table */
+.analysis-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.analysis-table th,
+.analysis-table td {
+  padding: 8px 12px; text-align: left;
+  border-bottom: 1px solid var(--border, #334155);
+}
+.analysis-table th {
+  color: var(--text-dim, #94a3b8);
+  font-weight: 600; font-size: 0.75rem;
+  text-transform: uppercase;
+}
+.analysis-table .out-of-range {
+  color: var(--red, #ef4444); font-weight: 600;
+}
+.analysis-table .in-range {
+  color: var(--green, #22c55e);
+}
+.analysis-table .validation-excluded td {
+  opacity: 0.55; text-decoration: line-through;
+}

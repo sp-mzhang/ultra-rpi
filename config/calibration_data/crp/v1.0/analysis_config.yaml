@@ -1,0 +1,36 @@
+# Calibration Version: v1.0 (Default)
+# Analysis configuration for CRP protocol
+parameters:
+  # Version metadata
+  version: "1.0"
+  version_name: "Default"
+  version_date: "2026-01-29"
+
+  # Analysis settings
+  desc: "CRP v1.0 calibration"
+  ignore_parameter_errors: true
+  lookup_concentrations_in_sample_bank: false
+  make_dose_response_plots: false
+  make_signal_plots: false
+  make_validation_plots: false
+  output_level: Summary
+
+  # Peak processing method
+  peak_processing: Peak Difference
+  slope_units: pm/min
+  stitch_th: 0.3
+
+  # Required Excel files (in same directory)
+  validation_rules_sheet: validation_rules_sheet.xlsx
+  fitting_protocol_sheet: fitting_protocol_sheet.xlsx
+
+  # Sensor group configuration for chip analysis
+  # Maps capture reagent codes to sensor channels
+  # Updated to match dollop fetch from runs 363020-363072
+  groups:
+    'Temp Ctrl': [1]
+    'RC0343': [3, 14]
+    'RC0358': [4, 11]
+    'RC0360': [5, 12]
+    'RC0359': [6, 13]
+    'RC0338': [7, 10]

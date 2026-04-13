@@ -262,6 +262,7 @@ def create_app(application: 'Application') -> FastAPI:
         'centrifuge_rpm', 'stm32_error',
         'egress_started', 'egress_done',
         'egress_error',
+        'analysis_complete',
     ]
 
     for event_name in _BROADCAST_EVENTS:

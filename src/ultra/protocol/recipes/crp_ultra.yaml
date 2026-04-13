@@ -205,7 +205,7 @@ phases:
 
       # Hydrophilic Coating
       - type: reagent_transfer
-        label: Hydrophilic
+        label: cart_dispense_Hydrophilic
         source: S7
         target: PP4
         asp_vol: 110
@@ -223,7 +223,7 @@ phases:
 
       # DI Water
       - type: reagent_transfer
-        label: DI Water
+        label: cart_dispense_DI_Water
         source: M3
         target: PP4
         asp_vol: 210
@@ -236,7 +236,7 @@ phases:
 
       # PBST (simplified from slow+fast accel-boost)
       - type: reagent_transfer
-        label: PBST
+        label: cart_dispense_PBST
         source: M5
         target: PP4
         asp_vol: 220
@@ -249,7 +249,7 @@ phases:
 
       # Lane4 Buffer 4.23 (first)
       - type: reagent_transfer
-        label: Lane4 Buffer (1st)
+        label: cart_dispense_Lane4Buffer_1
         source: S9
         target: PP4
         asp_vol: 90
@@ -262,7 +262,7 @@ phases:
 
       # Dilution7 (750x from M9)
       - type: reagent_transfer
-        label: Dilution7 (750x)
+        label: cart_dispense_Dilution7
         source: M9
         target: PP4
         asp_vol: 150
@@ -275,7 +275,7 @@ phases:
 
       # Lane4 Buffer 4.23 (second)
       - type: reagent_transfer
-        label: Lane4 Buffer (2nd)
+        label: cart_dispense_Lane4Buffer_2
         source: S9
         target: PP4
         asp_vol: 90
@@ -296,7 +296,7 @@ phases:
         pull_vol: 200
 
       - type: reagent_transfer_bf
-        label: GNP Dispense
+        label: cart_dispense_GNP
         source: M7
         target: PP4
         asp_vol: 200
@@ -311,6 +311,15 @@ phases:
         sleep_s: 0
         return_speed: 100.0
         skip_aspirate: true
+
+      - type: timing_marker
+        label: Analysis_Trigger_Post_SA-GNP
+        event_type: start
+        trigger_analysis: true
+
+      - type: timing_marker
+        label: Analysis_Trigger_Post_SA-GNP
+        event_type: stop
 
       - type: tip_return
         label: Return Tip 6

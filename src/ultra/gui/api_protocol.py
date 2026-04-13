@@ -23,6 +23,7 @@ LOG = logging.getLogger(__name__)
 class RunRequest(BaseModel):
     '''Request body for starting a protocol run.'''
     recipe: str
+    calibration_version: str = ''
     chip_id: str = ''
     note: str = ''
 
@@ -134,6 +135,7 @@ def create_protocol_router(app: 'Application') -> APIRouter:
                     detail='Failed to connect to STM32',
                 )
         runner.stm32 = stm32
+        runner._calibration_version = req.calibration_version
 
         def _hw_init_and_run():
             stm32.send_command_wait_done(

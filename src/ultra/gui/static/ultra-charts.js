@@ -21,8 +21,8 @@
       };
     }
     let color = 'rgba(255,255,255,0.5)';
-    if (evtType === 'start') color = 'rgba(255,80,80,0.7)';
-    else if (evtType === 'stop') color = 'rgba(80,140,255,0.7)';
+    if (evtType === 'start') color = 'rgba(80,200,80,0.7)';
+    else if (evtType === 'stop') color = 'rgba(255,80,80,0.7)';
     sgChart.options.plugins.annotation
       .annotations[id] = {
       type: 'line',

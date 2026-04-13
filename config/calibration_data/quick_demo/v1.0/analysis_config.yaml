@@ -1,0 +1,31 @@
+# Calibration Version: v1.0 (Quick Demo)
+# Synthetic calibration for testing the local analysis pipeline.
+parameters:
+  version: "1.0"
+  version_name: "Quick Demo"
+  version_date: "2026-04-10"
+
+  desc: "Quick demo v1.0 — synthetic calibration for pipeline testing"
+  ignore_parameter_errors: true
+  lookup_concentrations_in_sample_bank: false
+  make_dose_response_plots: false
+  make_signal_plots: false
+  make_validation_plots: false
+  output_level: Summary
+
+  peak_processing: Peak Difference
+  slope_units: pm/min
+  stitch_th: 0.3
+
+  validation_rules_sheet: validation_rules_sheet.xlsx
+  fitting_protocol_sheet: fitting_protocol_sheet.xlsx
+
+  # Same CRP chip layout — the sensor groups are chip-dependent,
+  # not protocol-dependent.
+  groups:
+    'Temp Ctrl': [1]
+    'RC0343': [3, 14]
+    'RC0358': [4, 11]
+    'RC0360': [5, 12]
+    'RC0359': [6, 13]
+    'RC0338': [7, 10]

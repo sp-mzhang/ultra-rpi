@@ -995,6 +995,219 @@
       }
     });
 
+    /* === Calibration panel === */
+    const calibAssaySel = $('#cfg-calib-assay');
+    const calibVerSel = $('#cfg-calib-version');
+    const calibYaml = $('#cfg-calib-yaml');
+    const calibMsg = $('#cfg-calib-msg');
+    let calibTree = {};
+
+    async function loadCalibTree() {
+      try {
+        const res = await fetch('/api/calibration');
+        const data = await res.json();
+        calibTree = data.assays || {};
+        calibAssaySel.innerHTML = '';
+        for (const assay of Object.keys(calibTree).sort()) {
+          const opt = document.createElement('option');
+          opt.value = assay;
+          opt.textContent = assay;
+          calibAssaySel.appendChild(opt);
+        }
+        fillCalibVersions();
+      } catch (e) {
+        setMsg(calibMsg, String(e), true);
+      }
+    }
+
+    function fillCalibVersions() {
+      const assay = calibAssaySel.value;
+      calibVerSel.innerHTML = '';
+      const versions = calibTree[assay] || [];
+      for (const v of versions) {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        calibVerSel.appendChild(opt);
+      }
+    }
+
+    if (calibAssaySel) {
+      calibAssaySel.addEventListener('change', () => {
+        fillCalibVersions();
+        loadCalibConfig();
+        updateCalibDownloadLinks();
+      });
+    }
+
+    if (calibVerSel) {
+      calibVerSel.addEventListener('change', () => {
+        loadCalibConfig();
+        updateCalibDownloadLinks();
+      });
+    }
+
+    async function loadCalibConfig() {
+      const assay = calibAssaySel.value;
+      const ver = calibVerSel.value;
+      if (!assay || !ver) return;
+      try {
+        const res = await fetch(
+          `/api/calibration/${assay}/${ver}/config`,
+        );
+        if (!res.ok) {
+          calibYaml.value = '';
+          setMsg(calibMsg, 'Config not found', true);
+          return;
+        }
+        const j = await res.json();
+        calibYaml.value = j.yaml_text || '';
+        setMsg(calibMsg, '');
+      } catch (e) {
+        setMsg(calibMsg, String(e), true);
+      }
+    }
+
+    function updateCalibDownloadLinks() {
+      const assay = calibAssaySel.value;
+      const ver = calibVerSel.value;
+      const dlFit = $('#cfg-calib-dl-fitting');
+      const dlVal = $('#cfg-calib-dl-validation');
+      if (dlFit) {
+        dlFit.href = assay && ver
+          ? `/api/calibration/${assay}/${ver}/file/fitting_protocol_sheet.xlsx`
+          : '#';
+      }
+      if (dlVal) {
+        dlVal.href = assay && ver
+          ? `/api/calibration/${assay}/${ver}/file/validation_rules_sheet.xlsx`
+          : '#';
+      }
+    }
+
+    const btnCalibSave = $('#cfg-calib-yaml-save');
+    if (btnCalibSave) {
+      btnCalibSave.addEventListener('click', async () => {
+        const assay = calibAssaySel.value;
+        const ver = calibVerSel.value;
+        if (!assay || !ver) return;
+        btnLoad(btnCalibSave);
+        try {
+          const res = await fetch(
+            `/api/calibration/${assay}/${ver}/config`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ yaml_text: calibYaml.value }),
+            },
+          );
+          const j = await parseJson(res);
+          if (!res.ok) {
+            setMsg(calibMsg, fmtApiErr(j, 'Save failed'), true);
+            return;
+          }
+          setMsg(calibMsg, j.message || 'Saved.', false, false);
+        } catch (e) {
+          setMsg(calibMsg, String(e), true);
+        } finally {
+          btnDone(btnCalibSave);
+        }
+      });
+    }
+
+    function setupCalibUpload(inputId, filename) {
+      const input = $(inputId);
+      if (!input) return;
+      input.addEventListener('change', async () => {
+        const file = input.files[0];
+        if (!file) return;
+        const assay = calibAssaySel.value;
+        const ver = calibVerSel.value;
+        if (!assay || !ver) return;
+        const form = new FormData();
+        form.append('file', file);
+        try {
+          const res = await fetch(
+            `/api/calibration/${assay}/${ver}/file/${filename}`,
+            { method: 'POST', body: form },
+          );
+          const j = await parseJson(res);
+          if (!res.ok) {
+            setMsg(calibMsg, fmtApiErr(j, 'Upload failed'), true);
+            return;
+          }
+          setMsg(calibMsg, j.message || 'Uploaded.', false, false);
+        } catch (e) {
+          setMsg(calibMsg, String(e), true);
+        }
+        input.value = '';
+      });
+    }
+    setupCalibUpload('#cfg-calib-ul-fitting', 'fitting_protocol_sheet.xlsx');
+    setupCalibUpload('#cfg-calib-ul-validation', 'validation_rules_sheet.xlsx');
+
+    const btnCalibNew = $('#cfg-calib-new');
+    if (btnCalibNew) {
+      btnCalibNew.addEventListener('click', async () => {
+        const assay = calibAssaySel.value || prompt('Assay name:');
+        const ver = prompt('New version (e.g. v1.1):');
+        if (!assay || !ver) return;
+        const yaml = calibYaml.value
+          || '# Calibration config\nparameters:\n  version: "' + ver + '"\n';
+        try {
+          const res = await fetch(
+            `/api/calibration/${assay}/${ver}/config`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ yaml_text: yaml }),
+            },
+          );
+          const j = await parseJson(res);
+          if (!res.ok) {
+            setMsg(calibMsg, fmtApiErr(j, 'Create failed'), true);
+            return;
+          }
+          setMsg(calibMsg, j.message || 'Created.', false, false);
+          await loadCalibTree();
+          calibAssaySel.value = assay;
+          fillCalibVersions();
+          calibVerSel.value = ver;
+          await loadCalibConfig();
+          updateCalibDownloadLinks();
+          if (Ultra.loadCalibVersions) Ultra.loadCalibVersions();
+        } catch (e) {
+          setMsg(calibMsg, String(e), true);
+        }
+      });
+    }
+
+    const btnCalibDel = $('#cfg-calib-delete');
+    if (btnCalibDel) {
+      btnCalibDel.addEventListener('click', async () => {
+        const assay = calibAssaySel.value;
+        const ver = calibVerSel.value;
+        if (!assay || !ver) return;
+        if (!confirm('Delete calibration ' + assay + '/' + ver + '?')) return;
+        try {
+          const res = await fetch(
+            `/api/calibration/${assay}/${ver}`,
+            { method: 'DELETE' },
+          );
+          const j = await parseJson(res);
+          if (!res.ok) {
+            setMsg(calibMsg, fmtApiErr(j, 'Delete failed'), true);
+            return;
+          }
+          setMsg(calibMsg, j.message || 'Deleted.', false, false);
+          await loadCalibTree();
+          if (Ultra.loadCalibVersions) Ultra.loadCalibVersions();
+        } catch (e) {
+          setMsg(calibMsg, String(e), true);
+        }
+      });
+    }
+
     /* === Tab activation === */
     window.__cfgTabActivate = async function () {
       await Promise.all([
@@ -1002,9 +1215,12 @@
         loadMachineSettings(false),
         loadSchemas(),
         loadCommonProtocol(),
+        loadCalibTree(),
       ]);
       renderPalette();
       await loadRecipeYaml();
+      await loadCalibConfig();
+      updateCalibDownloadLinks();
     };
   }
 

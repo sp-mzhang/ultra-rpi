@@ -10,7 +10,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -377,6 +378,199 @@ def create_config_router(app: 'Application') -> APIRouter:
         return {
             'schemas': STEP_SCHEMAS,
             'descriptions': STEP_DESCRIPTIONS,
+        }
+
+    # -------------------------------------------------------------- #
+    # Calibration data endpoints                                      #
+    # -------------------------------------------------------------- #
+
+    @router.get('/calibration')
+    async def calibration_list():
+        '''List all assays and their calibration versions.'''
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+        tree = await loop.run_in_executor(
+            None, config_store.list_calibration_tree,
+        )
+        default_assay = app.config.get('analysis', {}).get(
+            'default_assay', '',
+        )
+        default_version = app.config.get('analysis', {}).get(
+            'default_calibration_version', '',
+        )
+        return {
+            'assays': tree,
+            'default_assay': default_assay,
+            'default_version': default_version,
+        }
+
+    @router.get('/calibration/{assay}/{version}/config')
+    async def calibration_config_get(assay: str, version: str):
+        '''Return analysis_config.yaml text for a version.'''
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+
+        def _read() -> str | None:
+            p = config_store.fetch_calibration_file(
+                assay, version, 'analysis_config.yaml',
+            )
+            if p:
+                import os.path as op
+                if op.isfile(p):
+                    with open(p, encoding='utf-8') as fh:
+                        return fh.read()
+            return None
+
+        text = await loop.run_in_executor(None, _read)
+        if text is None:
+            raise HTTPException(
+                404,
+                detail=f'Config not found: {assay}/{version}',
+            )
+        return {
+            'assay': assay,
+            'version': version,
+            'yaml_text': text,
+        }
+
+    @router.post('/calibration/{assay}/{version}/config')
+    @router.put('/calibration/{assay}/{version}/config')
+    async def calibration_config_put(
+            assay: str, version: str, req: YamlTextBody,
+    ):
+        '''Save analysis_config.yaml for a version.'''
+        import yaml
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+
+        def _validate_and_save() -> None:
+            parsed = yaml.safe_load(req.yaml_text)
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    'analysis_config.yaml must be a YAML mapping',
+                )
+            config_store.put_calibration_file(
+                assay, version,
+                'analysis_config.yaml',
+                req.yaml_text.encode('utf-8'),
+                content_type='application/x-yaml',
+            )
+
+        try:
+            await loop.run_in_executor(
+                None, _validate_and_save,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, detail=str(exc))
+        return {
+            'ok': True,
+            'message': (
+                f'Saved {assay}/{version}/analysis_config.yaml'
+            ),
+        }
+
+    @router.get(
+        '/calibration/{assay}/{version}/file/{filename}',
+    )
+    async def calibration_file_download(
+            assay: str, version: str, filename: str,
+    ):
+        '''Download an Excel calibration file.'''
+        allowed = {
+            'fitting_protocol_sheet.xlsx',
+            'validation_rules_sheet.xlsx',
+        }
+        if filename not in allowed:
+            raise HTTPException(
+                400,
+                detail=f'Invalid filename: {filename}',
+            )
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+        data = await loop.run_in_executor(
+            None,
+            config_store.fetch_calibration_file_bytes,
+            assay, version, filename,
+        )
+        if data is None:
+            raise HTTPException(
+                404,
+                detail=f'{assay}/{version}/{filename} not found',
+            )
+        ct = (
+            'application/vnd.openxmlformats-'
+            'officedocument.spreadsheetml.sheet'
+        )
+        return Response(
+            content=data,
+            media_type=ct,
+            headers={
+                'Content-Disposition': (
+                    f'attachment; filename="{filename}"'
+                ),
+            },
+        )
+
+    @router.post(
+        '/calibration/{assay}/{version}/file/{filename}',
+    )
+    async def calibration_file_upload(
+            assay: str,
+            version: str,
+            filename: str,
+            file: UploadFile,
+    ):
+        '''Upload an Excel calibration file.'''
+        allowed = {
+            'fitting_protocol_sheet.xlsx',
+            'validation_rules_sheet.xlsx',
+        }
+        if filename not in allowed:
+            raise HTTPException(
+                400,
+                detail=f'Invalid filename: {filename}',
+            )
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+        data = await file.read()
+        ct = (
+            'application/vnd.openxmlformats-'
+            'officedocument.spreadsheetml.sheet'
+        )
+        await loop.run_in_executor(
+            None,
+            config_store.put_calibration_file,
+            assay, version, filename, data, ct,
+        )
+        return {
+            'ok': True,
+            'message': (
+                f'Uploaded {assay}/{version}/{filename}'
+            ),
+        }
+
+    @router.delete('/calibration/{assay}/{version}')
+    async def calibration_version_delete(
+            assay: str, version: str,
+    ):
+        '''Delete all files for a calibration version.'''
+        from ultra.services import config_store
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                None,
+                config_store.delete_calibration_version,
+                assay, version,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                500, detail=f'Delete failed: {exc}',
+            )
+        return {
+            'ok': True,
+            'message': (
+                f'Calibration {assay}/{version} deleted.'
+            ),
         }
 
     return router

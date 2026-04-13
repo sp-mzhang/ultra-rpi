@@ -108,6 +108,10 @@
         <select id="recipe-select"></select>
       </div>
       <div class="control-row">
+        <label for="calib-version">Calibration:</label>
+        <select id="calib-version"></select>
+      </div>
+      <div class="control-row">
         <label for="chip-id">Chip ID:</label>
         <input type="text" id="chip-id"
                placeholder="ULTRA-TEST-001">
@@ -1569,6 +1573,7 @@
         <button class="cfg-nav-btn cfg-nav-active" data-panel="machine">Machine Config</button>
         <button class="cfg-nav-btn" data-panel="recipe">Recipe Editor</button>
         <button class="cfg-nav-btn" data-panel="common">Common Protocol</button>
+        <button class="cfg-nav-btn" data-panel="calibration">Calibration</button>
       </nav>
       <div class="cfg-main">
 
@@ -1720,9 +1725,88 @@
             spellcheck="false" rows="28"></textarea>
         </section>
 
+        <!-- Calibration Panel -->
+        <section id="cfg-panel-calibration" class="cfg-panel">
+          <h2>Calibration Data (S3)</h2>
+          <div class="cfg-row">
+            <label for="cfg-calib-assay">Assay:</label>
+            <select id="cfg-calib-assay"></select>
+            <label for="cfg-calib-version">Version:</label>
+            <select id="cfg-calib-version"></select>
+            <button id="cfg-calib-new" type="button"
+              class="btn btn-sm btn-outline">+ New Version</button>
+            <button id="cfg-calib-delete" type="button"
+              class="btn btn-sm btn-danger">Delete Version</button>
+          </div>
+
+          <h3>analysis_config.yaml</h3>
+          <textarea id="cfg-calib-yaml" class="cfg-textarea"
+            rows="20" spellcheck="false"
+            placeholder="# analysis_config.yaml"></textarea>
+          <div class="cfg-btn-row">
+            <button id="cfg-calib-yaml-save" type="button"
+              class="btn btn-green btn-sm">Save Config</button>
+          </div>
+
+          <h3>Excel Files</h3>
+          <div class="cfg-calib-files">
+            <div class="cfg-calib-file-row">
+              <span>fitting_protocol_sheet.xlsx</span>
+              <a id="cfg-calib-dl-fitting" class="btn btn-sm"
+                 href="#" download>Download</a>
+              <label class="btn btn-sm btn-outline">
+                Upload
+                <input id="cfg-calib-ul-fitting" type="file"
+                  accept=".xlsx" hidden>
+              </label>
+            </div>
+            <div class="cfg-calib-file-row">
+              <span>validation_rules_sheet.xlsx</span>
+              <a id="cfg-calib-dl-validation" class="btn btn-sm"
+                 href="#" download>Download</a>
+              <label class="btn btn-sm btn-outline">
+                Upload
+                <input id="cfg-calib-ul-validation" type="file"
+                  accept=".xlsx" hidden>
+              </label>
+            </div>
+          </div>
+          <pre id="cfg-calib-msg" class="cfg-msg"></pre>
+        </section>
+
       </div>
     </div>
   </div><!-- #cfg-view -->
+
+  <!-- Analysis Results Modal -->
+  <div id="analysis-modal" class="modal-overlay" hidden>
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2>Analysis Results</h2>
+        <button id="analysis-modal-close"
+                class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <table id="analysis-table" class="analysis-table">
+          <thead>
+            <tr>
+              <th>Analyte</th>
+              <th>Concentration</th>
+              <th>Unit</th>
+              <th>Signal</th>
+              <th>Fit</th>
+              <th>In Range</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <button id="analysis-modal-ok"
+                class="btn btn-green btn-sm">OK</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/ultra-core.js?v=2"></script>
   <script src="/static/ultra-run.js?v=2"></script>

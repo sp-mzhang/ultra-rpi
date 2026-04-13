@@ -52,6 +52,10 @@ egress:
   loop_sleep_s: 10.0
   cleanup_after_egress: false
 
+analysis:
+  default_assay: crp
+  default_calibration_version: v1.0
+
 startup:
   auto_state_machine: false
   skip_nfc: false

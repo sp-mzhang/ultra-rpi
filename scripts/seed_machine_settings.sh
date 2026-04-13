@@ -13,7 +13,8 @@
 #   3. Copies IoT fleet-provisioning certs to /etc/ultra/certs/.
 #   4. Generates machines/<machine_name>/machine_settings.yaml in S3.
 #   5. Writes /etc/ultra/machine.yaml for local identity.
-#   6. Patches the systemd service if needed.
+#   6. Uploads calibration data from config/calibration_data/ to S3.
+#   7. Patches the systemd service if needed.
 #
 # NOTE: Currently device_sn is set to the machine name (e.g. "ultra4").
 #       In the future device_sn will be replaced by a real hardware UID.
@@ -219,6 +220,27 @@ EOF
 sudo chown -R "${CURRENT_USER}:${CURRENT_USER}" "$LOCAL_CFG_DIR"
 echo "[OK] ${LOCAL_CFG} written (owned by ${CURRENT_USER})."
 
+# --- Upload calibration data to S3 ---
+CALIB_ROOT="${ROOT}/config/calibration_data"
+if [[ -d "$CALIB_ROOT" ]]; then
+  echo "=== S3 Calibration Data ==="
+  for ASSAY_DIR in "${CALIB_ROOT}"/*/; do
+    ASSAY="$(basename "$ASSAY_DIR")"
+    for VER_DIR in "${ASSAY_DIR}"*/; do
+      [[ -d "$VER_DIR" ]] || continue
+      VER="$(basename "$VER_DIR")"
+      PREFIX="calibration_data/${ASSAY}/${VER}"
+      echo "  Syncing ${ASSAY}/${VER} -> s3://${BUCKET}/${PREFIX}/"
+      aws s3 sync "${VER_DIR}" "s3://${BUCKET}/${PREFIX}/" \
+        --region "$REGION" \
+        --exclude ".*"
+    done
+  done
+  echo "[OK] Calibration data uploaded."
+else
+  echo "No calibration data found at ${CALIB_ROOT} — skipping."
+fi
+
 # --- Ensure the systemd service picks up ULTRA_CONFIG ---
 SERVICE_FILE="/etc/systemd/system/ultra-rpi.service"
 if [[ -f "$SERVICE_FILE" ]]; then
@@ -236,5 +258,5 @@ fi
 
 echo ""
 echo "=== Done ==="
-echo "${MACHINE} fully provisioned: AWS creds, IoT certs, S3 settings, local identity."
+echo "${MACHINE} fully provisioned: AWS creds, IoT certs, S3 settings, calibration data, local identity."
 echo "Next: ./scripts/start.sh"

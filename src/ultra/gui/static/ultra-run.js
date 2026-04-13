@@ -5,6 +5,7 @@
 
   /* ---- Elements ---- */
   const elRecipe = $('#recipe-select');
+  const elCalib = $('#calib-version');
   const elChipId = $('#chip-id');
   const elNote = $('#run-note');
   const elBtnRun = $('#btn-run');
@@ -52,6 +53,30 @@
       _fillSelect(elRecipe, list);
     } catch (e) {
       console.error('loadRecipes failed:', e);
+    }
+  }
+
+  async function loadCalibVersions() {
+    try {
+      const res = await fetch('/api/calibration');
+      const data = await res.json();
+      const assays = data.assays || {};
+      const defAssay = data.default_assay || '';
+      const defVer = data.default_version || '';
+      elCalib.innerHTML = '';
+      for (const [assay, versions] of Object.entries(assays)) {
+        for (const ver of versions) {
+          const opt = document.createElement('option');
+          opt.value = assay + '/' + ver;
+          opt.textContent = assay + ' ' + ver;
+          elCalib.appendChild(opt);
+        }
+      }
+      if (defAssay && defVer) {
+        elCalib.value = defAssay + '/' + defVer;
+      }
+    } catch (e) {
+      console.error('loadCalibVersions failed:', e);
     }
   }
 
@@ -158,6 +183,9 @@
         if (Ultra.updateEgressButton) {
           Ultra.updateEgressButton(data, type);
         }
+        break;
+      case 'analysis_complete':
+        renderAnalysisResults(data);
         break;
       case 'protocol_done':
       case 'protocol_error':
@@ -400,10 +428,58 @@
     });
   }
 
+  /* ---- Analysis Results Modal ---- */
+  const elAnalysisModal = $('#analysis-modal');
+  const elAnalysisBody = elAnalysisModal
+    ? elAnalysisModal.querySelector('tbody') : null;
+  const elModalClose = $('#analysis-modal-close');
+  const elModalOk = $('#analysis-modal-ok');
+
+  function closeAnalysisModal() {
+    if (elAnalysisModal) elAnalysisModal.hidden = true;
+  }
+  if (elModalClose) elModalClose.onclick = closeAnalysisModal;
+  if (elModalOk) elModalOk.onclick = closeAnalysisModal;
+  if (elAnalysisModal) {
+    elAnalysisModal.addEventListener('click', (e) => {
+      if (e.target === elAnalysisModal) closeAnalysisModal();
+    });
+  }
+
+  function renderAnalysisResults(data) {
+    if (!elAnalysisModal || !elAnalysisBody) return;
+    const analytes = data.analytes || [];
+    if (!analytes.length) return;
+    elAnalysisBody.innerHTML = '';
+    analytes.forEach((a) => {
+      const tr = document.createElement('tr');
+      const excluded = a.excluded_by_validation;
+      const concStr = excluded ? 'EXCLUDED'
+        : (a.concentration !== null ? String(a.concentration) : '--');
+      const sigStr = excluded ? '--'
+        : (a.signal !== null ? String(a.signal) : '--');
+      const rangeCls = excluded ? 'out-of-range'
+        : (a.in_range ? 'in-range' : 'out-of-range');
+      const rangeStr = excluded ? 'Excluded'
+        : (a.in_range ? 'Yes' : 'No');
+      if (excluded) tr.classList.add('validation-excluded');
+      tr.innerHTML =
+        '<td>' + escHtml(a.analyte) + '</td>'
+        + '<td><strong>' + concStr + '</strong></td>'
+        + '<td>' + escHtml(a.unit || '') + '</td>'
+        + '<td>' + sigStr + '</td>'
+        + '<td>' + escHtml(a.fit_type || '') + '</td>'
+        + '<td class="' + rangeCls + '">' + rangeStr + '</td>';
+      elAnalysisBody.appendChild(tr);
+    });
+    elAnalysisModal.hidden = false;
+  }
+
   /* ---- Button Handlers ---- */
   elBtnRun.onclick = async () => {
     const body = {
       recipe: elRecipe.value,
+      calibration_version: elCalib.value || '',
       chip_id: elChipId.value || 'ULTRA-TEST-001',
       note: elNote.value,
     };
@@ -451,6 +527,8 @@
     elGrid.innerHTML = '';
     elStepList.innerHTML = '';
     if (Ultra.clearTimingMarkers) Ultra.clearTimingMarkers();
+    closeAnalysisModal();
+    if (elAnalysisBody) elAnalysisBody.innerHTML = '';
 
     elBtnNewRun.style.display = 'none';
     elBtnRun.style.display = '';
@@ -491,8 +569,10 @@
   Ultra._fillSelect = _fillSelect;
   Ultra.loadRecipes = loadRecipes;
 
+  Ultra.loadCalibVersions = loadCalibVersions;
+
   Ultra.initRun = async function () {
-    await loadRecipes();
+    await Promise.all([loadRecipes(), loadCalibVersions()]);
     await loadQuickRunDefaults();
     await loadStatus();
     connectWS();
