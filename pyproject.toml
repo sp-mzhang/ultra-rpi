@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "RPi controller for Ultra STM32 blood-analysis hardware"
 requires-python = "==3.11.9"
 dependencies = [
-    "ams-client",
     "assay-3rd-party-validation",
     "pyserial>=3.5",
     "fastapi>=0.110",
@@ -15,7 +14,7 @@ dependencies = [
     "scipy>=1.11",
     "pandas>=2.1",
     "openpyxl>=3.1",
-    "boto3>=1.34",
+    "boto3>=1.34,<=1.42.89",
     "opencv-python-headless>=4.8",
     "paho-mqtt>=2.0",
     "awsiotsdk>=1.0",
@@ -43,7 +42,6 @@ managed = true
 
 [tool.uv.sources]
 assay-3rd-party-validation = { git = "ssh://git@github.com/siphox-inc/analysis-model-store.git", branch = "main", subdirectory = "src/analyses/assay_3rd_party_validation" }
-ams-client = { index = "siphox" }
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -51,7 +49,6 @@ allow-direct-references = true
 [[tool.uv.index]]
 name = "siphox"
 url = "http://18.117.187.46:8082/"
-explicit = true
 
 [tool.ruff]
 line-length = 99

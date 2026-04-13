@@ -61,7 +61,6 @@ setup_env() {
     cd "$PROJECT_DIR"
     if timeout 180 env UV_NO_PROGRESS=1 NO_COLOR=1 \
         uv sync \
-        --refresh \
         --upgrade-package assay-3rd-party-validation \
         --upgrade-package dollopclient 2>&1; then
         echo "uv sync succeeded."
