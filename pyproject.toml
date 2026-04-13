@@ -39,6 +39,7 @@ packages = ["src/ultra"]
 
 [tool.uv]
 managed = true
+exclude-newer = "2026-03-01T00:00:00Z"
 
 [tool.uv.sources]
 assay-3rd-party-validation = { git = "ssh://git@github.com/siphox-inc/analysis-model-store.git", branch = "main", subdirectory = "src/analyses/assay_3rd_party_validation" }
