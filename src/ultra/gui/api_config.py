@@ -103,6 +103,27 @@ def _read_yaml_cached(
     raise FileNotFoundError(filename)
 
 
+LOCAL_MACHINE_YAML = '/etc/ultra/machine.yaml'
+
+
+def _write_local_machine_yaml(yaml_text: str) -> None:
+    '''Persist the machine settings to /etc/ultra/machine.yaml.
+
+    Creates the directory if needed.  Silently logs on failure
+    (e.g. when running without write access to /etc).
+    '''
+    import os
+    try:
+        os.makedirs(os.path.dirname(LOCAL_MACHINE_YAML), exist_ok=True)
+        with open(LOCAL_MACHINE_YAML, 'w', encoding='utf-8') as fh:
+            fh.write(yaml_text)
+        LOG.info('Wrote %s', LOCAL_MACHINE_YAML)
+    except OSError as exc:
+        LOG.warning(
+            'Could not write %s: %s', LOCAL_MACHINE_YAML, exc,
+        )
+
+
 def create_config_router(app: 'Application') -> APIRouter:
     router = APIRouter()
 
@@ -157,7 +178,7 @@ def create_config_router(app: 'Application') -> APIRouter:
     @router.put('/machine-settings')
     @router.post('/machine-settings')
     async def machine_settings_put(req: YamlTextBody):
-        '''Save machine_settings.yaml to S3 and merge into app.config.'''
+        '''Save machine_settings.yaml to S3, local disk, and app.config.'''
         from ultra.services import config_store
         ds = app.config.get('device_sn', '')
         if not ds:
@@ -174,6 +195,7 @@ def create_config_router(app: 'Application') -> APIRouter:
             config_store.put_machine_settings_yaml(
                 ds, req.yaml_text,
             )
+            _write_local_machine_yaml(req.yaml_text)
 
         try:
             await loop.run_in_executor(
@@ -192,7 +214,8 @@ def create_config_router(app: 'Application') -> APIRouter:
         return {
             'ok': True,
             'message': (
-                'Saved to S3 and applied (no restart needed).'
+                'Saved to S3, /etc/ultra/machine.yaml,'
+                ' and applied (no restart needed).'
             ),
         }
 
