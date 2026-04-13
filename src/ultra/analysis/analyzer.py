@@ -64,6 +64,27 @@ class AnalysisResult:
             'error': self.error,
         }
 
+    def save(self) -> str | None:
+        '''Write results to ``analysis_results.json`` in
+        the run directory.
+
+        Returns:
+            Path to the written file, or None on failure.
+        '''
+        import json
+        if not self.run_dir:
+            return None
+        fp = op.join(self.run_dir, 'analysis_results.json')
+        try:
+            with open(fp, 'w') as fh:
+                json.dump(
+                    self.to_dict(), fh,
+                    indent=2, sort_keys=False,
+                )
+            return fp
+        except Exception:
+            return None
+
 
 def _groups_from_print_map(
         print_map: list[dict[str, str]],
@@ -505,11 +526,42 @@ class AnalysisService:
                 in_range=in_range,
             ))
 
+        saved = result.save()
         LOG.info(
-            'Analysis complete: %d analytes, run_dir=%s',
+            'Analysis complete: %d analytes, run_dir=%s'
+            '%s',
             len(result.analytes), run_dir,
+            f', saved to {saved}' if saved else '',
         )
         return result
+
+    @staticmethod
+    def _find_step_row(
+            samples_df: Any,
+            step_key: Any,
+    ) -> Any:
+        '''Look up a step in samples_df.
+
+        ``step_key`` may be a numeric index *or* a sample
+        name string (e.g. ``TIMING: cart_dispense_GNP
+        (start)``).  Returns the matching row or None.
+        '''
+        try:
+            idx = int(step_key)
+            if 0 <= idx < len(samples_df):
+                return samples_df.iloc[idx]
+            return None
+        except (ValueError, TypeError):
+            pass
+
+        if 'sample' in samples_df.columns:
+            matches = samples_df[
+                samples_df['sample'] == str(step_key)
+            ]
+            if not matches.empty:
+                return matches.iloc[0]
+
+        return None
 
     def _compute_signal(
             self,
@@ -555,7 +607,7 @@ class AnalysisService:
                 if ch not in excluded_rings
             ]
 
-        step_idx = ap.step_to_analyze
+        step_key = ap.step_to_analyze
         start_offset = ap.start_time_after_step_begins_secs
         window = ap.window_secs
 
@@ -563,25 +615,26 @@ class AnalysisService:
             sdf = meas.sensor_df
             if sdf.empty:
                 return None
-            times = np.array(sdf.index)
 
             t_start = None
             t_end = None
             if (
                 not meas.samples_df.empty
-                and step_idx is not None
-                and step_idx < len(meas.samples_df)
+                and step_key is not None
             ):
-                row = meas.samples_df.iloc[step_idx]
-                t_start = (
-                    row['start_time_shifted']
-                    + start_offset
+                row = self._find_step_row(
+                    meas.samples_df, step_key,
                 )
-                t_end = (
-                    t_start + window
-                    if window
-                    else row['end_time_shifted']
-                )
+                if row is not None:
+                    t_start = (
+                        row['start_time_shifted']
+                        + start_offset
+                    )
+                    t_end = (
+                        t_start + window
+                        if window
+                        else row['end_time_shifted']
+                    )
 
             signals: list[float] = []
             for ch in channels:
