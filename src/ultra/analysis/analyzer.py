@@ -372,7 +372,9 @@ class AnalysisService:
             FIT_TYPE_MODEL_FUNC_INFO,
             parse_fit_protocol_sheet,
         )
-        from siphox.analysis_tools import MeasurementAnalysis
+        from siphox.analysis_tools.main_analysis import (
+            MeasurementAnalysis,
+        )
 
         meas = MeasurementAnalysis(run_id=-1)
 
