@@ -248,9 +248,7 @@ def create_app(application: 'Application') -> FastAPI:
     broadcaster = WebSocketBroadcaster()
 
     from ultra.gui.api import create_api_router
-    api_router = create_api_router(
-        application, broadcaster,
-    )
+    api_router = create_api_router(application)
     app.include_router(api_router, prefix='/api')
 
     _BROADCAST_EVENTS = [
