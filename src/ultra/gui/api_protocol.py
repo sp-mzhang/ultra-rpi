@@ -43,6 +43,9 @@ def create_protocol_router(app: 'Application') -> APIRouter:
         result = snap.to_dict()
         result['is_running'] = runner.is_running
         result['is_paused'] = runner.is_paused
+        result['recipe'] = (
+            runner.recipe.name if runner.recipe else ''
+        )
         result['machine_name'] = app.config.get(
             'machine_name', '',
         )

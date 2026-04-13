@@ -76,6 +76,10 @@
       updateTip(s);
       updateMode(s.sm_state || 'inactive');
       updateButtons(s.is_running, s.is_paused);
+      if (s.recipe) {
+        elRecipe.value = s.recipe;
+        if (s.is_running) elLabel.textContent = s.recipe;
+      }
       if (elMachine && s.machine_name) {
         elMachine.textContent = s.machine_name;
       }
@@ -140,6 +144,10 @@
         updateButtons(true, false);
         if (Ultra.clearTimingMarkers) Ultra.clearTimingMarkers();
         if (data.steps) buildStepList(data.steps);
+        if (data.recipe) {
+          elRecipe.value = data.recipe;
+          elLabel.textContent = data.recipe;
+        }
         break;
       case 'timing_marker':
         if (Ultra.addTimingMarker) Ultra.addTimingMarker(data);
