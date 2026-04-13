@@ -72,6 +72,74 @@ def _safe_call(func: Any, **kwargs: Any) -> Any:
 
 
 # ----------------------------------------------------------
+# Reader device config
+# ----------------------------------------------------------
+
+def fetch_reader_config(
+        reader_name: str = 'reader7',
+) -> dict[str, Any]:
+    '''Fetch reader calibration parameters from Dollop.
+
+    Looks up the device by name (e.g. ``reader7``), then
+    retrieves its config dict containing tia_gain, fsr_nm,
+    rth thresholds, wavemeter parameters, etc.
+
+    Args:
+        reader_name: Dollop device name for the reader.
+
+    Returns:
+        Config dict with numeric values coerced to float,
+        or empty dict on failure.
+    '''
+    from siphox.dollopclient.api import (
+        devices as ddev,
+    )
+
+    if not reader_name.startswith('reader'):
+        reader_name = f'reader{reader_name}'
+
+    dev_api = ddev.DevicesAPI(client=_client())
+    dev_list = _safe_call(
+        dev_api.get_devices,
+        filters=[{
+            'col': 'name', 'opr': 'eq',
+            'value': reader_name,
+        }],
+        page_size=1,
+    )
+    if not dev_list:
+        LOG.warning(
+            'Reader device not found on Dollop: %s',
+            reader_name,
+        )
+        return {}
+
+    device_uuid = dev_list[0]['id']
+    config = _safe_call(
+        dev_api.get_device_config,
+        device_id=device_uuid,
+    )
+    if not config:
+        LOG.warning(
+            'No config for reader %s (id=%s)',
+            reader_name, device_uuid,
+        )
+        return {}
+
+    for k, v in list(config.items()):
+        try:
+            config[k] = float(v)
+        except (ValueError, TypeError):
+            pass
+
+    LOG.info(
+        'Fetched reader config for %s: %d keys',
+        reader_name, len(config),
+    )
+    return config
+
+
+# ----------------------------------------------------------
 # RunGroup
 # ----------------------------------------------------------
 

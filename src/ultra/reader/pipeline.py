@@ -1,20 +1,17 @@
 '''ultra.reader.pipeline -- Analysis pipeline glue.
 
 Bridges raw TLV data from the acquisition service to
-the siphox.analysis_tools package (installed from sway
-repo via pip). Uses the real sway peak detection API:
+siphox.analysis_tools (sway v5.1.0).  Data flow:
 
-Data flow:
   raw TLV file
-  -> readertospectra.process_tlv_file_to_sweeps()
-     (decode, demux adc_id 1/2, unpack 15-ch interleave,
-      bin sweeps, wavelength-calibrate)
-  -> peaks.run_peak_detection(channels, SweepData,
-     config_peak_detect, chip_mapping)
-  -> event_bus.emit('peak_data', ...)
+  -> process_tlv_file_to_sweeps()   (decode + calibrate)
+  -> TlvToSpectra.process_calibrated_sweeps()
+     (peak detect, stitch, laser.log, peaks_nm.log,
+      resonance_props.csv)
+  -> event_bus.emit('peak_data' / 'sweep_data')
 
-Requires siphox.analysis_tools to be installed:
-  pip install "analysis-tools @ git+https://..."
+Reader calibration (tia_gain, fsr_nm, ...) is fetched
+from Dollop at init time via fetch_reader_config().
 '''
 from __future__ import annotations
 
@@ -22,7 +19,6 @@ import logging
 import os.path as op
 import sys
 import tempfile
-import time as _time
 import types
 from typing import Any
 
@@ -42,11 +38,49 @@ if 'sway' not in sys.modules:
             'sway.utils.dollop_helpers stub'
         )
 
+    def _db_api_fetch_device(
+            id_str='', serial_number='',
+    ):
+        from ultra.services import (
+            dollop_client as _dollop,
+        )
+        from siphox.dollopclient.api import (
+            devices as _ddev,
+        )
+        dev_api = _ddev.DevicesAPI(
+            client=_dollop._client(),
+        )
+        name = serial_number or id_str
+        if not name.startswith('reader'):
+            name = f'reader{name}'
+        devs = dev_api.get_devices(
+            filters=[{
+                'col': 'name', 'opr': 'eq',
+                'value': name,
+            }],
+            page_size=1,
+        )
+        return devs[0] if devs else {}
+
+    def _db_api_device_get_config(device_uuid=''):
+        from ultra.services import (
+            dollop_client as _dollop,
+        )
+        from siphox.dollopclient.api import (
+            devices as _ddev,
+        )
+        dev_api = _ddev.DevicesAPI(
+            client=_dollop._client(),
+        )
+        return dev_api.get_device_config(device_uuid) or {}
+
     _sway_dh.fetch_run_info = _not_available
     _sway_dh.db_api_fetch_device_by_id_or_serial_number = (
-        _not_available
+        _db_api_fetch_device
     )
-    _sway_dh.db_api_device_get_config = _not_available
+    _sway_dh.db_api_device_get_config = (
+        _db_api_device_get_config
+    )
 
     sys.modules['sway'] = _sway
     sys.modules['sway.utils'] = _sway_utils
@@ -60,27 +94,20 @@ LOG = logging.getLogger(__name__)
 class ReaderPipeline:
     '''Glue layer between raw TLV data and analysis tools.
 
-    Uses siphox.analysis_tools to decode TLV binary data,
-    demux PProc/SProc streams, de-interleave 15 optical
-    channels, wavelength-calibrate sweeps, run peak
-    detection, and emit per-channel wavelength results
-    to the event bus.
+    Delegates all heavy lifting to sway's
+    ``siphox.analysis_tools`` package:
 
-    Also writes sway-compatible log files:
-    - ``peaks_nm.log`` (via ``peaklogutils``)
-    - ``resonance_props.csv`` (via ``save_resonances_log``)
+    * ``process_tlv_file_to_sweeps`` -- decode, demux,
+      wavelength-calibrate
+    * ``TlvToSpectra.process_calibrated_sweeps`` -- peak
+      detection, stitching, laser.log, peaks_nm.log,
+      resonance_props.csv
 
-    Attributes:
-        _event_bus: Application event bus.
-        _peak_config: Peak detection config dict from YAML.
-        _baseline: Per-channel baseline wavelengths for
-            optional shift calculation.
-        _wl_rth_fit: Persistent wavelength-vs-thermistor
-            calibration (mutated across TLV files).
-        _pow_rth_fit: Persistent power calibration.
-        _peaks_nm_fp: Path to peaks_nm.log (set on first
-            successful calibration sweep).
-        _resonance_props_fp: Path to resonance_props.csv.
+    Reader calibration parameters (tia_gain, fsr_nm, etc.)
+    are fetched from Dollop at init time.  If Dollop is
+    unreachable, ``LOW_POWER_CUTOFF_DB`` is lowered as a
+    fallback so that RPi reader sweeps are not silently
+    discarded.
     '''
 
     def __init__(
@@ -112,8 +139,7 @@ class ReaderPipeline:
         self._sway_ok: bool | None = None
         self._run_dir: str = ''
         self._peaks_nm_fp: str | None = None
-        self._resonance_props_fp: str | None = None
-        self._sweep_idx: int = 0
+        self._laser_fp: str = ''
 
     def set_peak_config(
             self, peak_cfg: dict[str, Any],
@@ -143,6 +169,11 @@ class ReaderPipeline:
         '''Lazy-initialise the sway analysis_tools pipeline.
 
         Creates a TlvToSpectra instance on the first call.
+        Fetches reader calibration parameters from Dollop
+        to populate ``reader_params_dict``; falls back to
+        an empty dict with a lowered power-cutoff threshold
+        if Dollop is unreachable.
+
         Returns True if analysis_tools is importable and
         the instance was created successfully.
         '''
@@ -150,6 +181,10 @@ class ReaderPipeline:
             return self._sway_ok
 
         try:
+            import siphox.analysis_tools.readertospectra \
+                as _rts
+            import siphox.analysis_tools.utils.tlv_proc \
+                as _tlv_proc
             from siphox.analysis_tools.readertospectra import (
                 TlvToSpectra,
             )
@@ -162,6 +197,36 @@ class ReaderPipeline:
             self._sway_ok = False
             return False
 
+        reader_cfg = self._config.get('reader', {})
+        reader_name = reader_cfg.get(
+            'dollop_name', 'reader7',
+        )
+
+        reader_params: dict[str, Any] = {}
+        try:
+            from ultra.services import (
+                dollop_client as dollop,
+            )
+            reader_params = dollop.fetch_reader_config(
+                reader_name,
+            )
+        except Exception:
+            LOG.warning(
+                'Could not fetch reader config from '
+                'Dollop for %s', reader_name,
+            )
+
+        if not reader_params:
+            cutoff = self._peak_config.get(
+                'low_power_cutoff_db', -60,
+            )
+            _rts.LOW_POWER_CUTOFF_DB = cutoff
+            _tlv_proc.LOW_POWER_CUTOFF_DB = cutoff
+            LOG.info(
+                'No reader params from Dollop; patched '
+                'LOW_POWER_CUTOFF_DB to %s', cutoff,
+            )
+
         try:
             run_dir = self._run_dir or tempfile.mkdtemp(
                 prefix='ultra-pipeline-',
@@ -169,14 +234,30 @@ class ReaderPipeline:
             self._tlvtospec = TlvToSpectra(
                 chip_pos=0,
                 run_dir_path=run_dir,
-                reader_params_dict={},
+                reader_params_dict=reader_params,
                 peak_config=dict(self._peak_config),
                 do_broadcast=False,
             )
             self._sway_ok = True
+
+            cfg = self._tlvtospec.config
             LOG.info(
-                'analysis_tools pipeline initialised '
-                '(run_dir=%s)', run_dir,
+                'TlvToSpectra initialised '
+                '(run_dir=%s, reader_params=%d keys)',
+                run_dir, len(reader_params),
+            )
+            LOG.info(
+                'Reader config: tia_gain=%.0e eta=%.2f '
+                'fsr_nm=%.4f rth_high_v=%.2f '
+                'rth_low_v=%.2f wm_prom=%.3f '
+                'wavelength_offset_ref=%.2f',
+                cfg.get('tia_gain', 0),
+                cfg.get('eta', 0),
+                cfg.get('fsr_nm', 0),
+                cfg.get('rth_high_v', 0),
+                cfg.get('rth_low_v', 0),
+                cfg.get('wm_prom', 0),
+                cfg.get('wavelength_offset_reference', 0),
             )
         except Exception:
             LOG.exception(
@@ -231,18 +312,48 @@ class ReaderPipeline:
         '''Clear baselines and calibration for a new run.'''
         self._baseline.clear()
         self._block_count = 0
-        self._sweep_idx = 0
         self._wl_rth_fit = [None, None]
         self._pow_rth_fit = [None, None]
         self._tlvtospec = None
         self._sway_ok = None
         self._peaks_nm_fp = None
-        self._resonance_props_fp = None
+        self._laser_fp = ''
         LOG.debug('Pipeline baseline and calibration reset')
 
     # ----------------------------------------------------------
     # Internal: sway pipeline
     # ----------------------------------------------------------
+
+    def _init_peaks_nm_log(self) -> None:
+        '''Create peaks_nm.log header (deferred until first
+        successful wavelength calibration, matching sway).
+        '''
+        from siphox.analysis_tools.utils import (
+            peaklogutils,
+        )
+        from siphox.analysis_tools.utils.\
+            fitting_functions import peaks as span_peaks
+
+        chip_map = (
+            span_peaks
+            .minimal_chip_mapping_for_channels(
+                self._tlvtospec.no_ch,
+            )
+        )
+        self._laser_fp = op.join(
+            self._run_dir, 'laser.log',
+        )
+        self._peaks_nm_fp = peaklogutils.init_peaks_nm_log(
+            run_dir_path=self._run_dir,
+            peak_config=dict(self._peak_config),
+            chip_mapping=chip_map,
+            wl_rth_fit=self._wl_rth_fit[0],
+            initial_cal_time_sweep_s=self._timestamp_s,
+        )
+        LOG.info(
+            'peaks_nm.log created: %s',
+            self._peaks_nm_fp,
+        )
 
     def _process_with_sway(
             self, path: str,
@@ -250,8 +361,10 @@ class ReaderPipeline:
         '''Run the full sway decode -> calibrate -> detect
         pipeline on a single TLV file.
 
-        Also writes peaks_nm.log rows and resonance_props.csv
-        rows for every sweep, matching sway's on-disk format.
+        Uses ``process_tlv_file_to_sweeps`` to decode and
+        wavelength-calibrate, then delegates peak detection,
+        log writing, and stitching to
+        ``TlvToSpectra.process_calibrated_sweeps``.
 
         Args:
             path: Path to .tlv file on disk.
@@ -259,12 +372,9 @@ class ReaderPipeline:
         Returns:
             List of peak result dicts or None.
         '''
-        import numpy as np
+        import siphox.analysis_tools.readertospectra as _rts
         from siphox.analysis_tools.readertospectra import (
             process_tlv_file_to_sweeps,
-        )
-        from siphox.analysis_tools.utils import (
-            peaklogutils,
         )
         from siphox.analysis_tools.utils.\
             fitting_functions import peaks as span_peaks
@@ -281,240 +391,85 @@ class ReaderPipeline:
                 'Chunk ID mismatch in %s', path,
             )
 
-        if not calibrated.wavelength_sweep_list:
-            LOG.info(
-                'Block %d: no sweeps (%s)',
-                self._block_count, path,
-            )
-            return None
-
-        n_total = len(calibrated.wavelength_sweep_list)
+        n_cal = len(calibrated.wavelength_sweep_list)
         n_bloss = sum(
-            1 for i in range(n_total)
-            if calibrated.b_loss_list
-            and calibrated.b_loss_list[i]
+            1 for b in calibrated.b_loss_list if b
         )
-        if n_bloss:
-            LOG.info(
-                'Block %d: %d/%d sweeps skipped '
-                '(calibration loss)',
-                self._block_count, n_bloss, n_total,
-            )
+        cfg = self._tlvtospec.config
+        LOG.info(
+            'Block %d: tia_gain=%.0e eta=%.2f '
+            'LOW_POWER_CUTOFF_DB=%s | '
+            '%d calibrated sweeps, %d b_loss, %d usable',
+            self._block_count,
+            cfg.get('tia_gain', 0),
+            cfg.get('eta', 0),
+            getattr(_rts, 'LOW_POWER_CUTOFF_DB', '?'),
+            n_cal, n_bloss, n_cal - n_bloss,
+        )
 
-        results: list[dict] = []
-        for i, wl_arr in enumerate(
-            calibrated.wavelength_sweep_list,
-        ):
-            sensor_arr = calibrated.sensor_sweep_list[i]
-            if len(wl_arr) == 0:
-                continue
-
-            if (
-                calibrated.b_loss_list
-                and calibrated.b_loss_list[i]
-            ):
-                continue
-
-            no_ch = (
-                sensor_arr.shape[0]
-                if sensor_arr.ndim > 1
-                else 1
-            )
-            no_points = len(wl_arr)
-
-            t_data = (
-                calibrated.time_data_list[i]
-                if calibrated.time_data_list
-                else np.array([self._timestamp_s])
-            )
-
-            sweep = span_peaks.SweepData(
-                x_axis=wl_arr,
-                sensor_curves=sensor_arr,
-                time=t_data,
-                no_ch=no_ch,
-                no_points=no_points,
-            )
-
-            channels = list(range(1, no_ch + 1))
-            chip_map = (
-                span_peaks
-                .minimal_chip_mapping_for_channels(no_ch)
-            )
-
-            peak_cfg = dict(self._peak_config)
-            time_start_s = round(
-                float(t_data[0])
-                if len(t_data) > 0
-                else self._timestamp_s,
-                2,
-            )
-            peak_cfg['t'] = time_start_s
-
-            res_props, peaks_nm, peaks_by_sensor = (
-                span_peaks.run_peak_detection(
-                    channels=channels,
-                    latest_sweep=sweep,
-                    config_peak_detect=peak_cfg,
-                    chip_mapping=chip_map,
-                )
-            )
-
-            self._sweep_idx += 1
-
-            self._write_log_files(
-                peaklogutils, span_peaks,
-                chip_map, peak_cfg,
-                peaks_nm, peaks_by_sensor,
-                res_props, time_start_s,
-            )
-
-            tracked = span_peaks.track_peaks(peaks_nm)
-            self._emit_peaks(tracked)
-            self._emit_sweep(wl_arr, sensor_arr, no_ch)
-            results.extend(self._last_emitted)
-
-        if results:
-            LOG.info(
-                'Block %d: %d peaks from %d sweeps',
-                self._block_count,
-                len(results),
-                len(calibrated.wavelength_sweep_list),
-            )
-        else:
-            LOG.info(
-                'Block %d: 0 peaks (%d sweeps, '
-                'peaks_nm.log %s)',
-                self._block_count,
-                len(calibrated.wavelength_sweep_list),
-                'exists' if self._peaks_nm_fp else 'NOT created',
-            )
-        return results or None
-
-    # ----------------------------------------------------------
-    # Log file writers (peaks_nm.log, resonance_props.csv)
-    # ----------------------------------------------------------
-
-    def _write_log_files(
-            self,
-            peaklogutils: Any,
-            span_peaks: Any,
-            chip_map: dict[str, Any],
-            peak_cfg: dict[str, Any],
-            peaks_nm: list,
-            peaks_by_sensor: list,
-            res_props: list[dict[str, Any]],
-            time_start_s: float,
-    ) -> None:
-        '''Write peaks_nm.log row and resonance_props rows.
-
-        Initialises the log files lazily on the first sweep
-        that has a valid wavelength calibration, matching
-        sway's deferred-init pattern.
-
-        Args:
-            peaklogutils: Imported peaklogutils module.
-            span_peaks: Imported peaks module.
-            chip_map: Chip mapping dict.
-            peak_cfg: Peak detection config for this sweep.
-            peaks_nm: Per-channel peak wavelengths from
-                ``run_peak_detection``.
-            peaks_by_sensor: Per-sensor peak lists from
-                ``run_peak_detection``.
-            res_props: Resonance property dicts from
-                ``run_peak_detection``.
-            time_start_s: Sweep start time in seconds.
-        '''
-        if not self._run_dir:
-            return
+        if not calibrated.wavelength_sweep_list:
+            return None
 
         if (
             self._peaks_nm_fp is None
+            and self._run_dir
             and self._wl_rth_fit[0] is not None
         ):
             try:
-                self._peaks_nm_fp = (
-                    peaklogutils.init_peaks_nm_log(
-                        run_dir_path=self._run_dir,
-                        peak_config=peak_cfg,
-                        chip_mapping=chip_map,
-                        wl_rth_fit=self._wl_rth_fit[0],
-                        initial_cal_time_sweep_s=(
-                            time_start_s
-                        ),
-                    )
-                )
-                LOG.info(
-                    'peaks_nm.log created: %s',
-                    self._peaks_nm_fp,
-                )
+                self._init_peaks_nm_log()
             except Exception:
                 LOG.exception(
                     'Failed to init peaks_nm.log',
                 )
 
-        if self._resonance_props_fp is None:
-            rp = op.join(
-                self._run_dir, 'resonance_props.csv',
+        chip_map = (
+            span_peaks
+            .minimal_chip_mapping_for_channels(
+                self._tlvtospec.no_ch,
             )
-            try:
-                peaklogutils.init_resonance_props_log(
-                    run_dir_path=self._run_dir,
-                    resonance_props_fp=rp,
-                    peak_config=peak_cfg,
-                    logger=LOG,
-                )
-                self._resonance_props_fp = rp
-                LOG.info(
-                    'resonance_props.csv created: %s', rp,
-                )
-            except Exception:
-                LOG.exception(
-                    'Failed to init resonance_props.csv',
-                )
+        )
 
-        if self._peaks_nm_fp is not None and peaks_nm:
-            try:
-                sensor_names = (
-                    peaklogutils
-                    .sensor_column_names_from_chip_mapping(
-                        chip_map,
-                    )
-                )
-                peaklogutils.append_peaks_nm_row(
-                    peaks_nm_fp=self._peaks_nm_fp,
-                    time_logged=_time.time(),
-                    sweep_idx=self._sweep_idx,
-                    time_sweep_s=time_start_s,
-                    sensor_names=sensor_names,
-                    peaks_nm=peaks_by_sensor,
-                )
-            except Exception:
-                LOG.exception(
-                    'Failed to append peaks_nm row',
-                )
+        prev_sweeps = self._tlvtospec.num_sweeps
 
-        if self._resonance_props_fp is not None:
-            try:
-                peaklogutils.save_resonances_log(
-                    resonance_props_fp=(
-                        self._resonance_props_fp
-                    ),
-                    resonance_props=res_props,
-                    run_dir_path=self._run_dir,
-                    peak_config=peak_cfg,
-                )
-            except TypeError:
-                peaklogutils.save_resonances_log(
-                    resonance_props_fp=(
-                        self._resonance_props_fp
-                    ),
-                    resonance_props=res_props,
-                )
-            except Exception:
-                LOG.exception(
-                    'Failed to save resonance props',
-                )
+        self._tlvtospec.process_calibrated_sweeps(
+            proc_logger=LOG,
+            laser_fp=getattr(self, '_laser_fp', ''),
+            time_relative_start_s=self._timestamp_s,
+            time_end_exact_s=self._timestamp_s,
+            calibrated_sweeps=calibrated,
+            do_save_data_files=bool(self._run_dir),
+            do_broadcast=False,
+            peaks_nm_fp=self._peaks_nm_fp,
+            chip_mapping=chip_map,
+        )
+
+        new_sweeps = (
+            self._tlvtospec.num_sweeps - prev_sweeps
+        )
+        if new_sweeps > 0:
+            self._emit_peaks(self._tlvtospec.peaks_now)
+            sweep = self._tlvtospec.latest_sweep
+            self._emit_sweep(
+                sweep.x_axis,
+                sweep.sensor_curves,
+                sweep.no_ch,
+            )
+            LOG.info(
+                'Block %d: %d new sweeps processed, '
+                '%d total',
+                self._block_count,
+                new_sweeps,
+                self._tlvtospec.num_sweeps,
+            )
+            return self._last_emitted or None
+
+        LOG.info(
+            'Block %d: 0 peaks (peaks_nm.log %s)',
+            self._block_count,
+            'exists' if self._peaks_nm_fp else
+            'NOT created',
+        )
+        return None
 
     def _emit_peaks(
             self,
