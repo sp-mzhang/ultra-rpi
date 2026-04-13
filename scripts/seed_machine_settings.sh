@@ -216,7 +216,8 @@ sudo tee "$LOCAL_CFG" > /dev/null << EOF
 device_sn: ${MACHINE}
 machine_name: ${DISPLAY}
 EOF
-echo "[OK] ${LOCAL_CFG} written."
+sudo chown -R "${CURRENT_USER}:${CURRENT_USER}" "$LOCAL_CFG_DIR"
+echo "[OK] ${LOCAL_CFG} written (owned by ${CURRENT_USER})."
 
 # --- Ensure the systemd service picks up ULTRA_CONFIG ---
 SERVICE_FILE="/etc/systemd/system/ultra-rpi.service"
