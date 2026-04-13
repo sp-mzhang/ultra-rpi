@@ -273,12 +273,21 @@ def create_protocol_router(app: 'Application') -> APIRouter:
         '''
         if app._state_machine:
             app._state_machine.stop()
+        if app._sm_trigger_task and not app._sm_trigger_task.done():
+            app._sm_trigger_task.cancel()
+            try:
+                await app._sm_trigger_task
+            except asyncio.CancelledError:
+                pass
         if app._sm_task and not app._sm_task.done():
             app._sm_task.cancel()
             try:
                 await app._sm_task
             except asyncio.CancelledError:
                 pass
+        app._state_machine = None
+        app._sm_task = None
+        app._sm_trigger_task = None
         await app.event_bus.emit(
             'status_changed',
             {'state': 'inactive', 'message': 'Stopped'},

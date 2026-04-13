@@ -256,8 +256,7 @@ def create_app(application: 'Application') -> FastAPI:
         'wells_initialized', 'tip_changed',
         'peak_data', 'sweep_data', 'timing_marker',
         'protocol_paused', 'protocol_resumed',
-        'protocol_done', 'protocol_error',
-        'protocol_aborted', 'status_changed',
+        'status_changed',
         'door_opened', 'door_closed',
         'pressure_update', 'temperature_update',
         'centrifuge_rpm', 'stm32_error',
@@ -289,6 +288,25 @@ def create_app(application: 'Application') -> FastAPI:
     application.event_bus.on(
         'protocol_started', _on_protocol_started,
     )
+
+    _TERMINAL_EVENTS = [
+        'protocol_done', 'protocol_error',
+        'protocol_aborted',
+    ]
+
+    for event_name in _TERMINAL_EVENTS:
+        _tname = event_name
+
+        async def _terminal_handler(
+                data: dict,
+                _evt: str = _tname,
+        ) -> None:
+            await broadcaster.broadcast(_evt, data)
+            broadcaster.clear_buffers()
+
+        application.event_bus.on(
+            event_name, _terminal_handler,
+        )
 
     from ultra.utils.logging import get_log_handler
     _lh = get_log_handler()
