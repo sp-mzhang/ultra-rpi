@@ -183,27 +183,22 @@ class UltraStateMachine:
             self, event_type: str, **kwargs: Any,
     ) -> None:
         '''Publish an event to IoT if available.'''
-        if self._iot_client is not None:
-            try:
-                self._iot_client.publish_event(
-                    event_type=event_type, **kwargs,
-                )
-            except Exception as err:
-                LOG.warning(
-                    f'IoT publish failed: {err}',
-                )
+        if self._iot_client is None:
+            LOG.debug(
+                'IoT publish skipped (no client): %s',
+                event_type,
+            )
+            return
+        try:
+            self._iot_client.publish_event(
+                event_type=event_type, **kwargs,
+            )
+            LOG.info('IoT event published: %s', event_type)
+        except Exception as err:
+            LOG.warning(
+                f'IoT publish failed: {err}',
+            )
 
-    def _schedule_cartridge_inserted(self) -> None:
-        '''Publish cartridge_inserted after a 5 s delay.
-
-        Matches sway behaviour: drawer_open fires immediately,
-        cartridge_inserted follows on a daemon timer thread.
-        '''
-        threading.Timer(
-            5.0,
-            self._publish_event,
-            args=('cartridge_inserted',),
-        ).start()
 
     def _apply_iot_config_to_env(self) -> None:
         '''Bridge YAML iot config into env vars.
@@ -625,7 +620,6 @@ class UltraStateMachine:
         '''Wait for cartridge load and drawer close.'''
         self._set_led(LED_PROGRESS, stage=1)
         self._publish_event('drawer_open')
-        self._schedule_cartridge_inserted()
         LOG.info('Waiting for cartridge load + close')
         self.drawer_closed_event.clear()
         await self.drawer_closed_event.wait()
@@ -635,15 +629,14 @@ class UltraStateMachine:
         self._set_state(SystemState.SELF_CHECK)
 
     async def _state_self_check(self) -> None:
-        '''Cartridge validation stub.'''
-        LOG.info('Self check (stub)...')
-        self._publish_event(
-            'cartridge_validation_started',
-        )
-        await asyncio.sleep(self._self_check_stub_s)
-        self._publish_event(
-            'cartridge_validation_ended',
-        )
+        '''Cartridge validation after drawer close.
+
+        The 5 s delay in _state_drawer_open simulates the
+        validation period.  We publish cartridge_validation_ended
+        immediately on entry, then wait for the 2nd drawer open.
+        '''
+        self._publish_event('cartridge_validation_ended')
+        LOG.info('Cartridge validation complete')
 
         LOG.info(
             'Waiting for 2nd drawer open '
@@ -652,7 +645,6 @@ class UltraStateMachine:
         self.drawer_opened_event.clear()
         await self.drawer_opened_event.wait()
         self._publish_event('drawer_open')
-        self._schedule_cartridge_inserted()
         self._set_state(
             SystemState.AWAITING_PROTOCOL_START,
         )
