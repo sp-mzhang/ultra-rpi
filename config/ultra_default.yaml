@@ -50,6 +50,7 @@ egress:
   dollop_host: 18.117.187.46
   dollop_port: 8080
   loop_sleep_s: 10.0
+  cleanup_after_egress: false
 
 startup:
   auto_state_machine: false

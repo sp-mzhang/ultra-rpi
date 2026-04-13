@@ -112,6 +112,9 @@ class EgressService:
         self._loop_sleep_s: float = egress_cfg.get(
             'loop_sleep_s', DEFAULT_LOOP_SLEEP_S,
         )
+        self._cleanup_enabled: bool = egress_cfg.get(
+            'cleanup_after_egress', False,
+        )
         self._prev_rowid: int | None = None
         self._num_egressed = 0
         self._num_errors = 0
@@ -357,7 +360,8 @@ class EgressService:
         )
         self._update_dollop_run(fresh, ts)
         self._check_rungroup_complete(fresh)
-        self._cleanup_local(fresh)
+        if self._cleanup_enabled:
+            self._cleanup_local(fresh)
         self._prev_rowid = None
         self._num_egressed += 1
         self._process_recovery()
