@@ -371,8 +371,9 @@ class EgressService:
     ) -> None:
         '''Remove local run data after successful egress.
 
-        Deletes the run directory, removes the DB row, and
-        cleans up the rungroup directory if now empty.
+        Deletes the run directory, the temp zip file,
+        removes the DB row, and cleans up the rungroup
+        directory if now empty.
         '''
         run_dir = tup.run_dir_path
         if run_dir and op.isdir(run_dir):
@@ -387,6 +388,8 @@ class EgressService:
                     'Failed to delete run dir %s: %s',
                     run_dir, err,
                 )
+
+        self._delete_temp_zip(run_dir)
 
         rg_dir = tup.rungroup_dir_path
         if rg_dir and op.isdir(rg_dir):
@@ -408,6 +411,23 @@ class EgressService:
                     )
 
         self._db.clear_egressed()
+
+    def _delete_temp_zip(self, run_dir: str) -> None:
+        '''Delete the temp zip created during S3 upload.'''
+        zip_base = self._s3.zip_temp_dir
+        if not zip_base or not run_dir:
+            return
+        zip_name = f'{op.basename(run_dir)}.zip'
+        zip_path = op.join(zip_base, zip_name)
+        if op.isfile(zip_path):
+            try:
+                os.remove(zip_path)
+                LOG.info('Deleted temp zip: %s', zip_path)
+            except OSError as err:
+                LOG.warning(
+                    'Failed to delete temp zip %s: %s',
+                    zip_path, err,
+                )
 
     # ----------------------------------------------------------
     # egress one run
