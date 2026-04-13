@@ -561,6 +561,16 @@ class AnalysisService:
             if not matches.empty:
                 return matches.iloc[0]
 
+        LOG.debug(
+            '_find_step_row: no match for %r in %d rows, '
+            'cols=%s, sample_vals=%s',
+            step_key,
+            len(samples_df),
+            list(samples_df.columns),
+            list(samples_df['sample'])
+            if 'sample' in samples_df.columns
+            else 'NO_COL',
+        )
         return None
 
     def _compute_signal(
@@ -614,7 +624,22 @@ class AnalysisService:
         try:
             sdf = meas.sensor_df
             if sdf.empty:
+                LOG.warning(
+                    '%s: sensor_df is empty', ap.name,
+                )
                 return None
+
+            LOG.info(
+                '%s: sensor_df %d rows, index [%.2f..%.2f], '
+                'channels=%s, step_key=%r, '
+                'samples_df %d rows',
+                ap.name, len(sdf),
+                float(sdf.index.min()),
+                float(sdf.index.max()),
+                channels,
+                step_key,
+                len(meas.samples_df),
+            )
 
             t_start = None
             t_end = None
@@ -634,6 +659,16 @@ class AnalysisService:
                         t_start + window
                         if window
                         else row['end_time_shifted']
+                    )
+                    LOG.info(
+                        '%s: time window [%.2f..%.2f]',
+                        ap.name, t_start, t_end,
+                    )
+                else:
+                    LOG.warning(
+                        '%s: step_key %r not found in '
+                        'samples_df',
+                        ap.name, step_key,
                     )
 
             signals: list[float] = []
@@ -665,6 +700,10 @@ class AnalysisService:
                             float(shifts.mean()),
                         )
 
+            LOG.info(
+                '%s: collected %d signals from %d channels',
+                ap.name, len(signals), len(channels),
+            )
             if not signals:
                 return None
 
