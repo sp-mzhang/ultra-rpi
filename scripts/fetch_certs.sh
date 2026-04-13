@@ -51,9 +51,21 @@ echo "  source    : s3://${BUCKET}/${S3_PREFIX}/"
 echo "  dest      : ${CERT_DIR}/"
 echo ""
 
-# --- Download -------------------------------------------------------------
+# --- Download to temp, then copy as root ----------------------------------
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "${TMP_DIR}"' EXIT
+
+aws s3 sync "s3://${BUCKET}/${S3_PREFIX}/" "${TMP_DIR}/"
+
+DL_COUNT="$(find "${TMP_DIR}" -type f | wc -l)"
+if [[ "$DL_COUNT" -eq 0 ]]; then
+  echo "No files downloaded from S3. Check the path and credentials." >&2
+  exit 1
+fi
+
 sudo mkdir -p "${CERT_DIR}"
-aws s3 sync "s3://${BUCKET}/${S3_PREFIX}/" "${CERT_DIR}/" --quiet
+sudo cp "${TMP_DIR}"/* "${CERT_DIR}/"
+echo "  downloaded ${DL_COUNT} file(s)"
 
 # --- Rename to match iot_client.py expectations ---------------------------
 declare -A RENAME_MAP=(
