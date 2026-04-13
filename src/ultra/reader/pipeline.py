@@ -282,11 +282,24 @@ class ReaderPipeline:
             )
 
         if not calibrated.wavelength_sweep_list:
-            LOG.debug(
-                'No sweeps in block %d (%s)',
+            LOG.info(
+                'Block %d: no sweeps (%s)',
                 self._block_count, path,
             )
             return None
+
+        n_total = len(calibrated.wavelength_sweep_list)
+        n_bloss = sum(
+            1 for i in range(n_total)
+            if calibrated.b_loss_list
+            and calibrated.b_loss_list[i]
+        )
+        if n_bloss:
+            LOG.info(
+                'Block %d: %d/%d sweeps skipped '
+                '(calibration loss)',
+                self._block_count, n_bloss, n_total,
+            )
 
         results: list[dict] = []
         for i, wl_arr in enumerate(
@@ -367,6 +380,14 @@ class ReaderPipeline:
                 self._block_count,
                 len(results),
                 len(calibrated.wavelength_sweep_list),
+            )
+        else:
+            LOG.info(
+                'Block %d: 0 peaks (%d sweeps, '
+                'peaks_nm.log %s)',
+                self._block_count,
+                len(calibrated.wavelength_sweep_list),
+                'exists' if self._peaks_nm_fp else 'NOT created',
             )
         return results or None
 
