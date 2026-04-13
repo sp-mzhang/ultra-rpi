@@ -524,7 +524,13 @@ class AnalysisService:
         to select sensor channels, then computes the mean
         shift in the analysis window.  Rings in
         ``excluded_rings`` are skipped.
+
+        In sway v5.1.0, data lives in ``meas.sensor_df``
+        (columns ``sensor1``..``sensor15``, time index)
+        and step boundaries in ``meas.samples_df``.
         '''
+        import numpy as np
+
         if excluded_rings is None:
             excluded_rings = set()
 
@@ -554,40 +560,52 @@ class AnalysisService:
         window = ap.window_secs
 
         try:
+            sdf = meas.sensor_df
+            if sdf.empty:
+                return None
+            times = np.array(sdf.index)
+
+            t_start = None
+            t_end = None
+            if (
+                not meas.samples_df.empty
+                and step_idx is not None
+                and step_idx < len(meas.samples_df)
+            ):
+                row = meas.samples_df.iloc[step_idx]
+                t_start = (
+                    row['start_time_shifted']
+                    + start_offset
+                )
+                t_end = (
+                    t_start + window
+                    if window
+                    else row['end_time_shifted']
+                )
+
             signals: list[float] = []
             for ch in channels:
-                shifts = meas.get_peak_shifts(ch)
-                if shifts is None or len(shifts) == 0:
+                col = f'sensor{ch}'
+                if col not in sdf.columns:
+                    continue
+                shifts = sdf[col].dropna()
+                if shifts.empty:
                     continue
 
-                times = meas.get_peak_times(ch)
-                if times is None or len(times) == 0:
-                    continue
-
-                step_times = meas.get_step_boundaries(
-                    step_idx,
-                )
-                if step_times:
-                    t_start = (
-                        step_times[0] + start_offset
-                    )
-                    t_end = (
-                        t_start + window
-                        if window
-                        else step_times[1]
-                    )
+                if t_start is not None:
                     mask = (
-                        (times >= t_start) &
-                        (times <= t_end)
+                        (shifts.index >= t_start) &
+                        (shifts.index <= t_end)
                     )
-                    if mask.any():
+                    windowed = shifts[mask]
+                    if not windowed.empty:
                         signals.append(
-                            float(shifts[mask].mean()),
+                            float(windowed.mean()),
                         )
                 else:
                     if len(shifts) > 10:
                         signals.append(
-                            float(shifts[-10:].mean()),
+                            float(shifts.iloc[-10:].mean()),
                         )
                     elif len(shifts) > 0:
                         signals.append(
@@ -602,13 +620,15 @@ class AnalysisService:
             if neg_channels:
                 neg_signals: list[float] = []
                 for ch in neg_channels:
-                    shifts = meas.get_peak_shifts(ch)
-                    if (
-                        shifts is not None
-                        and len(shifts) > 0
-                    ):
+                    col = f'sensor{ch}'
+                    if col not in sdf.columns:
+                        continue
+                    shifts = sdf[col].dropna()
+                    if not shifts.empty:
                         neg_signals.append(
-                            float(shifts[-10:].mean()),
+                            float(
+                                shifts.iloc[-10:].mean(),
+                            ),
                         )
                 if neg_signals:
                     neg_mean = (
