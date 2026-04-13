@@ -119,7 +119,7 @@ class WebSocketBroadcaster:
             'data': data,
         })
         dead: list[WebSocket] = []
-        for ws in self._connections:
+        for ws in list(self._connections):
             try:
                 await ws.send_text(message)
             except Exception:

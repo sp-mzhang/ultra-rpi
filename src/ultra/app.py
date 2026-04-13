@@ -43,6 +43,7 @@ class Application:
         self._monitor = None
         self._state_machine = None
         self._sm_task: asyncio.Task | None = None
+        self._sm_trigger_task: asyncio.Task | None = None
         self._egress_svc = None
         self._egress_task: asyncio.Task | None = None
         self._runner = None
@@ -185,7 +186,97 @@ class Application:
         self._sm_task = asyncio.ensure_future(
             self._state_machine.run(),
         )
+        self._sm_trigger_task = asyncio.ensure_future(
+            self._watch_protocol_trigger(),
+        )
         LOG.info('State machine started')
+
+    async def _watch_protocol_trigger(self) -> None:
+        '''Wait for the state machine to fire protocol_trigger,
+        then run the configured recipe through ProtocolRunner.
+
+        Sets protocol_done when the run finishes (success or
+        failure) so the state machine can advance.
+        '''
+        sm = self._state_machine
+        while sm and sm._running:
+            sm.protocol_trigger.clear()
+            await sm.protocol_trigger.wait()
+            LOG.info(
+                'protocol_trigger received -- '
+                'auto-starting protocol',
+            )
+
+            proto_cfg = self.config.get('protocol', {})
+            recipe = proto_cfg.get(
+                'default_recipe', 'crp_ultra',
+            )
+            startup_cfg = self.config.get('startup', {})
+            chip_id = (
+                getattr(sm, 'chip_id', '')
+                or startup_cfg.get(
+                    'default_chip_id', 'ULTRA-TEST-001',
+                )
+            )
+
+            try:
+                runner = self.get_runner()
+
+                from ultra.hw.stm32_interface import (
+                    STM32Interface,
+                )
+                stm32 = self._stm32
+                if stm32 is None:
+                    stm32_cfg = self.config.get('stm32', {})
+                    stm32 = STM32Interface(
+                        port=stm32_cfg.get(
+                            'port', '/dev/ttyAMA3',
+                        ),
+                        baud=stm32_cfg.get('baud', 921600),
+                    )
+                    if not stm32.connect():
+                        LOG.error(
+                            'STM32 connect failed '
+                            '-- cannot run protocol',
+                        )
+                        sm.protocol_done.set()
+                        continue
+                runner.stm32 = stm32
+
+                loop = asyncio.get_running_loop()
+                self.event_bus.set_loop(loop)
+
+                def _hw_init_and_run():
+                    stm32.send_command_wait_done(
+                        cmd={'cmd': 'pump_init'},
+                        timeout_s=30.0,
+                    )
+                    stm32.send_command_wait_done(
+                        cmd={'cmd': 'home_all'},
+                        timeout_s=60.0,
+                    )
+                    return runner._run_sync(
+                        recipe,
+                        chip_id=chip_id,
+                        note='State machine auto-run',
+                    )
+
+                await loop.run_in_executor(
+                    None, _hw_init_and_run,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                LOG.error(
+                    'Auto-run protocol error: %s', err,
+                    exc_info=True,
+                )
+            finally:
+                sm.protocol_done.set()
+                LOG.info(
+                    'protocol_done set -- '
+                    'state machine can advance',
+                )
 
     def _create_reader(self, use_mock: bool) -> Any:
         '''Create the optical reader interface.
@@ -296,6 +387,12 @@ class Application:
                 pass
         if self._state_machine:
             self._state_machine.stop()
+        if self._sm_trigger_task:
+            self._sm_trigger_task.cancel()
+            try:
+                await self._sm_trigger_task
+            except asyncio.CancelledError:
+                pass
         if self._sm_task:
             self._sm_task.cancel()
             try:

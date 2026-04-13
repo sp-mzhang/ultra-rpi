@@ -24,7 +24,7 @@ calibration:
 # Acquisition and peak_detect live in each protocol recipe YAML.
 
 protocol:
-  default_recipe: tsh_ultra
+  default_recipe: crp_ultra
 
 camera:
   device: /dev/video0
