@@ -1565,9 +1565,18 @@
     cmd, params = {},
     waitDone = undefined,
     timeout = 30,
+    lockTimeout = undefined,
   ) {
     if (waitDone === undefined) {
       waitDone = WAIT_DONE_CMDS.has(cmd);
+    }
+    const body = {
+      cmd, params,
+      wait_done: waitDone,
+      timeout_s: timeout,
+    };
+    if (lockTimeout !== undefined) {
+      body.lock_timeout = lockTimeout;
     }
     try {
       const res = await fetch(
@@ -1576,13 +1585,12 @@
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            cmd, params,
-            wait_done: waitDone,
-            timeout_s: timeout,
-          }),
+          body: JSON.stringify(body),
         },
       );
+      if (res.status === 503 && lockTimeout != null) {
+        return null;
+      }
       const j = await res.json();
       if (!res.ok) {
         engLog(
@@ -2639,9 +2647,10 @@
     };
 
     /* -- Status -- */
-    async function fcRefresh() {
+    async function fcRefresh(nonBlocking) {
+      const lt = nonBlocking ? 0.3 : undefined;
       const r = await engCmd(
-        'fc_heater_get_status', {}, false, 3,
+        'fc_heater_get_status', {}, false, 3, lt,
       );
       if (!r) return;
       const s = (k) => r[k] != null ? r[k] : '--';
@@ -2739,7 +2748,7 @@
     const pidState = $('#eng-fc-pid-state');
 
     async function fcPoll() {
-      const r = await fcRefresh();
+      const r = await fcRefresh(true);
       if (!r) return;
       if (typeof r.temp_c === 'number') {
         tempHistory.push(r.temp_c);

@@ -115,6 +115,7 @@ class Stm32CmdRequest(BaseModel):
     params: dict[str, Any] = {}
     timeout_s: float = 30.0
     wait_done: bool = True
+    lock_timeout: float | None = None
 
 
 def create_api_router(
@@ -620,6 +621,7 @@ def create_api_router(
         cmd_dict: dict[str, Any] = {'cmd': req.cmd}
         cmd_dict.update(req.params)
 
+        lt = req.lock_timeout
         loop = asyncio.get_running_loop()
         try:
             if req.wait_done:
@@ -636,12 +638,18 @@ def create_api_router(
                     lambda: stm32.send_command(
                         cmd=cmd_dict,
                         timeout_s=req.timeout_s,
+                        lock_timeout=lt,
                     ),
                 )
         except Exception as exc:
             raise HTTPException(
                 status_code=500,
                 detail=f'Command error: {exc}',
+            )
+        if result is None and lt is not None:
+            raise HTTPException(
+                status_code=503,
+                detail='serial busy',
             )
         return {
             'ok': result is not None,

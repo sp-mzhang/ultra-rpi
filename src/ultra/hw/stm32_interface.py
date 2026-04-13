@@ -297,6 +297,7 @@ class STM32Interface:
             cmd: dict,
             timeout_s: float = 30.0,
             collect_pressure: bool = False,
+            lock_timeout: float | None = None,
     ) -> Optional[dict]:
         '''Send binary command and wait for response.
 
@@ -312,13 +313,30 @@ class STM32Interface:
             timeout_s: Timeout in seconds.
             collect_pressure: If True, collect pressure
                 telemetry during waiting.
+            lock_timeout: If set, try to acquire the serial
+                lock for at most this many seconds. Returns
+                None immediately if the lock is busy (useful
+                for non-blocking status polls).
 
         Returns:
-            Response dict or None on timeout.
+            Response dict or None on timeout / lock busy.
         '''
         if not self._ser:
             LOG.error('Not connected')
             return None
+
+        if lock_timeout is not None:
+            acquired = self._lock.acquire(
+                timeout=lock_timeout,
+            )
+            if not acquired:
+                return None
+            try:
+                return self._send_command_inner(
+                    cmd, timeout_s, collect_pressure,
+                )
+            finally:
+                self._lock.release()
 
         with self._lock:
             return self._send_command_inner(
