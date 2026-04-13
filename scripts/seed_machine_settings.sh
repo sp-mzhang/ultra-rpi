@@ -10,7 +10,7 @@
 # What it does (in order):
 #   1. Installs required packages (python3, awscli, boto3).
 #   2. Writes ~/.aws/credentials and ~/.aws/config if missing.
-#   3. Copies IoT fleet-provisioning certs to /etc/siphox/.
+#   3. Copies IoT fleet-provisioning certs to /etc/ultra/certs/.
 #   4. Generates machines/<machine_name>/machine_settings.yaml in S3.
 #   5. Writes /etc/ultra/machine.yaml for local identity.
 #   6. Patches the systemd service if needed.
@@ -107,10 +107,10 @@ AWSCONFIG
 fi
 
 # ------------------------------------------------------------------ #
-# 3. IoT fleet-provisioning certificates -> /etc/siphox/             #
+# 3. IoT fleet-provisioning certificates -> /etc/ultra/certs/        #
 # ------------------------------------------------------------------ #
 CERTS_DIR="${ROOT}/provisioning/certs"
-IOT_DEST="/etc/siphox"
+IOT_DEST="/etc/ultra/certs"
 CURRENT_USER="$(logname 2>/dev/null || whoami)"
 
 REQUIRED_CERTS=(
@@ -136,7 +136,7 @@ if $ALL_CERTS_PRESENT; then
   sudo chmod 644 "${IOT_DEST}/claim.cert.pem"
   sudo chmod 600 "${IOT_DEST}/claim.private.key"
   sudo chmod 644 "${IOT_DEST}/root-CA.crt"
-  sudo chown "${CURRENT_USER}:${CURRENT_USER}" "${IOT_DEST}"/*
+  sudo chown -R "${CURRENT_USER}:${CURRENT_USER}" "${IOT_DEST}"
   echo "[OK] Certs installed to ${IOT_DEST}"
 else
   echo "IoT certs not found in ${CERTS_DIR} — skipping."
