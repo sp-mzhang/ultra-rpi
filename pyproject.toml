@@ -44,7 +44,7 @@ packages = ["src/ultra"]
 managed = true
 
 [tool.uv.sources]
-analysis-tools = { git = "ssh://git@github.com/siphox-inc/sway.git", subdirectory = "analysis_tools", tag = "v4.17.0" }
+analysis-tools = { git = "ssh://git@github.com/siphox-inc/sway.git", subdirectory = "analysis_tools", tag = "v5.1.0" }
 analysis-lib = { git = "ssh://git@github.com/siphox-inc/analysis-model-store.git", subdirectory = "src/packages/analysis_lib", rev = "analysis-lib_v1.0.5" }
 
 [tool.hatch.metadata]
