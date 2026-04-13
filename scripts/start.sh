@@ -61,7 +61,7 @@ setup_env() {
     cd "$PROJECT_DIR"
     if timeout 180 env UV_NO_PROGRESS=1 NO_COLOR=1 \
         uv sync \
-        --upgrade-package assay-3rd-party-validation \
+        --upgrade-package analysis-tools \
         --upgrade-package dollopclient 2>&1; then
         echo "uv sync succeeded."
     else
@@ -89,6 +89,36 @@ setup_env() {
 
 setup_env
 
+# --------------- sync analysis-model-store vendored code ---------------
+AMS_REPO="ssh://git@github.com/siphox-inc/analysis-model-store.git"
+AMS_CACHE="$PROJECT_DIR/.cache/analysis-model-store"
+AMS_SRC="$AMS_CACHE/src/analyses/assay_3rd_party_validation/src"
+AMS_DST="$PROJECT_DIR/lib/assay_validation"
+AMS_FILES=(demo demo_helpers analysis analysis_plots validation_lib
+           fitting_lib helpers errors_lib compat_lib uihelpers)
+
+sync_ams() {
+    echo "Syncing analysis validation files from ams..."
+    if [ -d "$AMS_CACHE/.git" ]; then
+        git -C "$AMS_CACHE" fetch --depth 1 origin main 2>&1 \
+            && git -C "$AMS_CACHE" reset --hard origin/main 2>&1 \
+            || echo "WARNING: ams git pull failed — using cached copy."
+    else
+        mkdir -p "$(dirname "$AMS_CACHE")"
+        git clone --depth 1 --branch main "$AMS_REPO" "$AMS_CACHE" 2>&1 || {
+            echo "WARNING: Failed to clone analysis-model-store."
+            return
+        }
+    fi
+    mkdir -p "$AMS_DST"
+    for f in "${AMS_FILES[@]}"; do
+        cp "$AMS_SRC/${f}.py" "$AMS_DST/" 2>/dev/null || true
+    done
+    echo "Analysis validation files synced."
+}
+
+sync_ams
+
 # --------------- service mode (default) ---------------
 if [ "$MODE" = "service" ]; then
     CURRENT_USER="$(whoami)"
@@ -105,6 +135,7 @@ Type=simple
 User=$CURRENT_USER
 WorkingDirectory=$PROJECT_DIR
 Environment=ULTRA_CONFIG=/etc/ultra/machine.yaml
+Environment=PYTHONPATH=$PROJECT_DIR/lib/assay_validation
 ExecStart=$VENV_DIR/bin/python -m ultra.app
 Restart=on-failure
 RestartSec=5
@@ -147,4 +178,5 @@ echo "  GUI will be at http://${HOST_IP:-localhost}:8080"
 echo "  Press Ctrl+C to stop."
 echo ""
 
+export PYTHONPATH="$PROJECT_DIR/lib/assay_validation${PYTHONPATH:+:$PYTHONPATH}"
 exec "$PYTHON" -m ultra.app
