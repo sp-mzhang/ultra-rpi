@@ -214,7 +214,7 @@ def delete_recipe(slug: str) -> None:
     key = recipe_object_key(slug)
     try:
         _get_s3().delete_object(
-            Bucket=BUCKET, Key=key,
+            Bucket=config_bucket(), Key=key,
         )
     except Exception as exc:
         LOG.warning('S3 delete %s: %s', key, exc)
