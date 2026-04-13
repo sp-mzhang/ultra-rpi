@@ -378,17 +378,18 @@ class AnalysisService:
 
         meas = MeasurementAnalysis(run_id=-1)
 
+        int_groups = None
         if groups:
             int_groups = {
                 k: [int(s) for s in v]
                 for k, v in groups.items()
             }
-            meas.set_groups(int_groups)
 
         meas.load_laser(
             peaks_path,
             peak_processing=peak_processing,
             stitch_th=stitch_th,
+            groups_dict=int_groups,
         )
         if sample_path:
             meas.load_samples(sample_path)
