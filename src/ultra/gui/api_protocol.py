@@ -47,6 +47,9 @@ def create_protocol_router(app: 'Application') -> APIRouter:
         result['recipe'] = getattr(
             runner, '_recipe_slug', '',
         ) or (runner.recipe.name if runner.recipe else '')
+        result['recipe_display'] = (
+            runner.recipe.name if runner.recipe else ''
+        )
         result['calibration_version'] = getattr(
             runner, '_calibration_version', '',
         )

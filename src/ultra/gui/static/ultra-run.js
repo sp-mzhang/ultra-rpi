@@ -103,7 +103,9 @@
       updateButtons(s.is_running, s.is_paused);
       if (s.recipe) {
         elRecipe.value = s.recipe;
-        if (s.is_running) elLabel.textContent = s.recipe;
+        if (s.is_running) {
+          elLabel.textContent = s.recipe_display || s.recipe;
+        }
       }
       if (s.calibration_version) {
         elCalib.value = s.calibration_version;
@@ -174,7 +176,7 @@
         if (data.steps) buildStepList(data.steps);
         if (data.recipe) {
           elRecipe.value = data.recipe;
-          elLabel.textContent = data.recipe;
+          elLabel.textContent = data.recipe_display || data.recipe;
         }
         break;
       case 'timing_marker':

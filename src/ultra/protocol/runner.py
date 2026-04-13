@@ -739,7 +739,8 @@ class ProtocolRunner:
 
         self._event_bus.emit_sync(
             'protocol_started', {
-                'recipe': self.recipe.name,
+                'recipe': recipe_name,
+                'recipe_display': self.recipe.name,
                 'chip_id': chip_id,
                 'total_steps': self.recipe.total_steps,
                 'run_dir': run_dir or '',
