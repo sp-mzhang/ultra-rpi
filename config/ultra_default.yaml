@@ -36,6 +36,9 @@ gui:
 iot:
   endpoint: av6fq1kv2yjq0-ats.iot.us-east-1.amazonaws.com
   cert_dir: /etc/ultra/certs/
+  template: ultrathink-fleet-template
+  claim_cert_dir: /etc/ultra/certs/
+  credentials_dir: /etc/ultra/certs/device/
 
 egress:
   enabled: true

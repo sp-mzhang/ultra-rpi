@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import threading
 from enum import Enum
 from typing import Any
 
@@ -96,14 +98,6 @@ class UltraStateMachine:
             monitor: Any = None,
             iot_client: Any = None,
     ) -> None:
-        '''Initialize the state machine.
-
-        Args:
-            config: Application configuration dict.
-            event_bus: Application event bus.
-            monitor: STM32StatusMonitor instance (optional).
-            iot_client: IoT client instance (optional).
-        '''
         self._config = config
         self._event_bus = event_bus
         self._monitor = monitor
@@ -135,6 +129,12 @@ class UltraStateMachine:
             'restart_delay_s', 5.0,
         )
 
+        self._nfc_provisioner: Any = None
+        self._wifi_provisioner: Any = None
+        self._wifi_just_provisioned: bool = False
+
+        self._apply_iot_config_to_env()
+
         if monitor:
             self.drawer_opened_event = (
                 monitor.drawer_opened_event
@@ -146,13 +146,7 @@ class UltraStateMachine:
     def _set_state(
             self, new_state: SystemState,
     ) -> None:
-        '''Transition to a new state.
-
-        Publishes state change to event bus.
-
-        Args:
-            new_state: Target SystemState.
-        '''
+        '''Transition to a new state and publish to event bus.'''
         self.state = new_state
         msg = STATUS_MESSAGES.get(
             new_state, new_state.value,
@@ -175,12 +169,7 @@ class UltraStateMachine:
     def _set_led(
             self, pattern: int, stage: int = 0,
     ) -> None:
-        '''Send LED pattern to STM32 via monitor.
-
-        Args:
-            pattern: LED pattern ID (0-5).
-            stage: Progress stage (pattern=4 only).
-        '''
+        '''Send LED pattern to STM32 via monitor.'''
         if self._monitor is None:
             return
         try:
@@ -193,12 +182,7 @@ class UltraStateMachine:
     def _publish_event(
             self, event_type: str, **kwargs: Any,
     ) -> None:
-        '''Publish an event to IoT if available.
-
-        Args:
-            event_type: Event type string.
-            **kwargs: Additional event data.
-        '''
+        '''Publish an event to IoT if available.'''
         if self._iot_client is not None:
             try:
                 self._iot_client.publish_event(
@@ -209,13 +193,104 @@ class UltraStateMachine:
                     f'IoT publish failed: {err}',
                 )
 
-    async def run(self) -> None:
-        '''Main state machine loop.
+    def _apply_iot_config_to_env(self) -> None:
+        '''Bridge YAML iot config into env vars.
 
-        Transitions through states sequentially. After
-        protocol completion, loops back to IDLE for the
-        next run. Only exits on ERROR or stop().
+        The iot_provisioning.config module reads settings
+        from environment variables. This sets them from the
+        YAML config so that ultra_default.yaml and
+        machine.yaml values take effect without modifying
+        the ported config module.
         '''
+        iot_cfg = self._config.get('iot', {})
+
+        _SIMPLE = {
+            'endpoint': 'SIPHOX_IOT_ENDPOINT',
+            'template': 'SIPHOX_IOT_TEMPLATE',
+            'credentials_dir': 'SIPHOX_IOT_CREDENTIALS_DIR',
+        }
+        for yaml_key, env_key in _SIMPLE.items():
+            val = iot_cfg.get(yaml_key)
+            if val and env_key not in os.environ:
+                os.environ[env_key] = str(val)
+
+        claim_dir = iot_cfg.get('claim_cert_dir')
+        if claim_dir:
+            _CLAIM = {
+                'SIPHOX_IOT_CLAIM_CERT': os.path.join(
+                    claim_dir, 'claim.cert.pem',
+                ),
+                'SIPHOX_IOT_CLAIM_KEY': os.path.join(
+                    claim_dir, 'claim.private.key',
+                ),
+                'SIPHOX_IOT_CA_CERT': os.path.join(
+                    claim_dir, 'root-CA.crt',
+                ),
+            }
+            for env_key, path in _CLAIM.items():
+                if env_key not in os.environ:
+                    os.environ[env_key] = path
+
+    def _notify_device_ready_to_cloud(self) -> None:
+        '''Publish device_ready with current WiFi snapshot.'''
+        if self._iot_client is None:
+            LOG.debug(
+                'Skipping device_ready notify: no IoT client',
+            )
+            return
+        from ultra.utils.network import check_wifi_connected
+
+        device_sn = self._config.get('device_sn', 'unknown')
+        station_id = self._config.get('station_id', -1)
+        _, wifi_status = check_wifi_connected()
+        try:
+            self._iot_client.notify_device_ready(
+                hw_status={
+                    'device_sn': device_sn,
+                    'station_id': station_id,
+                    'ip_address': wifi_status.get('ip', ''),
+                    'wifi_ssid': wifi_status.get('ssid', ''),
+                },
+            )
+            LOG.info('Device ready notification sent')
+        except Exception as err:
+            LOG.warning(
+                'Device ready notification failed '
+                '(non-fatal): %s', err,
+            )
+
+    def _on_nfc_tap(self) -> None:
+        '''Called by NFCService on phone tap (NFC thread).'''
+        LOG.info('NFC tap detected')
+        if (
+            self.state == SystemState.IDLE
+            and self._iot_client is not None
+        ):
+            LOG.info(
+                'NFC tap in IDLE -- publishing device_ready',
+            )
+            self._notify_device_ready_to_cloud()
+
+    def _on_ble_wifi_connected(
+            self,
+            ssid: str,
+            ip_address: str,
+    ) -> None:
+        '''Called by WiFiProvisioner on BLE credential apply.'''
+        LOG.info(
+            'BLE WiFi connected: ssid=%s, ip=%s',
+            ssid, ip_address,
+        )
+        if self._iot_client is None:
+            LOG.warning(
+                'BLE WiFi connected but no IoT client yet '
+                '-- skipping register_device',
+            )
+            return
+        self._notify_device_ready_to_cloud()
+
+    async def run(self) -> None:
+        '''Main state machine loop.'''
         LOG.info('Starting Ultra state machine...')
         self._running = True
         self._set_state(SystemState.INITIALIZING)
@@ -248,59 +323,276 @@ class UltraStateMachine:
         LOG.info('Ultra state machine exited')
 
     async def _state_initializing(self) -> None:
-        '''Initialize hardware and check connectivity.
+        '''Check WiFi and start NFC + BLE provisioners.
 
-        Routes through CLOUD_REGISTRATION when an IoT
-        client was provided; otherwise skips to IDLE.
+        Starts NFCWiFiProvisioner and WiFiProvisioner in
+        daemon threads, then checks WiFi connectivity.
+        If connected, proceeds to AWS_IOT_PROVISIONING;
+        otherwise enters WIFI_PROVISIONING.
         '''
+        from ultra.utils.network import check_wifi_connected
+
+        device_sn = self._config.get(
+            'device_sn', 'Setup',
+        )
+        device_name = f'SiPhox-{device_sn}'
+
         self.chip_id = self._default_chip_id
-        LOG.info('Initialization complete')
-        if self._iot_client is not None:
+
+        if not self._skip_nfc:
+            try:
+                from ultra.services.nfc_provisioning.provisioner import (
+                    NFCWiFiProvisioner,
+                )
+                self._nfc_provisioner = NFCWiFiProvisioner(
+                    device_sn=device_sn,
+                    advertise_while_connected=True,
+                    on_tap=self._on_nfc_tap,
+                )
+                threading.Thread(
+                    target=self._nfc_provisioner.run,
+                    name='NFCProvisioningThread',
+                    daemon=True,
+                ).start()
+                LOG.info(
+                    'NFC provisioner started '
+                    '(URL: siphox.com/setup?sn=%s)',
+                    device_sn,
+                )
+            except Exception as err:
+                LOG.warning(
+                    'NFC provisioner unavailable: %s', err,
+                )
+
+        try:
+            from ultra.services.wifi_provisioning.provisioner import (
+                WiFiProvisioner,
+            )
+            self._wifi_provisioner = WiFiProvisioner(
+                device_name=device_name,
+                advertise_while_connected=True,
+                on_wifi_connected=(
+                    self._on_ble_wifi_connected
+                ),
+            )
+            threading.Thread(
+                target=self._wifi_provisioner.run,
+                name='BLEProvisioningThread',
+                daemon=True,
+            ).start()
+            LOG.info(
+                'BLE provisioner started '
+                '(advertising as %s)',
+                device_name,
+            )
+        except Exception as err:
+            LOG.warning(
+                'BLE provisioner unavailable: %s', err,
+            )
+
+        wifi_connected, wifi_status = check_wifi_connected()
+        if wifi_connected:
+            LOG.info(
+                'WiFi already connected: %s, IP: %s',
+                wifi_status.get('ssid'),
+                wifi_status.get('ip'),
+            )
             self._set_state(
-                SystemState.CLOUD_REGISTRATION,
+                SystemState.AWS_IOT_PROVISIONING,
             )
         else:
-            self._set_state(SystemState.IDLE)
+            LOG.warning(
+                'WiFi not connected -- waiting for '
+                'BLE/NFC provisioning',
+            )
+            self._set_state(SystemState.WIFI_PROVISIONING)
 
     async def _state_wifi_provisioning(self) -> None:
-        '''Wait for WiFi to connect.
+        '''Poll until WiFi connects via BLE/NFC provisioners.
 
-        Placeholder -- real BLE/NFC provisioning will be
-        wired when wifi_provisioner and nfc_service are
-        implemented.
+        Both provisioners were started in _state_initializing.
+        This state polls check_wifi_connected every 1s until
+        connected, then stops provisioners and proceeds.
         '''
-        LOG.info('WiFi provisioning (placeholder)...')
-        await asyncio.sleep(2.0)
-        self._set_state(
-            SystemState.AWS_IOT_PROVISIONING,
+        from ultra.utils.network import check_wifi_connected
+
+        LOG.info(
+            'Waiting for WiFi credentials via BLE/NFC...',
         )
+
+        while self._running:
+            await asyncio.sleep(1.0)
+            wifi_connected, wifi_status = (
+                check_wifi_connected()
+            )
+            if wifi_connected:
+                LOG.info(
+                    'WiFi provisioning complete: '
+                    'ssid=%s, ip=%s',
+                    wifi_status.get('ssid'),
+                    wifi_status.get('ip'),
+                )
+                if self._wifi_provisioner:
+                    self._wifi_provisioner.stop()
+                if self._nfc_provisioner:
+                    self._nfc_provisioner.stop()
+                self._wifi_just_provisioned = True
+                self._set_state(
+                    SystemState.AWS_IOT_PROVISIONING,
+                )
+                return
+
+        self._error_message = 'WiFi provisioning failed'
+        self._set_state(SystemState.ERROR)
 
     async def _state_aws_iot(self) -> None:
-        '''AWS IoT provisioning placeholder.'''
-        LOG.info('AWS IoT provisioning (placeholder)...')
-        await asyncio.sleep(1.0)
-        self._set_state(
-            SystemState.CLOUD_REGISTRATION,
+        '''Run AWS IoT fleet provisioning.
+
+        Checks if device already has valid credentials.
+        If not, runs IoTProvisioner in a background thread
+        with retry logic. On success proceeds to
+        CLOUD_REGISTRATION; on failure goes to ERROR.
+        '''
+        try:
+            from ultra.services.iot_provisioning import (
+                IoTProvisioner,
+                is_provisioned,
+            )
+        except ImportError:
+            LOG.warning(
+                'IoT provisioning SDK not available '
+                '-- skipping to CLOUD_REGISTRATION',
+            )
+            self._set_state(SystemState.CLOUD_REGISTRATION)
+            return
+
+        if is_provisioned():
+            LOG.info('AWS IoT credentials already valid')
+            self._set_state(SystemState.CLOUD_REGISTRATION)
+            return
+
+        device_sn = self._config.get(
+            'device_sn', 'unknown',
+        )
+        station_id = self._config.get('station_id', -1)
+
+        LOG.info(
+            'Starting IoT provisioning for %s', device_sn,
         )
 
-    async def _state_cloud_registration(self) -> None:
-        '''Register with cloud via IoT client.
+        prov_complete = threading.Event()
+        prov_success = [False]
 
-        Publishes a device_ready event so the cloud knows
-        this device is online, then transitions to IDLE.
-        '''
-        LOG.info('Cloud registration...')
-        if self._iot_client is not None:
+        def _run_provisioning() -> None:
             try:
-                self._publish_event('device_ready')
-                LOG.info(
-                    'Cloud registration: device_ready sent',
+                iot_prov = IoTProvisioner(
+                    device_sn=device_sn,
+                    station_id=station_id,
                 )
-            except Exception as exc:
+                prov_success[0] = iot_prov.run()
+            except Exception as err:
+                LOG.error(
+                    'AWS IoT provisioning error: %s', err,
+                )
+                prov_success[0] = False
+            finally:
+                prov_complete.set()
+
+        prov_thread = threading.Thread(
+            target=_run_provisioning,
+            name='IoTProvisioningThread',
+            daemon=True,
+        )
+        prov_thread.start()
+
+        while (
+            not prov_complete.is_set()
+            and self._running
+        ):
+            await asyncio.sleep(1.0)
+            if is_provisioned():
+                prov_complete.set()
+                prov_success[0] = True
+                break
+
+        if prov_success[0]:
+            LOG.info('AWS IoT provisioning successful')
+            self._set_state(SystemState.CLOUD_REGISTRATION)
+        else:
+            self._error_message = (
+                'AWS IoT provisioning failed -- '
+                'check claim certs in /etc/ultra/certs/ '
+                'and IoT endpoint/template config'
+            )
+            LOG.error(self._error_message)
+            self._set_state(SystemState.ERROR)
+
+    async def _state_cloud_registration(self) -> None:
+        '''Connect to IoT with device certs and publish device_ready.
+
+        Uses the fleet provisioning IoTClient to connect with
+        device certificates. On success, stores as _iot_client
+        for subsequent event publishing. All operations are
+        non-fatal: failures log a warning and proceed to IDLE
+        with _iot_client=None.
+        '''
+        try:
+            from ultra.services.iot_provisioning import (
+                create_device_client,
+                is_provisioned,
+            )
+        except ImportError:
+            LOG.warning(
+                'IoT provisioning SDK not available '
+                '-- skipping cloud registration',
+            )
+            self._set_state(SystemState.IDLE)
+            return
+
+        if not is_provisioned():
+            LOG.warning(
+                'Device not provisioned -- '
+                'skipping cloud connection',
+            )
+            self._set_state(SystemState.IDLE)
+            return
+
+        try:
+            self._iot_client = create_device_client()
+            if not self._iot_client:
                 LOG.warning(
-                    'Cloud registration publish failed: %s',
-                    exc,
+                    'Could not create IoT client -- '
+                    'skipping cloud connection',
                 )
+                self._set_state(SystemState.IDLE)
+                return
+
+            loop = asyncio.get_event_loop()
+            connected = await loop.run_in_executor(
+                None,
+                self._iot_client.connect_with_device_cert,
+            )
+
+            if not connected:
+                LOG.warning(
+                    'IoT client connection failed -- '
+                    'skipping cloud connection',
+                )
+                self._iot_client = None
+            else:
+                LOG.info('IoT client connected')
+                if self._wifi_just_provisioned:
+                    LOG.info(
+                        'WiFi just provisioned -- '
+                        'registering device',
+                    )
+                    self._wifi_just_provisioned = False
+                self._notify_device_ready_to_cloud()
+
+        except Exception as err:
+            LOG.error('Cloud connection error: %s', err)
+            self._iot_client = None
+
         self._set_state(SystemState.IDLE)
 
     async def _state_idle(self) -> None:
@@ -412,9 +704,29 @@ class UltraStateMachine:
         await asyncio.sleep(self._restart_delay_s)
 
     def stop(self) -> None:
-        '''Stop the state machine.'''
+        '''Stop the state machine and release resources.'''
         LOG.info('Stopping state machine...')
         self._running = False
+        if self._nfc_provisioner:
+            try:
+                self._nfc_provisioner.stop()
+            except Exception:
+                pass
+            self._nfc_provisioner = None
+        if self._wifi_provisioner:
+            try:
+                self._wifi_provisioner.stop()
+            except Exception:
+                pass
+            self._wifi_provisioner = None
+        if self._iot_client:
+            try:
+                self._iot_client.disconnect()
+            except Exception as err:
+                LOG.warning(
+                    'IoT client disconnect error: %s', err,
+                )
+            self._iot_client = None
 
     _STATE_HANDLERS = {
         SystemState.INITIALIZING: (

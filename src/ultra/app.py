@@ -170,53 +170,22 @@ class Application:
     def _start_state_machine(self) -> None:
         '''Start the state machine as a background task.
 
-        Creates an IoTClient when the ``iot`` config section
-        has an ``endpoint`` set and device certs are present.
+        The state machine creates its own IoT client after
+        fleet provisioning completes (in CLOUD_REGISTRATION).
         '''
         from ultra.services.state_machine import (
             UltraStateMachine,
         )
 
-        iot = self._create_iot_client()
-
         self._state_machine = UltraStateMachine(
             config=self.config,
             event_bus=self.event_bus,
             monitor=self._monitor,
-            iot_client=iot,
         )
         self._sm_task = asyncio.ensure_future(
             self._state_machine.run(),
         )
         LOG.info('State machine started')
-
-    def _create_iot_client(self) -> Any:
-        '''Create and connect an IoT client if configured.
-
-        Returns the connected client, or None when IoT
-        is not configured or connection fails.
-        '''
-        iot_cfg = self.config.get('iot', {})
-        endpoint = iot_cfg.get('endpoint', '')
-        if not endpoint:
-            LOG.info('IoT endpoint not configured — skipping')
-            return None
-
-        from ultra.services.iot_client import IoTClient
-        client = IoTClient(
-            config={
-                **iot_cfg,
-                'device_sn': self.config.get(
-                    'device_sn', '',
-                ),
-            },
-            event_bus=self.event_bus,
-        )
-        if client.connect():
-            LOG.info('IoT client connected')
-            return client
-        LOG.warning('IoT client failed to connect')
-        return None
 
     def _create_reader(self, use_mock: bool) -> Any:
         '''Create the optical reader interface.
