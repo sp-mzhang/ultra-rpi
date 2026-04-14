@@ -2330,12 +2330,17 @@ def unpack_msg_status(data: bytes) -> dict:
 
 
 def unpack_msg_pressure(data: bytes) -> dict:
-    '''Unpack MSG_PRESSURE async payload (8 bytes).'''
+    '''Unpack MSG_PRESSURE async payload (8 bytes).
+
+    The firmware packs timestamp in 100 µs units (pump clock).
+    We convert to true milliseconds here so downstream code can
+    divide by 1000 to get seconds.
+    '''
     if len(data) < 8:
         return {}
-    ts, pressure, pos = struct.unpack_from('<IhH', data)
+    ts_100us, pressure, pos = struct.unpack_from('<IhH', data)
     return {
-        'timestamp_ms': ts,
+        'timestamp_ms': ts_100us / 10.0,
         'pressure_raw': pressure,
         'pump_position': pos,
     }

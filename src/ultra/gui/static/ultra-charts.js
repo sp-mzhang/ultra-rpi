@@ -523,6 +523,7 @@
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
+        spanGaps: false,
         scales: {
           x: {
             type: 'linear',
@@ -587,6 +588,7 @@
         y: s.pressure || 0,
       });
     }
+    ds.data.push({ x: timestampS + 0.01, y: NaN });
     prDirty = true;
   }
 

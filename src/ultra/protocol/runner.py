@@ -1036,8 +1036,17 @@ class ProtocolRunner:
             s['phase'] = phase
         self.tracker.add_pressure_data(samples)
         t_last = samples[-1].get('timestamp_ms', 0)
+        gui_max = 1000
+        src = samples
+        if len(samples) > gui_max:
+            step = len(samples) / gui_max
+            src = [
+                samples[int(i * step)]
+                for i in range(gui_max)
+            ]
+            src.append(samples[-1])
         sample_list = []
-        for s in samples:
+        for s in src:
             dt = (
                 s.get('timestamp_ms', 0) - t_last
             ) / 1000.0
