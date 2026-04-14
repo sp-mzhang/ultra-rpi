@@ -62,6 +62,16 @@ rm -rf "${DATA_DIR:?}"/.*  2>/dev/null || true
 echo "Recreating empty directory..."
 mkdir -p "$DATA_DIR"
 
+TRASH_DIR="$HOME/.local/share/Trash"
+if [ -d "$TRASH_DIR" ] && [ "$(ls -A "$TRASH_DIR" 2>/dev/null)" ]; then
+    TRASH_SIZE=$(du -sh "$TRASH_DIR" 2>/dev/null | cut -f1)
+    echo "Emptying trash ($TRASH_SIZE)..."
+    rm -rf "${TRASH_DIR:?}"/*
+fi
+
+echo "Clearing package caches..."
+rm -rf "$HOME/.cache/uv" "$HOME/.cache/pip" 2>/dev/null || true
+
 AFTER=$(du -sh "$DATA_DIR" 2>/dev/null | cut -f1)
 echo ""
 echo "Done."
