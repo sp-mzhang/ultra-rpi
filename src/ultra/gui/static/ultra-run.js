@@ -467,7 +467,7 @@
       const tr = document.createElement('tr');
       const excluded = a.excluded_by_validation;
       const concStr = excluded ? 'EXCLUDED'
-        : (a.concentration !== null ? String(a.concentration) : '--');
+        : (a.concentration_display || (a.concentration !== null ? String(a.concentration) : '--'));
       const sigStr = excluded ? '--'
         : (a.signal !== null ? String(a.signal) : '--');
       const rangeCls = excluded ? 'out-of-range'
