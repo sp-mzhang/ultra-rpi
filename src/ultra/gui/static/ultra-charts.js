@@ -127,15 +127,15 @@
     tbSg.hidden = true;
 
     if (tab === 'spectrum') {
-      spCanvas.style.display = '';
+      spCanvas.style.display = 'block';
       tbSp.hidden = false;
       if (spChart) spChart.resize();
     } else if (tab === 'sensorgram') {
-      sgCanvas.style.display = '';
+      sgCanvas.style.display = 'block';
       tbSg.hidden = false;
       if (sgChart) sgChart.resize();
     } else if (tab === 'pressure') {
-      prCanvas.style.display = '';
+      prCanvas.style.display = 'block';
       if (prChart) prChart.resize();
     }
   }
@@ -612,8 +612,10 @@
     }
     const sgCanvas = $('#sensorgram-canvas');
     const spCanvas = $('#spectrum-canvas');
-    sgCanvas.style.display = '';
-    spCanvas.style.display = '';
+    const prCanvasInit = $('#pressure-canvas');
+    sgCanvas.style.display = 'block';
+    spCanvas.style.display = 'block';
+    prCanvasInit.style.display = 'block';
 
     initSensorgram();
     initSpectrum();
