@@ -671,13 +671,24 @@ class AnalysisService:
                         ap.name, step_key,
                     )
 
+            LOG.info(
+                '%s: sensor_df columns=%s',
+                ap.name, list(sdf.columns),
+            )
+
             signals: list[float] = []
             for ch in channels:
                 col = f'sensor{ch}'
                 if col not in sdf.columns:
+                    LOG.warning(
+                        '%s: column %s missing', ap.name, col,
+                    )
                     continue
                 shifts = sdf[col].dropna()
                 if shifts.empty:
+                    LOG.warning(
+                        '%s: %s all NaN', ap.name, col,
+                    )
                     continue
 
                 if t_start is not None:
@@ -686,6 +697,14 @@ class AnalysisService:
                         (shifts.index <= t_end)
                     )
                     windowed = shifts[mask]
+                    LOG.info(
+                        '%s: %s total=%d, in_window=%d '
+                        '(idx [%.2f..%.2f])',
+                        ap.name, col, len(shifts),
+                        len(windowed),
+                        float(shifts.index.min()),
+                        float(shifts.index.max()),
+                    )
                     if not windowed.empty:
                         signals.append(
                             float(windowed.mean()),
