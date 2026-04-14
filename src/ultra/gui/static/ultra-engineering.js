@@ -273,11 +273,30 @@
     } catch (_) { /* ignore */ }
   }
 
+  let jogBusy = false;
+
+  function setJogButtonsEnabled(enabled) {
+    document.querySelectorAll('.eng-jog-btn')
+      .forEach((b) => { b.disabled = !enabled; });
+  }
+
+  async function fetchFreshPosition() {
+    try {
+      const r = await fetch('/api/stm32/status');
+      if (!r.ok) return null;
+      return r.json();
+    } catch (_) { return null; }
+  }
+
   /* ---- MOTION wiring ---- */
   function wireEngMotion() {
     document.querySelectorAll('.eng-jog-btn')
       .forEach((btn) => {
         btn.addEventListener('click', async () => {
+          if (jogBusy) return;
+          jogBusy = true;
+          setJogButtonsEnabled(false);
+
           const axis = btn.dataset.axis;
           const dir = parseInt(btn.dataset.dir);
           const stepEl = $(`#eng-step-${axis}`);
@@ -288,10 +307,24 @@
           const speed = parseFloat(
             velEl ? velEl.value : 20,
           );
-          const curEl = $(`#eng-pos-${axis}`);
-          const cur = curEl
-            ? (parseFloat(curEl.textContent) || 0)
-            : 0;
+
+          const status = await fetchFreshPosition();
+          if (!status) {
+            engLog('Jog: failed to read position');
+            jogBusy = false;
+            setJogButtonsEnabled(true);
+            return;
+          }
+
+          let cur;
+          if (axis === 'lift') {
+            const lift = status.lift || {};
+            cur = lift.position_mm || 0;
+          } else {
+            const g = status.gantry || {};
+            cur = g[`${axis}_mm`] || 0;
+          }
+
           const target = cur + step * dir;
           if (axis === 'lift') {
             await engCmd('lift_move', {
@@ -303,9 +336,10 @@
             p.speed = speed;
             await engCmd('move_gantry', p);
           }
-          if (curEl) {
-            curEl.textContent = target.toFixed(2);
-          }
+
+          await pollEngPosition();
+          jogBusy = false;
+          setJogButtonsEnabled(true);
         });
       });
 
