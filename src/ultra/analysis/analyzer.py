@@ -536,6 +536,23 @@ class AnalysisService:
         return result
 
     @staticmethod
+    def _build_channel_map(sdf: Any) -> dict[int, Any]:
+        '''Map channel numbers to sensor_df column keys.
+
+        Handles both flat columns (``sensor1``, ``sensor2``)
+        and MultiIndex columns from grouped data
+        (``('RC0205', 'channel_6')``).
+        '''
+        import re
+        cmap: dict[int, Any] = {}
+        for col in sdf.columns:
+            label = col[1] if isinstance(col, tuple) else col
+            m = re.search(r'(\d+)$', str(label))
+            if m:
+                cmap[int(m.group(1))] = col
+        return cmap
+
+    @staticmethod
     def _find_step_row(
             samples_df: Any,
             step_key: Any,
@@ -671,17 +688,20 @@ class AnalysisService:
                         ap.name, step_key,
                     )
 
+            col_map = self._build_channel_map(sdf)
             LOG.info(
-                '%s: sensor_df columns=%s',
+                '%s: sensor_df columns=%s, channel_map=%s',
                 ap.name, list(sdf.columns),
+                {k: str(v) for k, v in col_map.items()},
             )
 
             signals: list[float] = []
             for ch in channels:
-                col = f'sensor{ch}'
-                if col not in sdf.columns:
+                col = col_map.get(ch)
+                if col is None:
                     LOG.warning(
-                        '%s: column %s missing', ap.name, col,
+                        '%s: channel %d not in columns',
+                        ap.name, ch,
                     )
                     continue
                 shifts = sdf[col].dropna()
@@ -731,8 +751,8 @@ class AnalysisService:
             if neg_channels:
                 neg_signals: list[float] = []
                 for ch in neg_channels:
-                    col = f'sensor{ch}'
-                    if col not in sdf.columns:
+                    col = col_map.get(ch)
+                    if col is None:
                         continue
                     shifts = sdf[col].dropna()
                     if not shifts.empty:
