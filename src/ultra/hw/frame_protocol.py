@@ -182,6 +182,10 @@ WELL_ID_AUTO  = 0xFF # Firmware auto-detects from last gantry location
 # calculations reflect the actual travel distance the hardware can achieve.
 GANTRY_Z_MIN_POS = -15625
 
+GANTRY_XY_USTEPS_PER_MM = 3200.0 / (3.14159265358979 * 14.32)  # ~71.14
+Z_USTEPS_PER_MM = 400.0 / 0.6096       # ~656.17 µsteps/mm (pipette Z)
+LIFT_USTEPS_PER_MM = 16.0 / 0.0254     # ~629.92 µsteps/mm (lift)
+
 # Liquid handling (0x8Axx)
 CMD_LLD_PERFORM     = 0x8A01
 CMD_LLF_START       = 0x8A02
@@ -543,7 +547,10 @@ def pack_move_gantry(
 
     Positions are in mm (float). Pass None to skip an axis.
     Speed is in mm/s (float); 0 = use firmware default.
-    Firmware converts µm → µsteps and mm/s → µsteps/s.
+
+    Each axis is converted to µsteps using its own resolution:
+      X/Y: GANTRY_XY_USTEPS_PER_MM (~71.14 µsteps/mm, belt drive)
+      Z:   Z_USTEPS_PER_MM (~656.17 µsteps/mm, lead screw)
 
     Args:
         seq  : sequence number.
@@ -555,14 +562,16 @@ def pack_move_gantry(
     Returns:
         Packed bytes: struct.pack('<IiiiH', ...) = 18 bytes.
     '''
-    def _to_um(mm):
+    def _to_usteps(mm, factor):
         if mm is None:
             return _INT32_MAX
-        return int(round(mm * 1000.0))
+        return int(round(mm * factor))
 
+    x_us = _to_usteps(x_mm, GANTRY_XY_USTEPS_PER_MM)
+    y_us = _to_usteps(y_mm, GANTRY_XY_USTEPS_PER_MM)
+    z_us = _to_usteps(z_mm, Z_USTEPS_PER_MM)
     speed_01mms = int(round(speed * 10.0))
-    return struct.pack('<IiiiH', seq,
-                       _to_um(x_mm), _to_um(y_mm), _to_um(z_mm),
+    return struct.pack('<IiiiH', seq, x_us, y_us, z_us,
                        speed_01mms)
 
 
@@ -574,7 +583,7 @@ def pack_lift_move(
     '''Pack CMD_LIFT_MOVE (0x8B03) payload.
 
     Position is in mm (float). Speed is in mm/s (float).
-    Firmware converts both to µsteps / µsteps/s.
+    Converted to µsteps using LIFT_USTEPS_PER_MM.
 
     Args:
         seq      : Sequence number.
@@ -583,11 +592,11 @@ def pack_lift_move(
         speed    : Cruise speed in mm/s; 0 = firmware default.
 
     Returns:
-        Packed bytes: struct.pack('<IiH', seq, target_um, speed_01mms).
+        Packed bytes: struct.pack('<IiH', ...).
     '''
-    target_um   = int(round(target_mm * 1000.0))
-    speed_01mms = int(round(speed * 10.0))
-    return struct.pack('<IiH', seq, target_um, speed_01mms)
+    target_usteps = int(round(target_mm * LIFT_USTEPS_PER_MM))
+    speed_usteps = int(round(speed * LIFT_USTEPS_PER_MM))
+    return struct.pack('<IiH', seq, target_usteps, speed_usteps)
 
 
 def pack_move_z_axis(
@@ -599,17 +608,18 @@ def pack_move_z_axis(
     '''Pack CMD_MOVE_Z_AXIS payload.
 
     Position is in mm (float). Speed is in mm/s (float).
-    Firmware converts both to µsteps / µsteps/s.
+    Converted to µsteps using Z_USTEPS_PER_MM.
 
     Args:
         seq         : sequence number.
         position_mm : absolute Z position in mm.
         speed       : cruise speed in mm/s (0 = firmware default).
-        acceleration: reserved (ramp handled by firmware).
+        acceleration: acceleration in steps/s² (0 = firmware default).
     '''
-    position_um = int(round(position_mm * 1000.0))
-    speed_01mms = int(round(speed * 10.0))
-    return struct.pack('<IiHH', seq, position_um, speed_01mms, acceleration)
+    position_usteps = int(round(position_mm * Z_USTEPS_PER_MM))
+    speed_usteps = int(round(speed * Z_USTEPS_PER_MM))
+    return struct.pack('<IiHH', seq, position_usteps, speed_usteps,
+                       acceleration)
 
 
 def pack_move_to_well(

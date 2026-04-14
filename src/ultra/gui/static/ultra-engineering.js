@@ -1,7 +1,7 @@
 /* Ultra RPi -- Engineering tab */
 (function () {
   'use strict';
-  const { $, hexDV, engCmd, engLog, drawTimeSeries, wireSlider, statusDump } = window.Ultra;
+  const { $, hexDV, engCmd, engLog } = window.Ultra;
   const Ultra = window.Ultra;
 
   const LOCATION_NAMES = [
@@ -239,37 +239,41 @@
       engPosTimer = null;
     }
   }
+  function updatePositionDisplay(d) {
+    const g = d.gantry || {};
+    const setV = (id, v) => {
+      const el = $(`#eng-pos-${id}`);
+      if (el) {
+        el.textContent = (
+          v != null
+            ? Number(v).toFixed(2) : '--'
+        );
+      }
+    };
+    setV('x', g.x_mm);
+    setV('y', g.y_mm);
+    setV('z', g.z_mm);
+    const lift = d.lift || {};
+    setV('lift', lift.position_mm);
+
+    const setLed = (id, homed) => {
+      const el = $(`#eng-led-${id}`);
+      if (!el) return;
+      el.classList.toggle('green', !!homed);
+      el.classList.toggle('red', !homed);
+    };
+    setLed('x', g.x_homed);
+    setLed('y', g.y_homed);
+    setLed('z', g.z_homed);
+    setLed('lift', lift.homed);
+  }
+
   async function pollEngPosition() {
     try {
-      const r = await fetch('/api/stm32/status');
+      const r = await fetch('/api/stm32/position');
       if (!r.ok) return;
       const d = await r.json();
-      const g = d.gantry || {};
-      const setV = (id, v) => {
-        const el = $(`#eng-pos-${id}`);
-        if (el) {
-          el.textContent = (
-            v != null
-              ? Number(v).toFixed(2) : '--'
-          );
-        }
-      };
-      setV('x', g.x_mm);
-      setV('y', g.y_mm);
-      setV('z', g.z_mm);
-      const lift = d.lift || {};
-      setV('lift', lift.position_mm);
-
-      const setLed = (id, homed) => {
-        const el = $(`#eng-led-${id}`);
-        if (!el) return;
-        el.classList.toggle('green', !!homed);
-        el.classList.toggle('red', !homed);
-      };
-      setLed('x', g.x_homed);
-      setLed('y', g.y_homed);
-      setLed('z', g.z_homed);
-      setLed('lift', lift.homed);
+      updatePositionDisplay(d);
     } catch (_) { /* ignore */ }
   }
 
@@ -282,7 +286,7 @@
 
   async function fetchFreshPosition() {
     try {
-      const r = await fetch('/api/stm32/status');
+      const r = await fetch('/api/stm32/position');
       if (!r.ok) return null;
       return r.json();
     } catch (_) { return null; }
@@ -316,25 +320,36 @@
             return;
           }
 
-          let cur;
-          if (axis === 'lift') {
-            const lift = status.lift || {};
-            cur = lift.position_mm || 0;
-          } else {
-            const g = status.gantry || {};
-            cur = g[`${axis}_mm`] || 0;
-          }
+          const g = status.gantry || {};
+          const curX = g.x_mm || 0;
+          const curY = g.y_mm || 0;
+          const curZ = g.z_mm || 0;
+          const curLift = (
+            (status.lift || {}).position_mm || 0
+          );
 
-          const target = cur + step * dir;
-          if (axis === 'lift') {
+          if (axis === 'x') {
+            await engCmd('move_gantry', {
+              x_mm: curX + step * dir,
+              y_mm: curY,
+              speed,
+            }, true, 60);
+          } else if (axis === 'y') {
+            await engCmd('move_gantry', {
+              x_mm: curX,
+              y_mm: curY + step * dir,
+              speed,
+            }, true, 60);
+          } else if (axis === 'z') {
+            await engCmd('move_z_axis', {
+              position_mm: curZ + step * dir,
+              speed,
+            }, true, 60);
+          } else if (axis === 'lift') {
             await engCmd('lift_move', {
-              target_mm: target, speed: speed,
-            });
-          } else {
-            const p = {};
-            p[`${axis}_mm`] = target;
-            p.speed = speed;
-            await engCmd('move_gantry', p);
+              target_mm: curLift + step * dir,
+              speed,
+            }, true, 60);
           }
 
           await pollEngPosition();
@@ -347,31 +362,33 @@
       const spd = parseFloat($('#eng-vel-x').value);
       engCmd('move_gantry', {
         x_mm: 72.0, speed: spd,
-      });
+      }, true, 60);
     };
     $('#eng-y-front').onclick = () => {
       const spd = parseFloat($('#eng-vel-y').value);
       engCmd('move_gantry', {
         y_mm: 9999, speed: spd,
-      });
+      }, true, 60);
     };
     $('#eng-z-bottom').onclick = () => {
       const spd = parseFloat($('#eng-vel-z').value);
-      engCmd('move_gantry', {
-        z_mm: -23.81, speed: spd,
-      });
+      engCmd('move_z_axis', {
+        position_mm: -23.81, speed: spd,
+      }, true, 60);
     };
 
-    $('#eng-goto-btn').onclick = () => {
+    $('#eng-goto-btn').onclick = async () => {
       const x = parseFloat($('#eng-goto-x').value);
       const y = parseFloat($('#eng-goto-y').value);
       const z = parseFloat($('#eng-goto-z').value);
       const v = parseFloat($('#eng-goto-vel').value);
-      engCmd('home_z_axis', {}, true, 30).then(
-        () => engCmd('move_gantry', {
-          x_mm: x, y_mm: y, z_mm: z, speed: v,
-        }),
-      );
+      await engCmd('home_z_axis', {}, true, 30);
+      await engCmd('move_gantry', {
+        x_mm: x, y_mm: y, speed: v,
+      }, true, 60);
+      await engCmd('move_z_axis', {
+        position_mm: z, speed: v,
+      }, true, 60);
     };
 
     $('#eng-lift-move-btn').onclick = () => {
@@ -383,7 +400,7 @@
       );
       engCmd('lift_move', {
         target_mm: mm, speed: spd,
-      });
+      }, true, 60);
     };
 
     $('#eng-estop').onclick = () =>

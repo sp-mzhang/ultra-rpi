@@ -280,9 +280,19 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             },
         )
 
-    @router.get('/stm32/status')
-    async def stm32_status():
-        '''Return combined hardware status.'''
+    @router.get('/stm32/position')
+    async def stm32_position():
+        '''Return motor positions and homing flags only (fast).
+
+        Calls only get_position + get_gantry_status (for homing
+        flags).  Use this for jog and position polling instead of
+        the heavier /stm32/status endpoint.
+        '''
+        from ultra.hw.frame_protocol import (
+            GANTRY_XY_USTEPS_PER_MM,
+            LIFT_USTEPS_PER_MM,
+            Z_USTEPS_PER_MM,
+        )
         stm32 = get_eng_stm32()
         if stm32 is None:
             raise HTTPException(
@@ -291,28 +301,132 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             )
         loop = asyncio.get_running_loop()
 
-        LIFT_USTEPS_PER_MM = 16.0 / 0.0254
-
-        def _query():
+        def _query_pos():
             out: dict[str, Any] = {}
+            gantry: dict[str, Any] = {}
+            try:
+                r = stm32.send_command(
+                    {'cmd': 'get_position'},
+                    timeout_s=2.0,
+                )
+                if r:
+                    gantry['x_mm'] = round(
+                        r.get('x', 0)
+                        / GANTRY_XY_USTEPS_PER_MM, 3,
+                    )
+                    gantry['y_mm'] = round(
+                        r.get('y', 0)
+                        / GANTRY_XY_USTEPS_PER_MM, 3,
+                    )
+                    gantry['z_mm'] = round(
+                        r.get('z_axis', 0)
+                        / Z_USTEPS_PER_MM, 3,
+                    )
+                    out['lift'] = {
+                        'position_mm': round(
+                            r.get('z', 0)
+                            / LIFT_USTEPS_PER_MM, 2,
+                        ),
+                    }
+            except Exception:
+                pass
             try:
                 r = stm32.send_command(
                     {'cmd': 'get_gantry_status'},
                     timeout_s=2.0,
                 )
                 if r:
-                    r['x_mm'] = round(
-                        r.get('x', 0) / 1000.0, 3,
+                    gantry['x_homed'] = r.get(
+                        'x_homed', False,
                     )
-                    r['y_mm'] = round(
-                        r.get('y', 0) / 1000.0, 3,
+                    gantry['y_homed'] = r.get(
+                        'y_homed', False,
                     )
-                    r['z_mm'] = round(
-                        r.get('z', 0) / 1000.0, 3,
+                    gantry['z_homed'] = r.get(
+                        'z_homed', False,
                     )
-                    out['gantry'] = r
+                    lift = out.get('lift', {})
+                    lift['homed'] = r.get(
+                        'z_homed', False,
+                    )
+                    out['lift'] = lift
             except Exception:
                 pass
+            out['gantry'] = gantry
+            return out
+
+        return await loop.run_in_executor(
+            None, _query_pos,
+        )
+
+    @router.get('/stm32/status')
+    async def stm32_status():
+        '''Return combined hardware status (all subsystems).'''
+        from ultra.hw.frame_protocol import (
+            GANTRY_XY_USTEPS_PER_MM,
+            LIFT_USTEPS_PER_MM,
+            Z_USTEPS_PER_MM,
+        )
+        stm32 = get_eng_stm32()
+        if stm32 is None:
+            raise HTTPException(
+                status_code=503,
+                detail='STM32 not connected',
+            )
+        loop = asyncio.get_running_loop()
+
+        def _query():
+            out: dict[str, Any] = {}
+            gantry: dict[str, Any] = {}
+            try:
+                r = stm32.send_command(
+                    {'cmd': 'get_position'},
+                    timeout_s=2.0,
+                )
+                if r:
+                    gantry['x_mm'] = round(
+                        r.get('x', 0)
+                        / GANTRY_XY_USTEPS_PER_MM, 3,
+                    )
+                    gantry['y_mm'] = round(
+                        r.get('y', 0)
+                        / GANTRY_XY_USTEPS_PER_MM, 3,
+                    )
+                    gantry['z_mm'] = round(
+                        r.get('z_axis', 0)
+                        / Z_USTEPS_PER_MM, 3,
+                    )
+                    out['lift'] = {
+                        'position_mm': round(
+                            r.get('z', 0)
+                            / LIFT_USTEPS_PER_MM, 2,
+                        ),
+                    }
+            except Exception:
+                pass
+            try:
+                r = stm32.send_command(
+                    {'cmd': 'get_gantry_status'},
+                    timeout_s=2.0,
+                )
+                if r:
+                    gantry['x_homed'] = r.get(
+                        'x_homed', False,
+                    )
+                    gantry['y_homed'] = r.get(
+                        'y_homed', False,
+                    )
+                    gantry['z_homed'] = r.get(
+                        'z_homed', False,
+                    )
+                    lift = out.get('lift', {})
+                    lift['homed'] = r.get(
+                        'z_homed', False,
+                    )
+                    out['lift'] = lift
+            except Exception:
+                pass
+            out['gantry'] = gantry
             try:
                 r = stm32.send_command(
                     {'cmd': 'door_status'},
@@ -320,22 +434,6 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                 )
                 if r:
                     out['door'] = r
-            except Exception:
-                pass
-            try:
-                r = stm32.send_command(
-                    {'cmd': 'lift_status'},
-                    timeout_s=2.0,
-                )
-                if r:
-                    steps = r.get('position_steps', 0)
-                    r['position_mm'] = round(
-                        steps / LIFT_USTEPS_PER_MM, 2,
-                    )
-                    r['homed'] = r.get(
-                        'is_homed', False,
-                    )
-                    out['lift'] = r
             except Exception:
                 pass
             try:

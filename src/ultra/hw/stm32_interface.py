@@ -33,7 +33,7 @@ DEFAULT_TIMEOUT_MS = 20000
 DEFAULT_VOLUME_UL = 100
 DEFAULT_SPEED_UL_S = 50
 
-Z_USTEPS_PER_MM = 400.0 / 0.6096
+Z_USTEPS_PER_MM = fp.Z_USTEPS_PER_MM
 
 GANTRY_Z_MIN_MM = fp.GANTRY_Z_MIN_POS / Z_USTEPS_PER_MM
 
@@ -1211,6 +1211,7 @@ class STM32Interface:
             result['x'] = d.get('x', 0)
             result['y'] = d.get('y', 0)
             result['z'] = d.get('z', 0)
+            result['z_axis'] = d.get('z_axis', 0)
         elif cmd_name in (
                 'pump_aspirate', 'pump_dispense',
         ):
