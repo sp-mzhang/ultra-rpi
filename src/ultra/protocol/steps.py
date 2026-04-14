@@ -578,6 +578,7 @@ class ReagentTransferStep(StepExecutor):
                 operation=f'asp {asp_vol}uL (pre-pulled)',
             )
         else:
+            stream = params.get('stream', False)
             sa = runner.stm32.smart_aspirate_at(
                 loc_id=source.loc_id,
                 volume_ul=asp_vol,
@@ -593,7 +594,7 @@ class ReagentTransferStep(StepExecutor):
                     'air_slug',
                     consts.get('air_slug_ul', 40),
                 ),
-                stream=False,
+                stream=stream,
             )
             if sa is None:
                 return False
@@ -603,6 +604,7 @@ class ReagentTransferStep(StepExecutor):
             )
             runner.collect_pressure(
                 sa, params['label'],
+                operation='aspirate', phase='LLF',
             )
 
         label = params.get('label', 'reagent_transfer')
@@ -617,7 +619,7 @@ class ReagentTransferStep(StepExecutor):
             ),
             reasp_ul=reasp,
             cartridge_z=runner.cartridge_z_mm,
-            stream=False,
+            stream=params.get('stream', False),
         )
         if not cd_r:
             return False
@@ -699,6 +701,7 @@ class ReagentTransferBFStep(StepExecutor):
                 operation=f'asp {asp_vol}uL (pre-pulled)',
             )
         else:
+            stream = params.get('stream', False)
             sa = runner.stm32.smart_aspirate_at(
                 loc_id=source.loc_id,
                 volume_ul=asp_vol,
@@ -714,7 +717,7 @@ class ReagentTransferBFStep(StepExecutor):
                     'air_slug',
                     consts.get('air_slug_ul', 40),
                 ),
-                stream=False,
+                stream=stream,
             )
             if sa is None:
                 return False
@@ -724,6 +727,7 @@ class ReagentTransferBFStep(StepExecutor):
             )
             runner.collect_pressure(
                 sa, params['label'],
+                operation='aspirate', phase='LLF',
             )
 
         label = params.get('label', 'reagent_transfer_bf')
@@ -741,7 +745,7 @@ class ReagentTransferBFStep(StepExecutor):
             reasp_ul=reasp,
             sleep_s=params.get('sleep_s', 30),
             cartridge_z=runner.cartridge_z_mm,
-            stream=False,
+            stream=params.get('stream', False),
         )
         if not cd_r:
             return False
@@ -941,7 +945,10 @@ class WellToChipStep(StepExecutor):
             source.name, delta_ul=-asp_vol,
             operation=f'asp {asp_vol}uL',
         )
-        runner.collect_pressure(sa, params['label'])
+        runner.collect_pressure(
+            sa, params['label'],
+            operation='aspirate', phase='LLF',
+        )
 
         label = params.get('label', 'well_to_chip')
         _emit_timing_marker(runner, label, 'start')
@@ -1092,6 +1099,11 @@ class SmartAspirateStep(StepExecutor):
             well.name, delta_ul=-volume,
             operation=f'asp {volume}uL',
         )
+        runner.collect_pressure(
+            sa,
+            params.get('label', 'smart_aspirate'),
+            operation='aspirate', phase='LLF',
+        )
         return True
 
 
@@ -1141,6 +1153,11 @@ class DilutionTransferStep(StepExecutor):
         runner.tracker.update_well(
             source.name, delta_ul=-volume,
             operation=f'asp {volume}uL',
+        )
+        runner.collect_pressure(
+            sa,
+            params.get('label', 'dilution_transfer'),
+            operation='aspirate', phase='LLF',
         )
 
         ok = runner.stm32.well_dispense_at(
@@ -1461,6 +1478,7 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('reasp_ul', default=12),
         _p('return_speed', default=100.0),
         _p('skip_aspirate', 'boolean', default=False),
+        _p('stream', 'boolean', default=False),
     ],
     'reagent_transfer_bf': [
         _p('source', 'string', well_ref=True, required=True),
@@ -1477,6 +1495,7 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('sleep_s', default=30),
         _p('return_speed', default=100.0),
         _p('skip_aspirate', 'boolean', default=False),
+        _p('stream', 'boolean', default=False),
     ],
     'well_transfer': [
         _p('source', 'string', well_ref=True, required=True),

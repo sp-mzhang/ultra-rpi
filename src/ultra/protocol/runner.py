@@ -102,6 +102,10 @@ class ProtocolRunner:
         self._run_dir: str | None = None
         self._protocol_config: dict[str, Any] | None = None
 
+        self._pressure_csv_file: Any = None
+        self._pressure_csv_writer: Any = None
+        self._pressure_csv_path: str | None = None
+
     def _active_config(self) -> dict[str, Any]:
         '''Config merged with recipe reader/peak for current run.'''
         if self._protocol_config is not None:
@@ -822,6 +826,14 @@ class ProtocolRunner:
                 else:
                     break
         finally:
+            if self._pressure_csv_file:
+                self._pressure_csv_file.close()
+                LOG.info(
+                    'Pressure CSV closed: %s',
+                    self._pressure_csv_path,
+                )
+                self._pressure_csv_file = None
+                self._pressure_csv_writer = None
             self._stop_reader()
             self._protocol_config = None
             if self._pipeline is not None:
@@ -967,21 +979,50 @@ class ProtocolRunner:
         )
         t.start()
 
+    def _open_pressure_csv(self) -> None:
+        '''Lazily open the pressure CSV on first data.'''
+        if self._pressure_csv_file is not None:
+            return
+        run_dir = self._run_dir
+        if not run_dir:
+            return
+        import csv
+        from datetime import datetime
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        fname = f'pressure_streaming_{ts}.csv'
+        fpath = os.path.join(run_dir, fname)
+        self._pressure_csv_path = fpath
+        self._pressure_csv_file = open(
+            fpath, 'w', newline='',
+        )
+        self._pressure_csv_writer = csv.writer(
+            self._pressure_csv_file,
+        )
+        self._pressure_csv_writer.writerow([
+            'reagent', 'operation', 'phase',
+            'cycle', 'time_s', 'pressure_14bit',
+            'position_steps', 'timestamp_us',
+        ])
+
     def collect_pressure(
             self,
             resp: dict | None,
             label: str,
+            operation: str = 'dispense',
+            phase: str = 'cart_dispense',
     ) -> None:
-        '''Extract, store, and emit pressure samples.
+        '''Extract, store, emit, and persist pressure samples.
 
-        Stores samples in the tracker and emits a
-        pressure_update event so the GUI can optionally
-        display them.
+        Stores samples in the tracker, emits a pressure_update
+        event for the GUI, and appends rows to the CSV file
+        incrementally.
 
         Args:
             resp: Command response dict that may contain
                 '_pressure_samples'.
-            label: Step label for annotation.
+            label: Step label for annotation (CSV reagent).
+            operation: 'aspirate' or 'dispense'.
+            phase: 'LLF' or 'cart_dispense'.
         '''
         if resp is None:
             return
@@ -991,6 +1032,8 @@ class ProtocolRunner:
         elapsed = self.tracker.snapshot().elapsed_s
         for s in samples:
             s['label'] = label
+            s['operation'] = operation
+            s['phase'] = phase
         self.tracker.add_pressure_data(samples)
         self._event_bus.emit_sync(
             'pressure_update', {
@@ -1005,3 +1048,21 @@ class ProtocolRunner:
                 ],
             },
         )
+
+        self._open_pressure_csv()
+        if self._pressure_csv_writer:
+            for s in samples:
+                raw_ts = s.get('timestamp_ms', 0)
+                ts_us = raw_ts * 1000
+                time_s = ts_us / 1_000_000.0
+                self._pressure_csv_writer.writerow([
+                    s.get('label', ''),
+                    s.get('operation', 'dispense'),
+                    s.get('phase', 'cart_dispense'),
+                    s.get('cycle', 0),
+                    f'{time_s:.6f}',
+                    s.get('pressure', 0),
+                    s.get('position', 0),
+                    ts_us,
+                ])
+            self._pressure_csv_file.flush()

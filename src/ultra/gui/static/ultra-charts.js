@@ -6,25 +6,11 @@
   /* ---- Timing Markers ---- */
   const sgMarkers = [];
 
-  function addTimingMarker(d) {
-    const t = d.elapsed_s;
-    const label = d.label || '';
-    const evtType = d.event_type || 'start';
-    sgMarkers.push({
-      x: t, label: label, event_type: evtType,
-    });
-    if (!sgChart) return;
-    const id = 'marker_' + sgMarkers.length;
-    if (!sgChart.options.plugins.annotation) {
-      sgChart.options.plugins.annotation = {
-        annotations: {},
-      };
-    }
+  function _markerAnnotation(t, label, evtType) {
     let color = 'rgba(255,255,255,0.5)';
     if (evtType === 'start') color = 'rgba(80,200,80,0.7)';
     else if (evtType === 'stop') color = 'rgba(255,80,80,0.7)';
-    sgChart.options.plugins.annotation
-      .annotations[id] = {
+    return {
       type: 'line',
       scaleID: 'x',
       value: t,
@@ -42,13 +28,47 @@
         padding: 2,
       },
     };
-    sgDirty = true;
+  }
+
+  function addTimingMarker(d) {
+    const t = d.elapsed_s;
+    const label = d.label || '';
+    const evtType = d.event_type || 'start';
+    sgMarkers.push({
+      x: t, label: label, event_type: evtType,
+    });
+    const id = 'marker_' + sgMarkers.length;
+    const ann = _markerAnnotation(t, label, evtType);
+
+    if (sgChart) {
+      if (!sgChart.options.plugins.annotation) {
+        sgChart.options.plugins.annotation = {
+          annotations: {},
+        };
+      }
+      sgChart.options.plugins.annotation
+        .annotations[id] = ann;
+      sgDirty = true;
+    }
+    if (prChart) {
+      if (!prChart.options.plugins.annotation) {
+        prChart.options.plugins.annotation = {
+          annotations: {},
+        };
+      }
+      prChart.options.plugins.annotation
+        .annotations[id] = Object.assign({}, ann);
+      prDirty = true;
+    }
   }
 
   function clearTimingMarkers() {
     sgMarkers.length = 0;
     if (sgChart && sgChart.options.plugins.annotation) {
       sgChart.options.plugins.annotation.annotations = {};
+    }
+    if (prChart && prChart.options.plugins.annotation) {
+      prChart.options.plugins.annotation.annotations = {};
     }
   }
 
@@ -96,21 +116,27 @@
 
     const spCanvas = $('#spectrum-canvas');
     const sgCanvas = $('#sensorgram-canvas');
+    const prCanvas = $('#pressure-canvas');
     const tbSp = $('#toolbar-spectrum');
     const tbSg = $('#toolbar-sensorgram');
 
+    spCanvas.style.display = 'none';
+    sgCanvas.style.display = 'none';
+    prCanvas.style.display = 'none';
+    tbSp.hidden = true;
+    tbSg.hidden = true;
+
     if (tab === 'spectrum') {
       spCanvas.style.display = '';
-      sgCanvas.style.display = 'none';
       tbSp.hidden = false;
-      tbSg.hidden = true;
       if (spChart) spChart.resize();
-    } else {
-      spCanvas.style.display = 'none';
+    } else if (tab === 'sensorgram') {
       sgCanvas.style.display = '';
-      tbSp.hidden = true;
       tbSg.hidden = false;
       if (sgChart) sgChart.resize();
+    } else if (tab === 'pressure') {
+      prCanvas.style.display = '';
+      if (prChart) prChart.resize();
     }
   }
 
@@ -476,6 +502,108 @@
     spDirty = true;
   }
 
+  /* ---------- Pressure chart ---------- */
+  let prChart = null;
+  let prDirty = false;
+  const PRESSURE_COLORS = [
+    '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0',
+    '#9966FF', '#FF9F40', '#C9CBCF', '#7BC67E',
+    '#E36EF6', '#5AD4E6', '#F77', '#8CF',
+  ];
+  let prColorIdx = 0;
+  const prDatasetMap = {};
+
+  function initPressureChart() {
+    const ctx = $('#pressure-canvas')
+      .getContext('2d');
+    prChart = new Chart(ctx, {
+      type: 'line',
+      data: { datasets: [] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        scales: {
+          x: {
+            type: 'linear',
+            title: {
+              display: true, text: 'Elapsed (s)',
+              color: '#8b8fa3',
+            },
+            grid: { color: '#2a2d3a' },
+            ticks: { color: '#8b8fa3' },
+          },
+          yPressure: {
+            position: 'left',
+            title: {
+              display: true,
+              text: 'Pressure (14-bit)',
+              color: '#FF6384',
+            },
+            grid: { color: '#2a2d3a' },
+            ticks: { color: '#8b8fa3' },
+          },
+        },
+        plugins: {
+          legend: { display: true, position: 'top',
+            labels: { color: '#ccc', boxWidth: 12 },
+          },
+          annotation: { annotations: {} },
+          zoom: {
+            pan: { enabled: true, mode: 'xy' },
+            zoom: {
+              wheel: { enabled: true },
+              pinch: { enabled: true },
+              mode: 'xy',
+            },
+          },
+        },
+      },
+    });
+  }
+
+  function addPressureSamples(label, timestampS, samples) {
+    if (!prChart || !samples || !samples.length) return;
+    if (!prDatasetMap[label]) {
+      const color = PRESSURE_COLORS[
+        prColorIdx++ % PRESSURE_COLORS.length
+      ];
+      const ds = {
+        label: label,
+        data: [],
+        borderColor: color,
+        borderWidth: 1.5,
+        pointRadius: 1,
+        pointBackgroundColor: color,
+        tension: 0,
+        yAxisID: 'yPressure',
+      };
+      prChart.data.datasets.push(ds);
+      prDatasetMap[label] = ds;
+    }
+    const ds = prDatasetMap[label];
+    for (const s of samples) {
+      ds.data.push({
+        x: timestampS,
+        y: s.pressure || 0,
+      });
+    }
+    prDirty = true;
+  }
+
+  function clearPressureChart() {
+    if (!prChart) return;
+    prChart.data.datasets = [];
+    if (prChart.options.plugins.annotation) {
+      prChart.options.plugins.annotation.annotations = {};
+    }
+    prColorIdx = 0;
+    for (const k in prDatasetMap) {
+      delete prDatasetMap[k];
+    }
+    prChart.update('none');
+  }
+
   /* ---------- Chart init + flush ---------- */
 
   function initCharts() {
@@ -489,6 +617,7 @@
 
     initSensorgram();
     initSpectrum();
+    initPressureChart();
     syncAllChannelVisibility();
 
     switchTab(activeTab);
@@ -504,12 +633,18 @@
       spChart.update('none');
       spDirty = false;
     }
+    if (prDirty && prChart) {
+      prChart.update('none');
+      prDirty = false;
+    }
   }
 
   Ultra.addTimingMarker = addTimingMarker;
   Ultra.clearTimingMarkers = clearTimingMarkers;
   Ultra.addPeakPoint = addPeakPoint;
   Ultra.updateSpectrum = updateSpectrum;
+  Ultra.addPressureSamples = addPressureSamples;
+  Ultra.clearPressureChart = clearPressureChart;
   Ultra.initCharts = initCharts;
   Ultra.initTabs = initTabs;
   Ultra.initSidebar = initSidebar;
@@ -523,5 +658,6 @@
     }
     sgChart.update('none');
     spChart.update('none');
+    clearPressureChart();
   };
 })();

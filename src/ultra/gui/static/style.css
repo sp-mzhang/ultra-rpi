@@ -240,6 +240,10 @@ main {
   height: 100% !important;
 }
 
+#pressure-canvas {
+  display: none;
+}
+
 /* --- Protocol Control --- */
 .control-row {
   display: flex;

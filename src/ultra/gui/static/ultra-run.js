@@ -169,10 +169,18 @@
         updateButtons(true, false);
         markStepListPaused(false);
         break;
+      case 'pressure_update':
+        if (Ultra.addPressureSamples) {
+          Ultra.addPressureSamples(
+            data.label, data.timestamp_s, data.samples,
+          );
+        }
+        break;
       case 'protocol_started':
         completedSteps = 0;
         updateButtons(true, false);
         if (Ultra.clearTimingMarkers) Ultra.clearTimingMarkers();
+        if (Ultra.clearPressureChart) Ultra.clearPressureChart();
         if (data.steps) buildStepList(data.steps);
         if (data.recipe) {
           elRecipe.value = data.recipe;
