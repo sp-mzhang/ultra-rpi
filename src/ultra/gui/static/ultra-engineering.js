@@ -270,7 +270,9 @@
 
   async function pollEngPosition() {
     try {
-      const r = await fetch('/api/stm32/position');
+      const r = await fetch(
+        '/api/stm32/position?lift=true',
+      );
       if (!r.ok) return;
       const d = await r.json();
       updatePositionDisplay(d);
@@ -284,9 +286,10 @@
       .forEach((b) => { b.disabled = !enabled; });
   }
 
-  async function fetchFreshPosition() {
+  async function fetchFreshPosition(includeLift = false) {
     try {
-      const r = await fetch('/api/stm32/position');
+      const q = includeLift ? '?lift=true' : '';
+      const r = await fetch('/api/stm32/position' + q);
       if (!r.ok) return null;
       return r.json();
     } catch (_) { return null; }
@@ -312,7 +315,10 @@
             velEl ? velEl.value : 20,
           );
 
-          const status = await fetchFreshPosition();
+          const needLift = axis === 'lift';
+          const status = await fetchFreshPosition(
+            needLift,
+          );
           if (!status) {
             engLog('Jog: failed to read position');
             jogBusy = false;
@@ -331,18 +337,16 @@
           if (axis === 'x') {
             await engCmd('move_gantry', {
               x_mm: curX + step * dir,
-              y_mm: curY,
               speed,
             }, true, 60);
           } else if (axis === 'y') {
             await engCmd('move_gantry', {
-              x_mm: curX,
               y_mm: curY + step * dir,
               speed,
             }, true, 60);
           } else if (axis === 'z') {
-            await engCmd('move_z_axis', {
-              position_mm: curZ + step * dir,
+            await engCmd('move_gantry', {
+              z_mm: curZ + step * dir,
               speed,
             }, true, 60);
           } else if (axis === 'lift') {

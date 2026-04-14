@@ -281,12 +281,14 @@ def create_stm32_router(app: 'Application') -> APIRouter:
         )
 
     @router.get('/stm32/position')
-    async def stm32_position():
-        '''Return motor positions and homing flags only (fast).
+    async def stm32_position(
+        lift: bool = False,
+    ):
+        '''Return gantry positions + homing flags (1 command).
 
-        Calls only get_position + get_gantry_status (for homing
-        flags).  Use this for jog and position polling instead of
-        the heavier /stm32/status endpoint.
+        Uses get_gantry_status which returns X/Y/Z positions
+        and homing flags in a single command.  When lift=true,
+        also calls lift_status for lift position (+1 command).
         '''
         from ultra.hw.frame_protocol import (
             GANTRY_XY_USTEPS_PER_MM,
@@ -300,13 +302,14 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                 detail='STM32 not connected',
             )
         loop = asyncio.get_running_loop()
+        include_lift = lift
 
         def _query_pos():
             out: dict[str, Any] = {}
             gantry: dict[str, Any] = {}
             try:
                 r = stm32.send_command(
-                    {'cmd': 'get_position'},
+                    {'cmd': 'get_gantry_status'},
                     timeout_s=2.0,
                 )
                 if r:
@@ -319,23 +322,9 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                         / GANTRY_XY_USTEPS_PER_MM, 3,
                     )
                     gantry['z_mm'] = round(
-                        r.get('z_axis', 0)
+                        r.get('z', 0)
                         / Z_USTEPS_PER_MM, 3,
                     )
-                    out['lift'] = {
-                        'position_mm': round(
-                            r.get('z', 0)
-                            / LIFT_USTEPS_PER_MM, 2,
-                        ),
-                    }
-            except Exception:
-                pass
-            try:
-                r = stm32.send_command(
-                    {'cmd': 'get_gantry_status'},
-                    timeout_s=2.0,
-                )
-                if r:
                     gantry['x_homed'] = r.get(
                         'x_homed', False,
                     )
@@ -345,13 +334,29 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                     gantry['z_homed'] = r.get(
                         'z_homed', False,
                     )
-                    lift = out.get('lift', {})
-                    lift['homed'] = r.get(
-                        'z_homed', False,
-                    )
-                    out['lift'] = lift
             except Exception:
                 pass
+            if include_lift:
+                try:
+                    r = stm32.send_command(
+                        {'cmd': 'lift_status'},
+                        timeout_s=2.0,
+                    )
+                    if r:
+                        steps = r.get(
+                            'position_steps', 0,
+                        )
+                        out['lift'] = {
+                            'position_mm': round(
+                                steps
+                                / LIFT_USTEPS_PER_MM, 2,
+                            ),
+                            'homed': r.get(
+                                'is_homed', False,
+                            ),
+                        }
+                except Exception:
+                    pass
             out['gantry'] = gantry
             return out
 
@@ -380,7 +385,7 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             gantry: dict[str, Any] = {}
             try:
                 r = stm32.send_command(
-                    {'cmd': 'get_position'},
+                    {'cmd': 'get_gantry_status'},
                     timeout_s=2.0,
                 )
                 if r:
@@ -393,23 +398,9 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                         / GANTRY_XY_USTEPS_PER_MM, 3,
                     )
                     gantry['z_mm'] = round(
-                        r.get('z_axis', 0)
+                        r.get('z', 0)
                         / Z_USTEPS_PER_MM, 3,
                     )
-                    out['lift'] = {
-                        'position_mm': round(
-                            r.get('z', 0)
-                            / LIFT_USTEPS_PER_MM, 2,
-                        ),
-                    }
-            except Exception:
-                pass
-            try:
-                r = stm32.send_command(
-                    {'cmd': 'get_gantry_status'},
-                    timeout_s=2.0,
-                )
-                if r:
                     gantry['x_homed'] = r.get(
                         'x_homed', False,
                     )
@@ -419,11 +410,26 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                     gantry['z_homed'] = r.get(
                         'z_homed', False,
                     )
-                    lift = out.get('lift', {})
-                    lift['homed'] = r.get(
-                        'z_homed', False,
+            except Exception:
+                pass
+            try:
+                r = stm32.send_command(
+                    {'cmd': 'lift_status'},
+                    timeout_s=2.0,
+                )
+                if r:
+                    steps = r.get(
+                        'position_steps', 0,
                     )
-                    out['lift'] = lift
+                    out['lift'] = {
+                        'position_mm': round(
+                            steps
+                            / LIFT_USTEPS_PER_MM, 2,
+                        ),
+                        'homed': r.get(
+                            'is_homed', False,
+                        ),
+                    }
             except Exception:
                 pass
             out['gantry'] = gantry
