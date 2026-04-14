@@ -56,6 +56,7 @@ class WebSocketBroadcaster:
         )
         self._last_sweep: dict[str, Any] | None = None
         self._marker_buffer: list[dict] = []
+        self._pressure_buffer: list[dict] = []
         self._last_protocol_started: dict | None = None
         self._current_step_index: int = 0
         self._last_step_data: dict | None = None
@@ -104,6 +105,8 @@ class WebSocketBroadcaster:
             self._last_sweep = data
         elif event_type == 'timing_marker':
             self._marker_buffer.append(data)
+        elif event_type == 'pressure_update':
+            self._pressure_buffer.append(data)
         elif event_type == 'step_changed':
             idx = data.get(
                 'step', data.get('step_index', 0),
@@ -197,6 +200,15 @@ class WebSocketBroadcaster:
                 await ws.send_text(msg)
             except Exception:
                 return
+        for pr in self._pressure_buffer:
+            msg = json.dumps({
+                'type': 'pressure_update',
+                'data': pr,
+            })
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                return
 
     def clear_buffers(
             self,
@@ -214,6 +226,7 @@ class WebSocketBroadcaster:
         self._peak_buffer.clear()
         self._last_sweep = None
         self._marker_buffer.clear()
+        self._pressure_buffer.clear()
         self._current_step_index = 0
         self._last_step_data = None
         self._last_protocol_started = (
