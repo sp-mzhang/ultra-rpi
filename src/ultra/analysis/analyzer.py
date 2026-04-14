@@ -488,21 +488,59 @@ class AnalysisService:
 
             scaled_signal = signal * ap.signal_scaling_factor
 
-            try:
-                conc = float(
-                    fit_info.inverse_func(
-                        scaled_signal, *fit_params,
-                    ),
-                )
-            except Exception as exc:
-                LOG.warning(
-                    'Inverse fit failed for %s: %s',
-                    ap.name, exc,
-                )
-                conc = None
-
+            import math
+            conc = None
             in_range = True
-            if conc is not None:
+            clamped = False
+
+            low_asym = fit_params[0] if len(fit_params) > 0 else None
+            high_asym = fit_params[-1] if len(fit_params) > 1 else None
+
+            if (
+                low_asym is not None
+                and high_asym is not None
+                and scaled_signal < min(low_asym, high_asym)
+            ):
+                conc = ap.minimum_concentration
+                in_range = False
+                clamped = True
+                LOG.info(
+                    '%s: signal %.4f below low asymptote '
+                    '%.4f, clamped to < %s %s',
+                    ap.name, scaled_signal, low_asym,
+                    conc, ap.concentration_units,
+                )
+            elif (
+                low_asym is not None
+                and high_asym is not None
+                and scaled_signal > max(low_asym, high_asym)
+            ):
+                conc = ap.maximum_concentration
+                in_range = False
+                clamped = True
+                LOG.info(
+                    '%s: signal %.4f above high asymptote '
+                    '%.4f, clamped to > %s %s',
+                    ap.name, scaled_signal, high_asym,
+                    conc, ap.concentration_units,
+                )
+            else:
+                try:
+                    conc = float(
+                        fit_info.inverse_func(
+                            scaled_signal, *fit_params,
+                        ),
+                    )
+                    if math.isnan(conc):
+                        conc = None
+                except Exception as exc:
+                    LOG.warning(
+                        'Inverse fit failed for %s: %s',
+                        ap.name, exc,
+                    )
+                    conc = None
+
+            if conc is not None and not clamped:
                 if (
                     ap.minimum_concentration is not None
                     and conc < ap.minimum_concentration
