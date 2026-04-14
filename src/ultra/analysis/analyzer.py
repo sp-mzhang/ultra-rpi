@@ -31,6 +31,7 @@ class AnalyteResult:
     fit_type: str = ''
     in_range: bool = True
     excluded_by_validation: bool = False
+    concentration_display: str = ''
 
 
 @dataclass
@@ -56,6 +57,9 @@ class AnalysisResult:
                     'in_range': a.in_range,
                     'excluded_by_validation': (
                         a.excluded_by_validation
+                    ),
+                    'concentration_display': (
+                        a.concentration_display
                     ),
                 }
                 for a in self.analytes
@@ -491,7 +495,7 @@ class AnalysisService:
             import math
             conc = None
             in_range = True
-            clamped = False
+            conc_display = ''
 
             low_asym = fit_params[0] if len(fit_params) > 0 else None
             high_asym = fit_params[-1] if len(fit_params) > 1 else None
@@ -503,12 +507,12 @@ class AnalysisService:
             ):
                 conc = ap.minimum_concentration
                 in_range = False
-                clamped = True
+                conc_display = f'< {conc} {ap.concentration_units}'
                 LOG.info(
                     '%s: signal %.4f below low asymptote '
-                    '%.4f, clamped to < %s %s',
+                    '%.4f -> %s',
                     ap.name, scaled_signal, low_asym,
-                    conc, ap.concentration_units,
+                    conc_display,
                 )
             elif (
                 low_asym is not None
@@ -517,12 +521,12 @@ class AnalysisService:
             ):
                 conc = ap.maximum_concentration
                 in_range = False
-                clamped = True
+                conc_display = f'> {conc} {ap.concentration_units}'
                 LOG.info(
                     '%s: signal %.4f above high asymptote '
-                    '%.4f, clamped to > %s %s',
+                    '%.4f -> %s',
                     ap.name, scaled_signal, high_asym,
-                    conc, ap.concentration_units,
+                    conc_display,
                 )
             else:
                 try:
@@ -540,7 +544,7 @@ class AnalysisService:
                     )
                     conc = None
 
-            if conc is not None and not clamped:
+            if conc is not None and not conc_display:
                 if (
                     ap.minimum_concentration is not None
                     and conc < ap.minimum_concentration
@@ -554,6 +558,9 @@ class AnalysisService:
                 conc = round(
                     conc, ap.concentration_num_decimals,
                 )
+                conc_display = (
+                    f'{conc} {ap.concentration_units}'
+                )
 
             result.analytes.append(AnalyteResult(
                 analyte=assay_name,
@@ -562,6 +569,7 @@ class AnalysisService:
                 signal=round(scaled_signal, 4),
                 fit_type=ap.fit_type,
                 in_range=in_range,
+                concentration_display=conc_display,
             ))
 
         saved = result.save()
