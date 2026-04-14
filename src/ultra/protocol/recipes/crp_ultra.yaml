@@ -77,6 +77,7 @@ phases:
         dest: M4
         volume: 180
         asp_speed: 80.0
+        stream: true
 
       - type: dilution_transfer
         label: CRP Buffer 2 (S4 -> M6)
@@ -84,6 +85,7 @@ phases:
         dest: M6
         volume: 180
         asp_speed: 80.0
+        stream: true
 
       - type: dilution_transfer
         label: CRP Buffer 3 (S5 -> M9)
@@ -91,6 +93,7 @@ phases:
         dest: M9
         volume: 130
         asp_speed: 80.0
+        stream: true
 
       - type: dilution_transfer
         label: CRP Buffer 4 (S6 -> M9)
@@ -98,6 +101,7 @@ phases:
         dest: M9
         volume: 130
         asp_speed: 80.0
+        stream: true
 
       # --- Serum aspiration (Tip 2) ---
 
@@ -120,6 +124,7 @@ phases:
         speed: 75.0
         air_slug: 50
         piston_reset: true
+        stream: true
 
       - type: home_z
         label: Home Z after serum aspirate
@@ -161,6 +166,7 @@ phases:
         dest: M6
         volume: 20
         asp_speed: 20.0
+        stream: true
 
       - type: tip_mix
         label: Mix M6 (100x dilution)
@@ -180,6 +186,7 @@ phases:
         dest: M9
         volume: 40
         asp_speed: 20.0
+        stream: true
 
       - type: tip_mix
         label: Mix M9 (750x dilution)
@@ -215,6 +222,7 @@ phases:
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
+        stream: true
 
       - type: tip_swap
         label: Tip swap 5 -> 6
@@ -233,6 +241,7 @@ phases:
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
+        stream: true
 
       # PBST (simplified from slow+fast accel-boost)
       - type: reagent_transfer
@@ -246,6 +255,7 @@ phases:
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
+        stream: true
 
       # Lane4 Buffer 4.23 (first)
       - type: reagent_transfer
@@ -259,6 +269,7 @@ phases:
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
+        stream: true
 
       # Dilution7 (750x from M9)
       - type: reagent_transfer
@@ -272,6 +283,7 @@ phases:
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
+        stream: true
 
       # Lane4 Buffer 4.23 (second)
       - type: reagent_transfer
@@ -285,6 +297,7 @@ phases:
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
+        stream: true
 
       # GNP pre-mix then back-and-forth
       - type: tip_mix
@@ -311,6 +324,7 @@ phases:
         sleep_s: 0
         return_speed: 100.0
         skip_aspirate: true
+        stream: true
 
       - type: timing_marker
         label: Analysis_Trigger_Post_SA-GNP
