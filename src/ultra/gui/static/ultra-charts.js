@@ -573,8 +573,7 @@
         data: [],
         borderColor: color,
         borderWidth: 1.5,
-        pointRadius: 1,
-        pointBackgroundColor: color,
+        pointRadius: 0,
         tension: 0,
         yAxisID: 'yPressure',
       };
@@ -584,7 +583,7 @@
     const ds = prDatasetMap[label];
     for (const s of samples) {
       ds.data.push({
-        x: timestampS,
+        x: timestampS + (s.dt || 0),
         y: s.pressure || 0,
       });
     }

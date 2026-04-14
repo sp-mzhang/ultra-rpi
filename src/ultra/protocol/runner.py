@@ -1035,17 +1035,22 @@ class ProtocolRunner:
             s['operation'] = operation
             s['phase'] = phase
         self.tracker.add_pressure_data(samples)
+        t_last = samples[-1].get('timestamp_ms', 0)
+        sample_list = []
+        for s in samples:
+            dt = (
+                s.get('timestamp_ms', 0) - t_last
+            ) / 1000.0
+            sample_list.append({
+                'pressure': s.get('pressure', 0),
+                'position': s.get('position', 0),
+                'dt': round(dt, 4),
+            })
         self._event_bus.emit_sync(
             'pressure_update', {
                 'label': label,
                 'timestamp_s': round(elapsed, 2),
-                'samples': [
-                    {
-                        'pressure': s.get('pressure', 0),
-                        'position': s.get('position', 0),
-                    }
-                    for s in samples
-                ],
+                'samples': sample_list,
             },
         )
 
