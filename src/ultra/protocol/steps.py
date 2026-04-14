@@ -137,18 +137,35 @@ class CentrifugeSpinStep(StepExecutor):
     (sway just warns).
     '''
 
+    _MAX_RETRIES = 5
+    _RETRY_DELAY_S = 1.0
+
     def execute(self, params, runner) -> bool:
         rpm = params.get('rpm', 500)
         duration_s = params.get('duration_s', 5)
-        r = runner.stm32.send_command(
-            cmd={
-                'cmd': 'centrifuge_start',
-                'rpm': rpm,
-                'duration': duration_s,
-            },
-            timeout_s=10.0,
-        )
+        r = None
+        for attempt in range(1, self._MAX_RETRIES + 1):
+            r = runner.stm32.send_command(
+                cmd={
+                    'cmd': 'centrifuge_start',
+                    'rpm': rpm,
+                    'duration': duration_s,
+                },
+                timeout_s=10.0,
+            )
+            if _ok(r):
+                break
+            LOG.warning(
+                'centrifuge_start failed (attempt %d/%d)',
+                attempt, self._MAX_RETRIES,
+            )
+            if attempt < self._MAX_RETRIES:
+                time.sleep(self._RETRY_DELAY_S)
         if not _ok(r):
+            LOG.error(
+                'centrifuge_start failed after %d attempts',
+                self._MAX_RETRIES,
+            )
             return False
         time.sleep(float(duration_s))
         r_stop = runner.stm32.send_command(
