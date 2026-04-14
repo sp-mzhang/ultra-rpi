@@ -12,13 +12,21 @@ groups mapping when the Dollop API is unreachable.
 from __future__ import annotations
 
 import logging
+import os
 import os.path as op
+import shutil
 from dataclasses import dataclass, field
 from typing import Any
 
 import yaml
 
 LOG = logging.getLogger(__name__)
+
+REQUIRED_CALIB_FILES = [
+    'analysis_config.yaml',
+    'fitting_protocol_sheet.xlsx',
+    'validation_rules_sheet.xlsx',
+]
 
 
 @dataclass
@@ -182,10 +190,18 @@ class AnalysisService:
         self._chip_id = chip_id
 
     def _ensure_calib_cached(self) -> None:
-        '''Sync calibration files from S3 if not already cached.'''
-        check = op.join(self._calib_dir, 'analysis_config.yaml')
-        if op.isfile(check):
+        '''Sync calibration files from S3 if not already cached.
+
+        Checks that all required files are present locally.
+        If any are missing, tries S3 first, then falls back
+        to bundled calibration data shipped with the repo.
+        '''
+        if all(
+            op.isfile(op.join(self._calib_dir, f))
+            for f in REQUIRED_CALIB_FILES
+        ):
             return
+
         try:
             from ultra.services.config_store import (
                 sync_calibration_version,
@@ -202,6 +218,26 @@ class AnalysisService:
                 'Failed to sync calibration from S3: %s',
                 exc,
             )
+
+        bundled = op.normpath(op.join(
+            op.dirname(__file__), '..', '..', '..',
+            'config', 'calibration_data',
+            self._assay, self._version,
+        ))
+        for fname in REQUIRED_CALIB_FILES:
+            target = op.join(self._calib_dir, fname)
+            if op.isfile(target):
+                continue
+            source = op.join(bundled, fname)
+            if op.isfile(source):
+                os.makedirs(
+                    op.dirname(target), mode=0o755,
+                    exist_ok=True,
+                )
+                shutil.copy2(source, target)
+                LOG.info(
+                    'Copied bundled %s to cache', fname,
+                )
 
     def _load_calib_config(self) -> dict[str, Any]:
         '''Load analysis_config.yaml from calibration dir.'''
