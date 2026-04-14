@@ -16,13 +16,13 @@
 
   async function loadFirmwareList() {
     const tbody = $('#fw-tbody');
-    tbody.innerHTML = '<tr><td colspan="4" '
+    tbody.innerHTML = '<tr><td colspan="5" '
       + 'class="fw-empty">Loading...</td></tr>';
     try {
       const r = await fetch('/api/firmware/list');
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
-        tbody.innerHTML = '<tr><td colspan="4" '
+        tbody.innerHTML = '<tr><td colspan="5" '
           + 'class="fw-empty">Error: '
           + (e.detail || r.statusText)
           + '</td></tr>';
@@ -30,7 +30,7 @@
       }
       const builds = await r.json();
       if (!builds.length) {
-        tbody.innerHTML = '<tr><td colspan="4" '
+        tbody.innerHTML = '<tr><td colspan="5" '
           + 'class="fw-empty">'
           + 'No firmware found in S3</td></tr>';
         return;
@@ -46,11 +46,17 @@
           : '--';
         const label = b.is_latest
           ? b.version + ' (latest)' : b.version;
+        const notes = b.notes || '';
+        const esc = notes
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;');
         tr.innerHTML =
           `<td class="fw-ver">${label}</td>`
           + `<td>${dateStr}</td>`
           + `<td>${formatBytes(b.size)}</td>`
-          + `<td><button class="btn btn-sm fw-flash-btn`
+          + `<td class="fw-notes">${esc}</td>`
+          + `<td><button class="btn btn-sm`
+          + ` fw-flash-btn`
           + `" data-key="${b.key}">Flash</button></td>`;
         tbody.appendChild(tr);
       }
@@ -61,7 +67,7 @@
           });
         });
     } catch (err) {
-      tbody.innerHTML = '<tr><td colspan="4" '
+      tbody.innerHTML = '<tr><td colspan="5" '
         + 'class="fw-empty">Error: '
         + err.message + '</td></tr>';
     }

@@ -110,12 +110,13 @@ def get_status(log_offset: int = 0) -> dict:
 def list_firmware() -> list[dict]:
     '''List available firmware versions from S3.
 
-    Enumerates the archive/ prefix and fetches
-    latest/manifest.json for metadata.
+    Enumerates the archive/ prefix, fetches
+    latest/manifest.json and archive/manifests.json
+    for per-version metadata (notes, sha, branch, etc).
 
     Returns:
         List of dicts with version, key, size, date,
-        is_latest, and optional manifest fields.
+        is_latest, notes, and optional manifest fields.
     '''
     s3 = _get_s3()
 
@@ -133,6 +134,20 @@ def list_firmware() -> list[dict]:
             'Could not fetch manifest: %s', exc,
         )
 
+    all_manifests: dict = {}
+    try:
+        resp = s3.get_object(
+            Bucket=FW_BUCKET,
+            Key='archive/manifests.json',
+        )
+        all_manifests = json.loads(
+            resp['Body'].read().decode(),
+        )
+    except Exception as exc:
+        LOG.debug(
+            'No archive/manifests.json: %s', exc,
+        )
+
     paginator = s3.get_paginator('list_objects_v2')
     pages = paginator.paginate(
         Bucket=FW_BUCKET, Prefix='archive/',
@@ -148,7 +163,7 @@ def list_firmware() -> list[dict]:
             version = name.replace(
                 '_ultra_mcu.bin', '',
             )
-            builds.append({
+            entry: dict = {
                 'version': version,
                 'key': key,
                 'size': obj.get('Size', 0),
@@ -157,16 +172,44 @@ def list_firmware() -> list[dict]:
                 'is_latest': (
                     version == manifest.get('version')
                 ),
-            })
+                'notes': '',
+            }
+            ver_meta = all_manifests.get(version, {})
+            if ver_meta:
+                entry['sha'] = ver_meta.get('sha', '')
+                entry['branch'] = ver_meta.get(
+                    'branch', '',
+                )
+                entry['md5'] = ver_meta.get('md5', '')
+                entry['notes'] = ver_meta.get(
+                    'notes', '',
+                )
+            builds.append(entry)
 
     builds.sort(key=lambda b: b['date'], reverse=True)
 
     if manifest:
         for b in builds:
             if b['is_latest']:
-                b['sha'] = manifest.get('sha', '')
-                b['branch'] = manifest.get('branch', '')
-                b['md5'] = manifest.get('md5', '')
+                b.setdefault('sha', '')
+                b.setdefault('branch', '')
+                b.setdefault('md5', '')
+                b['sha'] = (
+                    b['sha']
+                    or manifest.get('sha', '')
+                )
+                b['branch'] = (
+                    b['branch']
+                    or manifest.get('branch', '')
+                )
+                b['md5'] = (
+                    b['md5']
+                    or manifest.get('md5', '')
+                )
+                if not b['notes']:
+                    b['notes'] = manifest.get(
+                        'notes', '',
+                    )
                 break
 
     return builds

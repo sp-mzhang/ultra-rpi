@@ -241,7 +241,7 @@ main {
 }
 
 #pressure-canvas {
-  display: none;
+  display: none;  /* hidden by default; switchTab() sets display:block */
 }
 
 /* --- Protocol Control --- */
@@ -1492,6 +1492,13 @@ textarea {
   text-align: center;
   color: var(--text-dim);
   padding: 24px 12px !important;
+}
+.fw-notes {
+  max-width: 260px;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .fw-flash-btn {
   background: rgba(79, 125, 249, 0.12);
