@@ -2138,11 +2138,13 @@ class STM32Interface:
             move_speed_01mms: int = 250,
             stream: bool = False,
             timeout_s: float = 120.0,
+            pre_dispense_cb: object = None,
     ) -> dict | bool:
         '''Move to a location and firmware cart-dispense.
 
         Sequence: move_to_location -> (Z to cartridge_z) ->
-        cart_dispense (wait DONE) -> home Z.
+        [pre_dispense_cb] -> cart_dispense (wait DONE) ->
+        home Z.
 
         Args:
             loc_id: Cartridge location ID (e.g. PP4).
@@ -2155,6 +2157,8 @@ class STM32Interface:
             move_speed_01mms: XY move speed in 0.1 mm/s.
             stream: Enable real-time pressure streaming.
             timeout_s: Per-sub-step timeout in seconds.
+            pre_dispense_cb: Optional callable invoked right
+                before the pump command fires (after move + Z).
 
         Returns:
             When stream is False: True on success.
@@ -2191,6 +2195,9 @@ class STM32Interface:
                 )
                 return False
             time.sleep(0.3)
+
+        if callable(pre_dispense_cb):
+            pre_dispense_cb()
 
         dispense_time = (
             float(volume_ul) / max(vel_ul_s, 0.01)
@@ -2259,12 +2266,14 @@ class STM32Interface:
             move_speed_01mms: int = 250,
             stream: bool = False,
             timeout_s: float = 120.0,
+            pre_dispense_cb: object = None,
     ) -> dict | bool:
         '''Move to a location and firmware back-and-forth
         dispense for a fixed duration.
 
         Sequence: move_to_location -> (Z to cartridge_z) ->
-        cart_dispense_bf (wait DONE) -> home Z.
+        [pre_dispense_cb] -> cart_dispense_bf (wait DONE) ->
+        home Z.
 
         Args:
             loc_id: Cartridge location ID (e.g. PP4).
@@ -2284,6 +2293,8 @@ class STM32Interface:
             move_speed_01mms: XY move speed in 0.1 mm/s.
             stream: Enable real-time pressure streaming.
             timeout_s: Per-sub-step timeout in seconds.
+            pre_dispense_cb: Optional callable invoked right
+                before the pump command fires (after move + Z).
 
         Returns:
             When stream is False: True on success.
@@ -2320,6 +2331,9 @@ class STM32Interface:
                 )
                 return False
             time.sleep(0.3)
+
+        if callable(pre_dispense_cb):
+            pre_dispense_cb()
 
         long_timeout = (
             float(duration_s) + float(sleep_s) + 60.0

@@ -338,6 +338,9 @@ class STM32Mock:
     ) -> dict | bool:
         '''Simulate cart dispense at location.'''
         time.sleep(self._delay_s)
+        cb = kwargs.get('pre_dispense_cb')
+        if callable(cb):
+            cb()
         if 'cart_dispense' in self._fail_commands:
             return False
         if kwargs.get('stream'):
@@ -350,6 +353,9 @@ class STM32Mock:
     ) -> dict | bool:
         '''Simulate back-and-forth cart dispense.'''
         time.sleep(self._delay_s * 3)
+        cb = kwargs.get('pre_dispense_cb')
+        if callable(cb):
+            cb()
         if 'cart_dispense_bf' in self._fail_commands:
             return False
         if kwargs.get('stream'):

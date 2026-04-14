@@ -608,7 +608,6 @@ class ReagentTransferStep(StepExecutor):
             )
 
         label = params.get('label', 'reagent_transfer')
-        _emit_timing_marker(runner, label, 'start')
 
         cd_r = runner.stm32.cart_dispense_at(
             loc_id=target.loc_id,
@@ -620,6 +619,9 @@ class ReagentTransferStep(StepExecutor):
             reasp_ul=reasp,
             cartridge_z=runner.cartridge_z_mm,
             stream=params.get('stream', False),
+            pre_dispense_cb=lambda: _emit_timing_marker(
+                runner, label, 'start',
+            ),
         )
         if not cd_r:
             return False
@@ -731,7 +733,6 @@ class ReagentTransferBFStep(StepExecutor):
             )
 
         label = params.get('label', 'reagent_transfer_bf')
-        _emit_timing_marker(runner, label, 'start')
 
         cd_r = runner.stm32.cart_dispense_bf_at(
             loc_id=target.loc_id,
@@ -746,6 +747,9 @@ class ReagentTransferBFStep(StepExecutor):
             sleep_s=params.get('sleep_s', 30),
             cartridge_z=runner.cartridge_z_mm,
             stream=params.get('stream', False),
+            pre_dispense_cb=lambda: _emit_timing_marker(
+                runner, label, 'start',
+            ),
         )
         if not cd_r:
             return False
@@ -951,7 +955,6 @@ class WellToChipStep(StepExecutor):
         )
 
         label = params.get('label', 'well_to_chip')
-        _emit_timing_marker(runner, label, 'start')
 
         cd_r = runner.stm32.cart_dispense_at(
             loc_id=target.loc_id,
@@ -963,6 +966,9 @@ class WellToChipStep(StepExecutor):
             reasp_ul=consts.get('reasp_ul', 15),
             cartridge_z=runner.cartridge_z_mm,
             stream=params.get('stream', True),
+            pre_dispense_cb=lambda: _emit_timing_marker(
+                runner, label, 'start',
+            ),
         )
         if not cd_r:
             return False
