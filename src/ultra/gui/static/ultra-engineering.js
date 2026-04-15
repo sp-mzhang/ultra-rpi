@@ -377,7 +377,7 @@
     $('#eng-z-bottom').onclick = () => {
       const spd = parseFloat($('#eng-vel-z').value);
       engCmd('move_z_axis', {
-        position_mm: -23.81, speed: spd,
+        position_mm: -26.0, speed: spd,
       }, true, 60);
     };
 
