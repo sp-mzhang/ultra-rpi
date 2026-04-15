@@ -272,6 +272,7 @@ def create_app(application: 'Application') -> FastAPI:
         'status_changed',
         'door_opened', 'door_closed',
         'pressure_update', 'temperature_update',
+        'accel_stream',
         'centrifuge_rpm', 'stm32_error',
         'egress_started', 'egress_done',
         'egress_error',

@@ -133,6 +133,36 @@ class STM32Interface:
         '''
         self._motor_telem_cb = cb
 
+    def _dispatch_accel_stream(
+            self, rsp_data: bytes,
+    ) -> None:
+        '''Forward accel-stream batch to registered callback.
+
+        Accel stream frames carry wire id RSP_ACCEL_STREAM
+        (0x9E03), which is in the response-id range rather
+        than the 0xA0xx/0xB0xx async range is_async_msg
+        checks, so dispatch has to be explicit.
+        '''
+        cb = getattr(self, '_accel_stream_cb', None)
+        if cb is None:
+            return
+        try:
+            cb(fp.unpack_accel_stream(rsp_data))
+        except Exception:
+            pass
+
+    def set_accel_stream_callback(self, cb) -> None:
+        '''Register a callback for accel stream batches.
+
+        Fires ~25 Hz once accel_stream_start is sent. Each
+        invocation receives the dict from unpack_accel_stream:
+        seq, tick_ms, count, buf_used, samples=[(x,y,z), ...].
+
+        Args:
+            cb: Callable(dict) or None to unregister.
+        '''
+        self._accel_stream_cb = cb
+
     def start_telem_reader(self) -> None:
         '''Start a background thread that reads UART frames
         and dispatches motor telemetry to the callback.
@@ -165,6 +195,14 @@ class STM32Interface:
                 if result is None:
                     continue
                 rsp_cmd, rsp_data = result
+                # Accel stream push frames share wire id 0x9E03
+                # with the start/stop ACK. Streams carry >=8-byte
+                # payloads (seq+tick+count+buf_used+samples); ACKs
+                # are 5 bytes (seq+error). Route by length.
+                if (rsp_cmd == fp.RSP_ACCEL_STREAM
+                        and len(rsp_data) >= 8):
+                    self._dispatch_accel_stream(rsp_data)
+                    continue
                 if not fp.is_async_msg(rsp_cmd):
                     LOG.debug(
                         'telem-reader: dropped non-async '
@@ -397,6 +435,13 @@ class STM32Interface:
 
             rsp_cmd, rsp_data = result
 
+            # Stream push shares wire id with ACK — distinguish
+            # by payload length (>=8 is stream, 5 is ACK).
+            if (rsp_cmd == fp.RSP_ACCEL_STREAM
+                    and len(rsp_data) >= 8):
+                self._dispatch_accel_stream(rsp_data)
+                continue
+
             if fp.is_async_msg(rsp_cmd):
                 if (
                     collect_pressure
@@ -575,6 +620,11 @@ class STM32Interface:
 
             rsp_cmd, rsp_data = result
 
+            if (rsp_cmd == fp.RSP_ACCEL_STREAM
+                    and len(rsp_data) >= 8):
+                self._dispatch_accel_stream(rsp_data)
+                continue
+
             if fp.is_async_msg(rsp_cmd):
                 rsp_low = rsp_cmd & 0x00FF
                 pressure_low = fp.MSG_PRESSURE & 0x00FF
@@ -693,6 +743,9 @@ class STM32Interface:
                 'lift_move_top',
                 'led_set_all_off',
                 'accel_get_status',
+                'accel_stream_start',
+                'accel_stream_stop',
+                'accel_reset',
                 'fc_heater_get_status',
         ):
             return fp.pack_seq(seq)

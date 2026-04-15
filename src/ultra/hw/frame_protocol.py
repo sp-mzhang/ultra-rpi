@@ -220,6 +220,15 @@ RSP_FAN_STATUS            = 0x9702
 # Accelerometer (0x8Exx)
 CMD_ACCEL_GET_STATUS      = 0x8E01
 RSP_ACCEL_STATUS          = 0x9E01
+CMD_ACCEL_STREAM_START    = 0x8E03
+CMD_ACCEL_STREAM_STOP     = 0x8E04
+CMD_ACCEL_RESET           = 0x8E05
+# Unsolicited stream push — firmware emits ~25 batches/s once
+# ACCEL_STREAM_START is acknowledged. Wire id sits in the 0x9Exx
+# response range (not 0xA0xx/0xB0xx), so is_async_msg() doesn't
+# catch it — stm32_interface RX loops must check RSP_ACCEL_STREAM
+# explicitly before the generic async path.
+RSP_ACCEL_STREAM          = 0x9E03
 
 # Temperature sensors — EXT_NTC1/2, INT_NTC (0x91xx)
 # Response wire ID = 0x9101 + 0x1000 = 0xA101 (not treated as async).
@@ -365,6 +374,9 @@ CMD_NAME_TO_ID = {
     'fan_set_duty':         CMD_FAN_SET_DUTY,
     'fan_get_status':       CMD_FAN_GET_STATUS,
     'accel_get_status':     CMD_ACCEL_GET_STATUS,
+    'accel_stream_start':   CMD_ACCEL_STREAM_START,
+    'accel_stream_stop':    CMD_ACCEL_STREAM_STOP,
+    'accel_reset':          CMD_ACCEL_RESET,
     'temp_get_status':      CMD_TEMP_GET_STATUS,
 }
 
@@ -1096,6 +1108,50 @@ def unpack_accel_status(data: bytes) -> dict:
         'y_g': y_mg / 1000.0,
         'z_g': z_mg / 1000.0,
         'initialized': bool(init),
+    }
+
+
+def pack_accel_stream_start(seq: int) -> bytes:
+    return struct.pack('<I', seq)
+
+
+def pack_accel_stream_stop(seq: int) -> bytes:
+    return struct.pack('<I', seq)
+
+
+def pack_accel_reset(seq: int) -> bytes:
+    return struct.pack('<I', seq)
+
+
+def unpack_accel_stream(data: bytes) -> dict:
+    '''Unpack an accel stream push frame (0x9E03).
+
+    Wire layout (must match accel_service.c stream_send_batch):
+      seq(2)       — ISR sequence counter, increments per FIFO IRQ
+      tick_ms(4)   — HAL_GetTick() at the moment of the IRQ
+      count(1)     — samples in this batch (typ. 16)
+      buf_used(1)  — occupied slots in cyclic buffer (0..7)
+      samples(count * 6)  — int16 x, y, z each (raw LSBs)
+    '''
+    if len(data) < 8:
+        return {'seq': 0, 'tick_ms': 0, 'count': 0,
+                'buf_used': 0, 'samples': []}
+    seq      = int.from_bytes(data[0:2], 'little')
+    tick_ms  = int.from_bytes(data[2:6], 'little')
+    count    = data[6]
+    buf_used = data[7]
+    samples  = []
+    offset = 8
+    for _ in range(count):
+        if offset + 6 > len(data):
+            break
+        x, y, z = struct.unpack_from('<hhh', data, offset)
+        samples.append((x, y, z))
+        offset += 6
+    return {
+        'seq': seq, 'tick_ms': tick_ms,
+        'count': count, 'buf_used': buf_used,
+        'samples': samples,
     }
 
 
