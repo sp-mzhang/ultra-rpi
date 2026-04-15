@@ -527,6 +527,32 @@
       div.className = 'rb-include-banner';
       div.innerHTML = `<span class="rb-inc-label">${label}</span>` +
         `<span class="rb-inc-ref">${ref}</span>`;
+      if (ref.includes('centrifuge')) {
+        const skipRow = document.createElement('div');
+        skipRow.style.cssText = 'margin-top:4px;display:flex;gap:12px;';
+        const skipSpin = builderModel.constants.skip_centrifuge_spin || false;
+        const skipShake = builderModel.constants.skip_centrifuge_shake || false;
+        skipRow.innerHTML =
+          `<label style="font-size:.85rem;cursor:pointer">` +
+          `<input type="checkbox" id="cfg-skip-spin" ${skipSpin ? 'checked' : ''}> Skip Spin</label>` +
+          `<label style="font-size:.85rem;cursor:pointer">` +
+          `<input type="checkbox" id="cfg-skip-shake" ${skipShake ? 'checked' : ''}> Skip Shake</label>`;
+        skipRow.querySelector('#cfg-skip-spin').addEventListener('change', (e) => {
+          if (e.target.checked) {
+            builderModel.constants.skip_centrifuge_spin = true;
+          } else {
+            delete builderModel.constants.skip_centrifuge_spin;
+          }
+        });
+        skipRow.querySelector('#cfg-skip-shake').addEventListener('change', (e) => {
+          if (e.target.checked) {
+            builderModel.constants.skip_centrifuge_shake = true;
+          } else {
+            delete builderModel.constants.skip_centrifuge_shake;
+          }
+        });
+        div.appendChild(skipRow);
+      }
       return div;
     }
 

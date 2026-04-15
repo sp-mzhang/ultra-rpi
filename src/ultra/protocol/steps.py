@@ -141,6 +141,11 @@ class CentrifugeSpinStep(StepExecutor):
     _RETRY_DELAY_S = 1.0
 
     def execute(self, params, runner) -> bool:
+        consts = runner.recipe.constants
+        if consts.get('skip_centrifuge_spin'):
+            LOG.info('centrifuge_spin SKIPPED (constant)')
+            return True
+
         rpm = params.get('rpm', 500)
         duration_s = params.get('duration_s', 5)
         r = None
@@ -257,6 +262,10 @@ class CentrifugeShakeStep(StepExecutor):
 
     def execute(self, params, runner) -> bool:
         consts = runner.recipe.constants
+        if consts.get('skip_centrifuge_shake'):
+            LOG.info('centrifuge_shake SKIPPED (constant)')
+            return True
+
         open_deg = consts.get(
             'angle_open_initial_deg', 290,
         )
@@ -1466,7 +1475,6 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
     'centrifuge_spin': [
         _p('rpm', default=500),
         _p('duration_s', default=5),
-        _p('skip', 'boolean', default=False),
     ],
     'centrifuge_rotate': [
         _p('angle_001deg', default=0),
@@ -1475,7 +1483,6 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('centre_angle_001deg', default=29000),
         _p('shake_angle_deg', default=45),
         _p('cycles', default=3),
-        _p('skip', 'boolean', default=False),
     ],
     'centrifuge_goto_serum': [],
     'centrifuge_goto_pipette': [],
