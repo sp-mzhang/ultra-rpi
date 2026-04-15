@@ -180,7 +180,7 @@ WELL_ID_AUTO  = 0xFF # Firmware auto-detects from last gantry location
 # Gantry Z axis physical bottom limit (µsteps, must match GANTRY_Z_MIN_POS
 # in gantry_hw.h).  Use this as z_bottom in LLD/smart_aspirate so timing
 # calculations reflect the actual travel distance the hardware can achieve.
-GANTRY_Z_MIN_POS = -15625
+GANTRY_Z_MIN_POS = -17060
 
 GANTRY_XY_USTEPS_PER_MM = 3200.0 / (3.14159265358979 * 14.32)  # ~71.14
 Z_USTEPS_PER_MM = 400.0 / 0.6096       # ~656.17 µsteps/mm (pipette Z)
@@ -1528,7 +1528,7 @@ def pack_lld_perform(
         threshold: LLD pressure-rise threshold (firmware units).
         z_start: Z position to begin descent (µsteps, typically 0 or negative).
         z_bottom: Hard bottom limit (µsteps, negative = downward).
-                  Default is GANTRY_Z_MIN_POS (−15625 µsteps ≈ −23.8 mm),
+                  Default is GANTRY_Z_MIN_POS (−17060 µsteps ≈ −26.0 mm),
                   the actual hardware travel limit.
         timeout_ms: Detection timeout in milliseconds.
         z_speed_sps: Z descent speed in steps/s (0 = firmware default).
@@ -1587,7 +1587,7 @@ def pack_smart_aspirate(
         lld_threshold: LLD pressure-rise threshold (firmware units).
         z_entry: Z position to start LLD descent (µsteps).
         z_bottom: Hard bottom limit (µsteps, negative = downward).
-                  Default is GANTRY_Z_MIN_POS (−15625 µsteps ≈ −23.8 mm),
+                  Default is GANTRY_Z_MIN_POS (−17060 µsteps ≈ −26.0 mm),
                   the actual hardware travel limit.
         z_speed_sps: Z descent/follow speed in steps/s
             (0 = firmware default).
