@@ -1014,6 +1014,9 @@ class STM32Interface:
                 ),
                 air_slug_ul=cmd.get('air_slug_ul', 0),
                 stream=cmd.get('stream', False),
+                foil_detect=cmd.get(
+                    'foil_detect', True,
+                ),
             )
         if cmd_name == 'well_dispense':
             return fp.pack_well_dispense(
@@ -1501,6 +1504,7 @@ class STM32Interface:
             well_id: int = fp.WELL_ID_AUTO,
             air_slug_ul: int = 0,
             stream: bool = False,
+            foil_detect: bool = True,
             timeout_s: float = 120.0,
     ) -> Optional[dict]:
         '''LLD + aspirate in a single firmware command.
@@ -1517,6 +1521,9 @@ class STM32Interface:
             air_slug_ul: Air slug volume in uL to aspirate
                 before LLD; 0 = skip.
             stream: Enable real-time pressure streaming.
+            foil_detect: When True, firmware assumes foil
+                is intact and always punctures + re-detects.
+                Default True (safe for unaccessed wells).
             timeout_s: Total timeout in seconds.
 
         Returns:
@@ -1534,6 +1541,7 @@ class STM32Interface:
             'well_id': well_id,
             'air_slug_ul': air_slug_ul,
             'stream': stream,
+            'foil_detect': foil_detect,
         }
 
         resp = self.send_command_wait_done(
@@ -1866,6 +1874,7 @@ class STM32Interface:
             piston_reset: bool = True,
             air_slug_ul: int = 0,
             stream: bool = False,
+            foil_detect: bool = True,
             timeout_s: float = 120.0,
     ) -> dict | None:
         '''Move to a location, then LLF-aspirate in one step.
@@ -1893,6 +1902,9 @@ class STM32Interface:
             air_slug_ul: Air slug volume in uL to aspirate
                 before LLD; 0 = skip.
             stream: Enable real-time pressure streaming.
+            foil_detect: When True, firmware assumes foil
+                is intact and always punctures + re-detects.
+                Default True (safe for unaccessed wells).
             timeout_s: Per-sub-step timeout in seconds
                 (default 120).
 
@@ -1935,6 +1947,7 @@ class STM32Interface:
             well_id=well_id,
             air_slug_ul=air_slug_ul,
             stream=stream,
+            foil_detect=foil_detect,
         )
         if (
                 resp is None

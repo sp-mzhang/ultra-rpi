@@ -45,6 +45,9 @@ class WellState:
         initial_volume_ul: Starting volume in uL.
         current_volume_ul: Current volume in uL.
         operations: Log of operations performed on well.
+        foil_punctured: True after any physical access
+            (aspirate, dispense, mix) has punctured the
+            foil seal on this well.
     '''
     name: str
     loc_id: int
@@ -54,6 +57,7 @@ class WellState:
     operations: list[str] = field(
         default_factory=list,
     )
+    foil_punctured: bool = False
 
     def to_dict(self) -> dict:
         '''Serialize to a JSON-compatible dict.'''
@@ -64,6 +68,7 @@ class WellState:
             'initial_volume_ul': self.initial_volume_ul,
             'current_volume_ul': self.current_volume_ul,
             'operations': list(self.operations),
+            'foil_punctured': self.foil_punctured,
         }
 
 

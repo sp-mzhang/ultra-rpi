@@ -1557,7 +1557,8 @@ def pack_llf_start(
     return struct.pack('<IBH', seq, well_id, z_speed_sps)
 
 
-LIQUID_FLAG_STREAM = 0x01
+LIQUID_FLAG_STREAM      = 0x01
+LIQUID_FLAG_FOIL_DETECT = 0x02
 
 def pack_smart_aspirate(
         seq: int,
@@ -1570,6 +1571,7 @@ def pack_smart_aspirate(
         well_id: int = WELL_ID_AUTO,
         air_slug_ul: int = 0,
         stream: bool = False,
+        foil_detect: bool = True,
 ) -> bytes:
     '''Pack CMD_SMART_ASPIRATE payload.
 
@@ -1587,12 +1589,23 @@ def pack_smart_aspirate(
         z_bottom: Hard bottom limit (µsteps, negative = downward).
                   Default is GANTRY_Z_MIN_POS (−15625 µsteps ≈ −23.8 mm),
                   the actual hardware travel limit.
-        z_speed_sps: Z descent/follow speed in steps/s (0 = firmware default).
-        well_id: Index into firmware k_well_geometry[] lookup table.
-        air_slug_ul: Air slug volume (µL) to aspirate before LLD; 0 = skip.
-        stream: Enable real-time pressure streaming (MSG_PRESSURE 0xA004).
+        z_speed_sps: Z descent/follow speed in steps/s
+            (0 = firmware default).
+        well_id: Index into firmware k_well_geometry[]
+            lookup table.
+        air_slug_ul: Air slug volume (µL) to aspirate
+            before LLD; 0 = skip.
+        stream: Enable real-time pressure streaming
+            (MSG_PRESSURE 0xA004).
+        foil_detect: When True, firmware assumes foil is
+            intact and always punctures + re-detects liquid.
+            Default True (safe for unaccessed wells).
     '''
-    flags = LIQUID_FLAG_STREAM if stream else 0
+    flags = 0
+    if stream:
+        flags |= LIQUID_FLAG_STREAM
+    if foil_detect:
+        flags |= LIQUID_FLAG_FOIL_DETECT
     return struct.pack(
         '<IIfBiiHBIB',
         seq, volume_ul, float(pump_speed_ul_s), lld_threshold,

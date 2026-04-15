@@ -595,6 +595,7 @@ class ReagentTransferStep(StepExecutor):
                     consts.get('air_slug_ul', 40),
                 ),
                 stream=stream,
+                foil_detect=not source.foil_punctured,
             )
             if sa is None:
                 return False
@@ -720,6 +721,7 @@ class ReagentTransferBFStep(StepExecutor):
                     consts.get('air_slug_ul', 40),
                 ),
                 stream=stream,
+                foil_detect=not source.foil_punctured,
             )
             if sa is None:
                 return False
@@ -860,6 +862,7 @@ class WellTransferReturnStep(StepExecutor):
             air_slug_ul=consts.get(
                 'air_slug_ul', 50,
             ),
+            foil_detect=not source.foil_punctured,
         )
         if sa is None:
             return False
@@ -942,6 +945,7 @@ class WellToChipStep(StepExecutor):
                 'air_slug_ul', 50,
             ),
             stream=params.get('stream', True),
+            foil_detect=not source.foil_punctured,
         )
         if sa is None:
             return False
@@ -1098,6 +1102,7 @@ class SmartAspirateStep(StepExecutor):
                 consts.get('air_slug_ul', 40),
             ),
             stream=params.get('stream', False),
+            foil_detect=not well.foil_punctured,
         )
         if sa is None:
             return False
@@ -1153,6 +1158,7 @@ class DilutionTransferStep(StepExecutor):
                 consts.get('air_slug_ul', 40),
             ),
             stream=params.get('stream', True),
+            foil_detect=not source.foil_punctured,
         )
         if sa is None:
             return False

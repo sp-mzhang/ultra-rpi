@@ -221,6 +221,7 @@ class ProtocolStateTracker:
             )
             return
         well.current_volume_ul += delta_ul
+        well.foil_punctured = True
         if operation:
             well.operations.append(operation)
         self._event_bus.emit_sync(
