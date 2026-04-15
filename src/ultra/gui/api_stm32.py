@@ -517,6 +517,33 @@ def create_stm32_router(app: 'Application') -> APIRouter:
         )
         return sorted(CMD_NAME_TO_ID.keys())
 
+    @router.get('/diag/accel_counters')
+    async def diag_accel_counters():
+        '''Snapshot of the accel-stream pipeline counters on the Pi.
+
+        Compare with STM32 isr_seq delta (firmware sent N batches)
+        and the browser's "Dropped" counter (N - decoded_in_browser):
+
+          accel_dispatched      <-- stm32_interface decoded N batches
+          accel_broadcast_calls <-- broadcaster.broadcast invoked N times
+          accel_ws_sends        <-- successful ws.send_text per client
+          accel_ws_drops        <-- ws.send_text raised (connection dead)
+        '''
+        from ultra.hw.stm32_interface import STM32Interface
+        from ultra.gui.server import WebSocketBroadcaster
+        return {
+            'accel_dispatched':
+                STM32Interface.accel_dispatched,
+            'accel_cb_exceptions':
+                STM32Interface.accel_cb_exceptions,
+            'accel_broadcast_calls':
+                WebSocketBroadcaster.accel_broadcast_calls,
+            'accel_ws_sends':
+                WebSocketBroadcaster.accel_ws_sends,
+            'accel_ws_drops':
+                WebSocketBroadcaster.accel_ws_drops,
+        }
+
     # ---- Logs ----
 
     @router.get('/logs')

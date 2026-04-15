@@ -377,7 +377,7 @@
     $('#eng-z-bottom').onclick = () => {
       const spd = parseFloat($('#eng-vel-z').value);
       engCmd('move_z_axis', {
-        position_mm: -26.0, speed: spd,
+        position_mm: -23.81, speed: spd,
       }, true, 60);
     };
 
@@ -1686,15 +1686,15 @@
    * Accelerometer FFT
    * =============================================================
    *
-   * Ring buffer of FFT_N=377 raw samples per axis. When the
+   * Ring buffer of FFT_N=755 raw samples per axis. When the
    * selected axis hits FFT_N, run a Hann-windowed DFT and plot
    * the magnitude spectrum (one-sided, 0..fs/2) via Chart.js.
    *
-   * N=377 → one-second window matching the analysis_tools FFT
-   * viewer. Straight O(N^2) DFT — ~142k multiplies per update,
-   * cheap enough at ~1 Hz update rate even on the Pi browser.
+   * N=755 → ~1-second window at the firmware's current 800 Hz
+   * ODR / ~755 Hz delivered sample rate. Straight O(N^2) DFT —
+   * ~570k multiplies per update, still cheap at ~1 Hz refresh.
    */
-  const FFT_N    = 377;
+  const FFT_N    = 755;
   const SENS_MG  = 0.061;   /* LIS2HH12 ±2g sensitivity */
   let   accelFft = null;
 
