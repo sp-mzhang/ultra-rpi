@@ -1676,6 +1676,10 @@ class STM32Interface:
                     f'flags={r.get("error_flags")}',
                 )
                 return False
+            driver_online = r.get('driver_online', 0)
+            if not driver_online:
+                time.sleep(poll_interval_s)
+                continue
             rpm_abs = abs(int(r.get('rpm', 0)))
             if (
                     state in (

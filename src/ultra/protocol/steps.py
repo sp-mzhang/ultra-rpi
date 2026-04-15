@@ -174,15 +174,15 @@ class CentrifugeSpinStep(StepExecutor):
         )
         if not _ok(r_stop):
             LOG.warning('centrifuge_stop failed')
-        idle_timeout = float(duration_s) + 10.0
         ok = runner.stm32.wait_centrifuge_idle(
-            timeout_s=idle_timeout,
+            timeout_s=10.0,
         )
         if not ok:
             LOG.warning(
                 'Centrifuge not idle after spin -- '
-                'proceeding anyway',
+                'waiting for firmware cleanup',
             )
+            time.sleep(5.0)
 
         LOG.info('Power-cycling BLDC after spin')
         runner.stm32.send_command(
