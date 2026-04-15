@@ -207,7 +207,7 @@ class UltraStateMachine:
         cartridge_inserted follows on a daemon timer thread.
         '''
         threading.Timer(
-            1.0,
+            5.0,
             self._publish_event,
             args=('cartridge_inserted',),
         ).start()
