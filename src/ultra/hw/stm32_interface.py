@@ -252,8 +252,13 @@ class STM32Interface:
             command=cmd_id,
             data=payload,
         )
-        self._ser.write(frame)
+        n = self._ser.write(frame)
         self._ser.flush()
+        LOG.debug(
+            'TX frame: %d bytes written, '
+            'in_waiting=%d',
+            n, self._ser.in_waiting,
+        )
 
     def _recv_frame(
             self,
@@ -290,9 +295,20 @@ class STM32Interface:
         '''Non-blocking drain of any pending UART data.'''
         if not self._ser:
             return
+        pending = self._ser.in_waiting
+        if pending:
+            LOG.debug(
+                'drain_rx: %d bytes pending', pending,
+            )
         self._parser.reset()
+        drained = 0
         while self._ser.in_waiting > 0:
             self._recv_frame(timeout_s=0.005)
+            drained += 1
+        if drained:
+            LOG.debug(
+                'drain_rx: consumed %d frames', drained,
+            )
         self._parser.reset()
 
     def send_command(
@@ -450,7 +466,8 @@ class STM32Interface:
 
         LOG.warning(
             f'Command {cmd_name} timed out after '
-            f'{timeout_s:.1f}s',
+            f'{timeout_s:.1f}s '
+            f'(in_waiting={self._ser.in_waiting if self._ser else "N/A"})',
         )
         return None
 
