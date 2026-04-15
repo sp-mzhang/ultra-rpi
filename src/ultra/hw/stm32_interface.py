@@ -93,6 +93,9 @@ class STM32Interface:
                 stopbits=serial.STOPBITS_ONE,
                 timeout=0.05,
             )
+            time.sleep(0.1)
+            self._ser.reset_input_buffer()
+            self._parser = fp.FrameParser()
             LOG.info(
                 f'Connected: UART {self._port} '
                 f'@ {self._baud}',

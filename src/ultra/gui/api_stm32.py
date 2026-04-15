@@ -56,7 +56,7 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             STM32StatusMonitor,
         )
         STM32StatusMonitor.stop_active()
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.5)
 
         from ultra.hw.stm32_interface import (
             STM32Interface,
