@@ -50,7 +50,17 @@ def find_pproc_port() -> str | None:
     Returns:
         Port device path (e.g. /dev/ttyACM0) or None.
     '''
-    ports = serial.tools.list_ports.comports()
+    all_ports = serial.tools.list_ports.comports()
+    excluded = [
+        p.device for p in all_ports
+        if '/ttyAMA' in p.device
+    ]
+    ports = [
+        p for p in all_ports
+        if '/ttyAMA' not in p.device
+    ]
+    if excluded:
+        LOG.info('PProc scan excluded: %s', excluded)
     LOG.info(
         'Scanning %d serial ports for PProc reader: %s',
         len(ports),
