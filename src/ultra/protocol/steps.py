@@ -1466,6 +1466,7 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
     'centrifuge_spin': [
         _p('rpm', default=500),
         _p('duration_s', default=5),
+        _p('skip', 'boolean', default=False),
     ],
     'centrifuge_rotate': [
         _p('angle_001deg', default=0),
@@ -1474,6 +1475,7 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('centre_angle_001deg', default=29000),
         _p('shake_angle_deg', default=45),
         _p('cycles', default=3),
+        _p('skip', 'boolean', default=False),
     ],
     'centrifuge_goto_serum': [],
     'centrifuge_goto_pipette': [],

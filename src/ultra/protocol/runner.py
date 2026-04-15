@@ -797,6 +797,25 @@ class ProtocolRunner:
                         )
                         continue
 
+                    if step_def.params.get('skip'):
+                        LOG.info(
+                            'Step %d "%s" SKIPPED',
+                            si, step_def.label,
+                        )
+                        self.tracker.begin_step(
+                            index=si,
+                            total=total,
+                            label=(
+                                f'[SKIP] '
+                                f'{step_def.label}'
+                            ),
+                            phase=phase.name,
+                        )
+                        self.tracker.end_step(
+                            si, ok=True,
+                        )
+                        continue
+
                     self.tracker.begin_step(
                         index=si,
                         total=total,
