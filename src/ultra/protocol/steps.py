@@ -183,6 +183,27 @@ class CentrifugeSpinStep(StepExecutor):
                 'Centrifuge not idle after spin -- '
                 'proceeding anyway',
             )
+
+        LOG.info('Power-cycling BLDC after spin')
+        runner.stm32.send_command(
+            cmd={'cmd': 'centrifuge_power', 'enable': False},
+            timeout_s=5.0,
+        )
+        time.sleep(1.0)
+        runner.stm32.send_command(
+            cmd={'cmd': 'centrifuge_power', 'enable': True},
+            timeout_s=5.0,
+        )
+        time.sleep(1.0)
+
+        LOG.info('Re-homing BLDC encoder after power cycle')
+        r_home = runner.stm32.send_command(
+            cmd={'cmd': 'centrifuge_home'},
+            timeout_s=60.0,
+        )
+        if not _ok(r_home):
+            LOG.warning('centrifuge_home after spin failed')
+
         return True
 
 
