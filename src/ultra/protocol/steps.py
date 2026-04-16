@@ -217,25 +217,36 @@ class CentrifugeRotateStep(StepExecutor):
     '''Rotate centrifuge carousel to a specific angle.
 
     Matches sway: send_command (ACK only, no DONE wait),
-    then a 1-second settle sleep.
+    then a 1-second settle sleep.  On BLDC move_angle
+    failure, resets the driver and retries up to 3 times.
     '''
+
+    _MAX_RETRIES = 3
 
     def execute(self, params, runner) -> bool:
         angle = params.get('angle_001deg', 0)
-        r = runner.stm32.send_command(
-            cmd={
-                'cmd': 'centrifuge_move_angle',
-                'angle_001deg': angle,
-                'move_rpm': runner.recipe.constants.get(
-                    'move_rpm', 1,
-                ),
-            },
-            timeout_s=120.0,
-        )
-        if not _ok(r):
-            return False
-        time.sleep(1.0)
-        return True
+        cmd = {
+            'cmd': 'centrifuge_move_angle',
+            'angle_001deg': angle,
+            'move_rpm': runner.recipe.constants.get(
+                'move_rpm', 1,
+            ),
+        }
+        for attempt in range(1, self._MAX_RETRIES + 1):
+            r = runner.stm32.send_command(
+                cmd=cmd, timeout_s=120.0,
+            )
+            if _ok(r):
+                time.sleep(1.0)
+                return True
+            LOG.warning(
+                'centrifuge_move_angle failed '
+                '(attempt %d/%d)',
+                attempt, self._MAX_RETRIES,
+            )
+            if attempt < self._MAX_RETRIES:
+                _bldc_reset(runner.stm32)
+        return False
 
 
 @step_type('centrifuge_shake')
@@ -284,32 +295,94 @@ class CentrifugeShakeStep(StepExecutor):
         amp = int(amp_deg * 100)
         move_rpm = consts.get('move_rpm', 1)
 
-        for i in range(int(cycles)):
-            for target in (centre + amp, centre - amp):
+        def _move(angle: int) -> bool:
+            for attempt in range(1, 4):
                 r = runner.stm32.send_command(
                     cmd={
                         'cmd': 'centrifuge_move_angle',
-                        'angle_001deg': target,
+                        'angle_001deg': angle,
                         'move_rpm': move_rpm,
                     },
                     timeout_s=120.0,
                 )
-                if not _ok(r):
-                    return False
-                time.sleep(1.0)
-
-        r = runner.stm32.send_command(
-            cmd={
-                'cmd': 'centrifuge_move_angle',
-                'angle_001deg': centre,
-                'move_rpm': move_rpm,
-            },
-            timeout_s=120.0,
-        )
-        if not _ok(r):
+                if _ok(r):
+                    time.sleep(1.0)
+                    return True
+                LOG.warning(
+                    'shake move_angle(%d) failed '
+                    '(attempt %d/3)', angle, attempt,
+                )
+                if attempt < 3:
+                    _bldc_reset(runner.stm32)
             return False
-        time.sleep(1.0)
-        return True
+
+        for i in range(int(cycles)):
+            for target in (centre + amp, centre - amp):
+                if not _move(target):
+                    return False
+
+        return _move(centre)
+
+
+def _bldc_reset(stm32: Any) -> None:
+    '''Stop the BLDC motor and clear any error state.
+
+    Sends BLDC_STOP_MOTOR then BLDC_CLEAR_ERROR via the
+    centrifuge_bldc_cmd pass-through.  Used before retrying
+    a failed centrifuge move_angle.
+    '''
+    from ultra.hw import frame_protocol as fp
+    LOG.info('BLDC reset: stopping motor + clearing error')
+    stm32.send_command(
+        cmd={
+            'cmd': 'centrifuge_bldc_cmd',
+            'bldc_cmd': fp.BLDC_STOP_MOTOR,
+        },
+        timeout_s=5.0,
+    )
+    time.sleep(0.5)
+    stm32.send_command(
+        cmd={
+            'cmd': 'centrifuge_bldc_cmd',
+            'bldc_cmd': fp.BLDC_CLEAR_ERROR,
+        },
+        timeout_s=5.0,
+    )
+    time.sleep(0.5)
+
+
+def _centrifuge_goto_with_retry(
+        cmd_name: str,
+        runner: Any,
+        max_retries: int = 3,
+) -> bool:
+    '''Send a centrifuge goto command with BLDC reset on failure.
+
+    If the first attempt fails (BLDC move_angle error), resets
+    the BLDC driver and retries up to ``max_retries`` times.
+    '''
+    consts = runner.recipe.constants
+    cmd = {
+        'cmd': cmd_name,
+        'angle_open_initial_deg': consts.get(
+            'angle_open_initial_deg', 290,
+        ),
+        'move_rpm': consts.get('move_rpm', 1),
+    }
+    for attempt in range(1, max_retries + 1):
+        r = runner.stm32.send_command(
+            cmd=cmd, timeout_s=120.0,
+        )
+        if _ok(r):
+            time.sleep(1.0)
+            return True
+        LOG.warning(
+            '%s failed (attempt %d/%d)',
+            cmd_name, attempt, max_retries,
+        )
+        if attempt < max_retries:
+            _bldc_reset(runner.stm32)
+    return False
 
 
 @step_type('centrifuge_goto_serum')
@@ -319,26 +392,15 @@ class CentrifugeGotoSerumStep(StepExecutor):
     Reads ``angle_open_initial_deg`` from recipe constants
     (default 290).  Firmware derives the target angle as
     open_init - 180 (i.e. 110 deg with the default).
+
+    On BLDC move_angle failure, resets the driver and
+    retries up to 3 times.
     '''
 
     def execute(self, params, runner) -> bool:
-        consts = runner.recipe.constants
-        r = runner.stm32.send_command(
-            cmd={
-                'cmd': 'centrifuge_goto_serum',
-                'angle_open_initial_deg': consts.get(
-                    'angle_open_initial_deg', 290,
-                ),
-                'move_rpm': consts.get(
-                    'move_rpm', 1,
-                ),
-            },
-            timeout_s=120.0,
+        return _centrifuge_goto_with_retry(
+            'centrifuge_goto_serum', runner,
         )
-        if not _ok(r):
-            return False
-        time.sleep(1.0)
-        return True
 
 
 @step_type('centrifuge_goto_pipette')
@@ -349,26 +411,15 @@ class CentrifugeGotoPipetteStep(StepExecutor):
     from recipe constants.  Firmware derives the target
     angle as open_init - 90 (i.e. 200 deg with default
     290).
+
+    On BLDC move_angle failure, resets the driver and
+    retries up to 3 times.
     '''
 
     def execute(self, params, runner) -> bool:
-        consts = runner.recipe.constants
-        r = runner.stm32.send_command(
-            cmd={
-                'cmd': 'centrifuge_goto_pipette',
-                'angle_open_initial_deg': consts.get(
-                    'angle_open_initial_deg', 290,
-                ),
-                'move_rpm': consts.get(
-                    'move_rpm', 1,
-                ),
-            },
-            timeout_s=120.0,
+        return _centrifuge_goto_with_retry(
+            'centrifuge_goto_pipette', runner,
         )
-        if not _ok(r):
-            return False
-        time.sleep(1.0)
-        return True
 
 
 @step_type('lift_move')
