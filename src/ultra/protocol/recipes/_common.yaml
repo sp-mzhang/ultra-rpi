@@ -28,6 +28,9 @@ centrifuge_phase:
       label: Rotate 290 deg
       angle_001deg: 29000
 
+    - type: centrifuge_goto_blister
+      label: Rotate to blister position
+
     - type: lift_move
       label: Lower lift to 15mm
       target_mm: 15.0

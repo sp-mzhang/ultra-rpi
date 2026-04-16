@@ -422,6 +422,25 @@ class CentrifugeGotoPipetteStep(StepExecutor):
         )
 
 
+@step_type('centrifuge_goto_blister')
+class CentrifugeGotoBlisterStep(StepExecutor):
+    '''Rotate centrifuge to blister-access position.
+
+    Reads ``angle_open_initial_deg`` and ``move_rpm``
+    from recipe constants.  Firmware derives the target
+    angle as open_init - 270 (i.e. 20 deg with default
+    290).
+
+    On BLDC move_angle failure, resets the driver and
+    retries up to 3 times.
+    '''
+
+    def execute(self, params, runner) -> bool:
+        return _centrifuge_goto_with_retry(
+            'centrifuge_goto_blister', runner,
+        )
+
+
 @step_type('lift_move')
 class LiftMoveStep(StepExecutor):
     '''Move lift to a target height in mm.
@@ -1489,6 +1508,7 @@ STEP_DESCRIPTIONS: dict[str, str] = {
     'centrifuge_shake':        'Shake the carousel back and forth',
     'centrifuge_goto_serum':   'Rotate centrifuge to serum-access position',
     'centrifuge_goto_pipette': 'Rotate centrifuge to pipette-access position',
+    'centrifuge_goto_blister': 'Rotate centrifuge to blister-access position',
     'lift_move':               'Move lift to a target height in mm',
     'lid':                     'Open or close the lid',
     'move_to_location':        'Move gantry XY to a well/port location',
@@ -1537,6 +1557,7 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
     ],
     'centrifuge_goto_serum': [],
     'centrifuge_goto_pipette': [],
+    'centrifuge_goto_blister': [],
     'lift_move': [
         _p('target_mm', default=18.0),
     ],
