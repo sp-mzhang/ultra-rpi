@@ -1,7 +1,7 @@
 name: CRP Ultra Demo
 description: >
   Speed-up variant of CRP Ultra for demo/testing.
-  Cartridge dispense velocities are 10x faster than
+  Cartridge dispense velocities are 50x faster than
   the production recipe and GNP back-and-forth duration
   is reduced from 480s to 48s.
 
@@ -22,7 +22,7 @@ peak_detect:
 constants:
   air_slug_ul: 40
   reasp_ul: 12
-  cart_disp_vel: 15.0
+  cart_disp_vel: 75.0
 
 wells:
   # Buffer source wells (small)
@@ -208,7 +208,7 @@ phases:
         label: Pre-flight LLD
         threshold: 20
 
-      # Hydrophilic Coating (10x: 0.5 -> 5.0)
+      # Hydrophilic Coating (50x: 0.5 -> 25.0)
       - type: reagent_transfer
         label: cart_dispense_Hydrophilic
         source: S7
@@ -216,7 +216,7 @@ phases:
         asp_vol: 110
         cart_vol: 70
         asp_speed: 40.0
-        cart_vel: 5.0
+        cart_vel: 25.0
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
@@ -227,7 +227,7 @@ phases:
         from_id: 5
         to_id: 6
 
-      # DI Water (10x: 1.5 -> 15.0)
+      # DI Water (50x: 1.5 -> 75.0)
       - type: reagent_transfer
         label: cart_dispense_DI_Water
         source: M3
@@ -235,13 +235,13 @@ phases:
         asp_vol: 210
         cart_vol: 160
         asp_speed: 40.0
-        cart_vel: 15.0
+        cart_vel: 75.0
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
         stream: true
 
-      # PBST (10x: 1.0 -> 10.0)
+      # PBST (50x: 1.0 -> 50.0)
       - type: reagent_transfer
         label: cart_dispense_PBST
         source: M5
@@ -249,13 +249,13 @@ phases:
         asp_vol: 220
         cart_vol: 180
         asp_speed: 40.0
-        cart_vel: 10.0
+        cart_vel: 50.0
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
         stream: true
 
-      # Lane4 Buffer 4.23 first (10x: 0.5 -> 5.0)
+      # Lane4 Buffer 4.23 first (50x: 0.5 -> 25.0)
       - type: reagent_transfer
         label: cart_dispense_Lane4Buffer_1
         source: S9
@@ -263,13 +263,13 @@ phases:
         asp_vol: 90
         cart_vol: 60
         asp_speed: 40.0
-        cart_vel: 5.0
+        cart_vel: 25.0
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
         stream: true
 
-      # Dilution7 750x from M9 (10x: 0.5 -> 5.0)
+      # Dilution7 750x from M9 (50x: 0.5 -> 25.0)
       - type: reagent_transfer
         label: cart_dispense_Dilution7
         source: M9
@@ -277,13 +277,13 @@ phases:
         asp_vol: 150
         cart_vol: 120
         asp_speed: 40.0
-        cart_vel: 5.0
+        cart_vel: 25.0
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
         stream: true
 
-      # Lane4 Buffer 4.23 second (10x: 0.5 -> 5.0)
+      # Lane4 Buffer 4.23 second (50x: 0.5 -> 25.0)
       - type: reagent_transfer
         label: cart_dispense_Lane4Buffer_2
         source: S9
@@ -291,13 +291,13 @@ phases:
         asp_vol: 90
         cart_vol: 60
         asp_speed: 40.0
-        cart_vel: 5.0
+        cart_vel: 25.0
         air_slug: 40
         reasp_ul: 12
         return_speed: 100.0
         stream: true
 
-      # GNP pre-mix then back-and-forth (10x: 1.5 -> 15.0, 480s -> 48s)
+      # GNP pre-mix then back-and-forth (50x: 1.5 -> 75.0, 480s -> 48s)
       - type: tip_mix
         label: GNP Mix
         well: M7
@@ -314,7 +314,7 @@ phases:
         cart_vol: 145
         duration_s: 48
         asp_speed: 40.0
-        cart_vel: 15.0
+        cart_vel: 75.0
         air_slug: 40
         reasp_ul: 12
         for_vol: 35
