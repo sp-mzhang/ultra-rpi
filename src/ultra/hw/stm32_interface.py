@@ -346,7 +346,7 @@ class STM32Interface:
                 if (cmd & 0xFF) != (done_msg_id & 0xFF):
                     continue
                 try:
-                    msg = _unpack_done(done_msg_id, data)
+                    msg = _unpack_done(done_msg_id - 0x1000, data)
                 except Exception:
                     continue
                 if msg.get('cmd_id') != expected_cmd_id:
