@@ -209,7 +209,7 @@ class Application:
 
             proto_cfg = self.config.get('protocol', {})
             recipe = proto_cfg.get(
-                'default_recipe', 'crp_ultra',
+                'default_recipe', 'crp_ultra_demo',
             )
             startup_cfg = self.config.get('startup', {})
             chip_id = (
