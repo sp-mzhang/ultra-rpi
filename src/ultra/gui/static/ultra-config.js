@@ -257,9 +257,9 @@
           wellsYaml += `  ${wn}:${pad} {${parts.join(', ')}}\n`;
         }
 
-        const phasesIdx = yaml.indexOf('phases:');
+        const phasesIdx = yaml.indexOf('\nphases:');
         if (phasesIdx !== -1) {
-          yaml = yaml.slice(0, phasesIdx) + wellsYaml + '\n' + yaml.slice(phasesIdx);
+          yaml = yaml.slice(0, phasesIdx + 1) + wellsYaml + '\n' + yaml.slice(phasesIdx + 1);
         } else {
           yaml += '\n' + wellsYaml;
         }
