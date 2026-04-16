@@ -176,6 +176,9 @@
           );
         }
         break;
+      case 'accel_stream':
+        if (Ultra.onAccelStream) Ultra.onAccelStream(data);
+        break;
       case 'protocol_started':
         completedSteps = 0;
         updateButtons(true, false);

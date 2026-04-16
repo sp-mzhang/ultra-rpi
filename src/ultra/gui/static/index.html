@@ -1409,10 +1409,86 @@
 
   <!-- ===== ACCELEROMETER ===== -->
   <div class="eng-pane" id="eng-accel" hidden>
-    <button id="eng-accel-status"
-      class="eng-cmd-btn">Get Status</button>
-    <pre id="eng-accel-status-box"
-      class="eng-status-box">--</pre>
+    <div class="eng-row">
+      <button id="eng-accel-status"
+        class="eng-cmd-btn">Get Status</button>
+      <button id="eng-accel-reset"
+        class="eng-cmd-btn">Reset Sensor</button>
+    </div>
+
+    <fieldset class="eng-inner-fs">
+      <legend>Acceleration</legend>
+      <div class="eng-form-grid">
+        <label>X (g):</label>
+        <span id="eng-accel-x">--</span>
+        <label>Y (g):</label>
+        <span id="eng-accel-y">--</span>
+        <label>Z (g):</label>
+        <span id="eng-accel-z">--</span>
+        <label>Initialized:</label>
+        <span id="eng-accel-init">--</span>
+      </div>
+    </fieldset>
+
+    <fieldset class="eng-inner-fs">
+      <legend>Stream Test (live)</legend>
+      <div class="eng-row">
+        <button id="eng-accel-stream-start"
+          class="eng-cmd-btn">Start</button>
+        <button id="eng-accel-stream-stop"
+          class="eng-cmd-btn">Stop</button>
+        <span id="eng-accel-stream-state"
+          style="color:gray;margin-left:8px">STOPPED</span>
+      </div>
+      <div class="eng-form-grid" style="margin-top:8px">
+        <label>X (mg):</label>
+        <span id="eng-accel-live-x">--</span>
+        <label>Y (mg):</label>
+        <span id="eng-accel-live-y">--</span>
+        <label>Z (mg):</label>
+        <span id="eng-accel-live-z">--</span>
+        <label>|a| (mg):</label>
+        <span id="eng-accel-live-mag">--</span>
+        <label>Pitch (&deg;):</label>
+        <span id="eng-accel-live-pitch">--</span>
+        <label>Roll (&deg;):</label>
+        <span id="eng-accel-live-roll">--</span>
+        <label>ISR seq:</label>
+        <span id="eng-accel-live-seq">--</span>
+        <label>Rate (Hz):</label>
+        <span id="eng-accel-live-rate">--</span>
+        <label>Dropped:</label>
+        <span id="eng-accel-live-lost">0</span>
+      </div>
+
+      <!-- FFT viewer inside the Stream Test fieldset so it's
+           always visible alongside the live readouts. -->
+      <div style="margin-top:12px;
+                  border-top:1px solid #ccc;padding-top:8px">
+        <div class="eng-row">
+          <strong>FFT (1-second window, 755 samples)</strong>
+          <label style="margin-left:16px">
+            <input type="radio" name="eng-accel-fft-axis"
+              value="x" checked> X
+          </label>
+          <label><input type="radio" name="eng-accel-fft-axis"
+            value="y"> Y</label>
+          <label><input type="radio" name="eng-accel-fft-axis"
+            value="z"> Z</label>
+          <label style="margin-left:16px">
+            <input type="checkbox" id="eng-accel-fft-logy">
+            log Y
+          </label>
+          <span id="eng-accel-fft-status"
+            style="color:gray;margin-left:12px">idle</span>
+        </div>
+        <div id="eng-accel-fft-wrap"
+             style="position:relative;width:100%;height:260px;
+                    margin-top:6px">
+          <canvas id="eng-accel-fft-canvas"></canvas>
+        </div>
+      </div>
+    </fieldset>
   </div>
 
   <!-- ===== FANS ===== -->

@@ -56,7 +56,13 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             STM32StatusMonitor,
         )
         STM32StatusMonitor.stop_active()
-        await asyncio.sleep(0.3)
+        # Give the kernel tty buffer + Pi UART hardware time to fully
+        # settle after the monitor thread's read()/close() — otherwise
+        # the engineering Serial open occasionally inherits a tty state
+        # where poll() says "readable" but read() returns 0 bytes, and
+        # every command from the web UI times out until the service is
+        # reset. 1.2 s is empirical; 0.3 s wasn't enough.
+        await asyncio.sleep(1.2)
 
         from ultra.hw.stm32_interface import (
             STM32Interface,
@@ -80,6 +86,34 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                 detail='Failed to connect to STM32',
             )
         eng_stm32['iface'] = stm32
+
+        # Drop any bytes the Pi's kernel buffered during the handoff
+        # from the monitor thread. Without this, a stale half-frame
+        # from the monitor era can mis-align the FrameParser and make
+        # the first few commands appear to hang.
+        try:
+            stm32._ser.reset_input_buffer()
+            stm32._ser.reset_output_buffer()
+        except Exception:
+            pass
+
+        # Pipe accel stream batches onto the event bus so the
+        # WebSocket broadcaster fans them out to the browser.
+        # Callback fires from the interface reader thread, so
+        # use emit_sync which bounces through call_soon_threadsafe.
+        stm32.set_accel_stream_callback(
+            lambda d: app.event_bus.emit_sync(
+                'accel_stream', d,
+            ),
+        )
+
+        # Start the background telemetry reader. Without this,
+        # async push frames (accel stream 0x9E03, motor telemetry
+        # 0xBxxx, etc.) stay stuck in the kernel RX buffer until
+        # the next send_command call, which starves the browser
+        # of stream samples. The reader coordinates with
+        # send_command via the interface's internal _lock.
+        stm32.start_telem_reader()
 
         version_str = '--'
         try:
@@ -108,6 +142,14 @@ def create_stm32_router(app: 'Application') -> APIRouter:
         '''Disconnect engineering STM32 and restart monitor.'''
         stm32 = eng_stm32['iface']
         if stm32 is not None:
+            try:
+                stm32.stop_telem_reader()
+            except Exception:
+                pass
+            try:
+                stm32.set_accel_stream_callback(None)
+            except Exception:
+                pass
             try:
                 stm32.disconnect()
             except Exception:
@@ -474,6 +516,33 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             CMD_NAME_TO_ID,
         )
         return sorted(CMD_NAME_TO_ID.keys())
+
+    @router.get('/diag/accel_counters')
+    async def diag_accel_counters():
+        '''Snapshot of the accel-stream pipeline counters on the Pi.
+
+        Compare with STM32 isr_seq delta (firmware sent N batches)
+        and the browser's "Dropped" counter (N - decoded_in_browser):
+
+          accel_dispatched      <-- stm32_interface decoded N batches
+          accel_broadcast_calls <-- broadcaster.broadcast invoked N times
+          accel_ws_sends        <-- successful ws.send_text per client
+          accel_ws_drops        <-- ws.send_text raised (connection dead)
+        '''
+        from ultra.hw.stm32_interface import STM32Interface
+        from ultra.gui.server import WebSocketBroadcaster
+        return {
+            'accel_dispatched':
+                STM32Interface.accel_dispatched,
+            'accel_cb_exceptions':
+                STM32Interface.accel_cb_exceptions,
+            'accel_broadcast_calls':
+                WebSocketBroadcaster.accel_broadcast_calls,
+            'accel_ws_sends':
+                WebSocketBroadcaster.accel_ws_sends,
+            'accel_ws_drops':
+                WebSocketBroadcaster.accel_ws_drops,
+        }
 
     # ---- Logs ----
 

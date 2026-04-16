@@ -49,6 +49,14 @@ class WebSocketBroadcaster:
         _last_sweep: Most recent sweep_data payload.
     '''
 
+    # Diagnostic counters specific to the accel stream pipeline.
+    # Compared against STM32Interface.accel_dispatched and the
+    # browser's "Dropped" counter to localise where batches are
+    # being lost when the GUI is active.
+    accel_broadcast_calls = 0   # invocations of broadcast('accel_stream', …)
+    accel_ws_sends        = 0   # successful per-client ws.send_text
+    accel_ws_drops        = 0   # ws.send_text raised → connection dead
+
     def __init__(self) -> None:
         self._connections: set[WebSocket] = set()
         self._peak_buffer: deque[dict] = deque(
@@ -115,6 +123,9 @@ class WebSocketBroadcaster:
                 self._current_step_index = idx
                 self._last_step_data = dict(data)
 
+        if event_type == 'accel_stream':
+            WebSocketBroadcaster.accel_broadcast_calls += 1
+
         if not self._connections:
             return
         message = json.dumps({
@@ -125,8 +136,12 @@ class WebSocketBroadcaster:
         for ws in list(self._connections):
             try:
                 await ws.send_text(message)
+                if event_type == 'accel_stream':
+                    WebSocketBroadcaster.accel_ws_sends += 1
             except Exception:
                 dead.append(ws)
+                if event_type == 'accel_stream':
+                    WebSocketBroadcaster.accel_ws_drops += 1
         for ws in dead:
             self._connections.discard(ws)
 
@@ -272,6 +287,7 @@ def create_app(application: 'Application') -> FastAPI:
         'status_changed',
         'door_opened', 'door_closed',
         'pressure_update', 'temperature_update',
+        'accel_stream',
         'centrifuge_rpm', 'stm32_error',
         'egress_started', 'egress_done',
         'egress_error',
