@@ -1071,7 +1071,7 @@ def pack_fan_get_status(seq: int) -> bytes:
 
 
 def unpack_fan_status(data: bytes) -> dict:
-    '''Unpack FAN_GET_STATUS response (0x9B02).
+    '''Unpack FAN_GET_STATUS response (0x9702).
 
     proto_rsp_fan_status_t (8 bytes):
         seq(4) + error(1) + duty(1) + rpm(2)
@@ -1163,22 +1163,42 @@ def pack_temp_get_status(seq: int) -> bytes:
 def unpack_temp_status(data: bytes) -> dict:
     '''Unpack TEMP_GET_STATUS response (0xA101).
 
-    proto_rsp_temp_status_t (11 bytes):
-        seq(4) + error(1) + ext1_x10(2) + ext2_x10(2) + int_x10(2)
+    proto_rsp_temp_status_t (21 bytes):
+        seq(4) + error(1) +
+        ext1_x10(2) + ext2_x10(2) + int_x10(2) +
+        prim_air_x10(2) + sec_air_x10(2) + flowcell_x10(2) +
+        flowcell_otp(1) + air_otp(1) +
+        flowcell_heater_en(1) + air_heater_en(1)
 
     Temperatures are in 0.1 degC units (signed int16).
+    Backward-compatible: returns minimal dict if payload < 21 bytes.
     '''
     if len(data) < 11:
         return {'seq': 0, 'error': 0xFF}
     seq, error, ext1_x10, ext2_x10, int_x10 = struct.unpack_from(
         '<IBhhh', data)
-    return {
+    result = {
         'seq': seq,
         'error': error,
         'ext1_temp_c': ext1_x10 / 10.0,
         'ext2_temp_c': ext2_x10 / 10.0,
         'int_temp_c':  int_x10  / 10.0,
     }
+    if len(data) >= 21:
+        (
+            prim_air_x10, sec_air_x10, flowcell_x10,
+            fc_otp, air_otp, fc_en, air_en,
+        ) = struct.unpack_from('<hhhBBBB', data, 11)
+        result.update({
+            'prim_air_temp_c': prim_air_x10 / 10.0,
+            'sec_air_temp_c': sec_air_x10 / 10.0,
+            'flowcell_temp_c': flowcell_x10 / 10.0,
+            'flowcell_otp': bool(fc_otp),
+            'air_otp': bool(air_otp),
+            'flowcell_heater_en': bool(fc_en),
+            'air_heater_en': bool(air_en),
+        })
+    return result
 
 
 def pack_set_state(seq: int, state: int) -> bytes:

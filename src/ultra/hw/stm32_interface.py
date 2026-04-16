@@ -1029,7 +1029,7 @@ class STM32Interface:
                 seq=seq,
                 mode=mode,
             )
-        if cmd_name == 'centrifuge_start':
+        if cmd_name in ('centrifuge_start', 'centrifuge_rock'):
             return fp.pack_centrifuge_start(
                 seq=seq,
                 rpm=cmd.get('rpm', 0),
