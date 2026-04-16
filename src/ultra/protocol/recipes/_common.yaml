@@ -22,7 +22,7 @@ centrifuge_phase:
     - type: centrifuge_spin
       label: Spin 500 RPM x 5s
       rpm: 500
-      duration_s: 5
+      duration_s: 360
 
     - type: centrifuge_rotate
       label: Rotate 290 deg
