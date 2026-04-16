@@ -377,7 +377,7 @@
     $('#eng-z-bottom').onclick = () => {
       const spd = parseFloat($('#eng-vel-z').value);
       engCmd('move_z_axis', {
-        position_mm: -26.0, speed: spd,
+        position_mm: -23.81, speed: spd,
       }, true, 60);
     };
 
@@ -1558,15 +1558,292 @@
 
   /* ---- ACCELEROMETER wiring ---- */
   function wireEngAccel() {
+    /* Get Status — one-shot read. Updates the Acceleration panel. */
     $('#eng-accel-status').onclick = async () => {
       const r = await engCmd(
         'accel_get_status', {}, false, 3,
       );
-      $('#eng-accel-status-box').textContent = (
-        r ? JSON.stringify(r, null, 2) : 'Error'
-      );
+      if (!r) return;
+      const rd = r.response || r;
+      const x = rd.x_g, y = rd.y_g, z = rd.z_g;
+      if (typeof x === 'number') $('#eng-accel-x').textContent = x.toFixed(3);
+      if (typeof y === 'number') $('#eng-accel-y').textContent = y.toFixed(3);
+      if (typeof z === 'number') $('#eng-accel-z').textContent = z.toFixed(3);
+      const init = rd.initialized;
+      const el = $('#eng-accel-init');
+      if (init !== undefined) {
+        el.textContent = init ? 'YES' : 'NO';
+        el.style.color = init ? 'green' : 'red';
+      }
+    };
+
+    /* Reset Sensor — firmware stops+restarts accel service. */
+    $('#eng-accel-reset').onclick = async () => {
+      setStreamState(false);
+      await engCmd('accel_reset', {}, false, 3);
+    };
+
+    /* Stream Start / Stop — firmware pushes ~25 batches/s once
+     * ACCEL_STREAM_START is ACKed. onAccelStream (below) updates
+     * the live readouts as each batch comes in over the WebSocket. */
+    $('#eng-accel-stream-start').onclick = async () => {
+      accelStream.lastSeq = -1;
+      accelStream.lastTick = 0;
+      accelStream.dtAvg = 0;
+      accelStream.lost = 0;
+      $('#eng-accel-live-lost').textContent = '0';
+      if (accelFft && accelFft.clear) accelFft.clear();
+      await engCmd('accel_stream_start', {}, false, 3);
+      setStreamState(true);
+    };
+
+    $('#eng-accel-stream-stop').onclick = async () => {
+      setStreamState(false);
+      await engCmd('accel_stream_stop', {}, false, 3);
     };
   }
+
+  /* Per-batch live readout state. Mirrors the Tk GUI — only the last
+   * sample of each batch is shown, and rate/dropped are inferred
+   * from the ISR seq counter and MCU tick delta. */
+  const accelStream = {
+    running:  false,
+    lastSeq:  -1,
+    lastTick: 0,
+    dtAvg:    0,   /* ms, EWMA-smoothed */
+    lost:     0,
+  };
+
+  function setStreamState(on) {
+    accelStream.running = on;
+    const el = $('#eng-accel-stream-state');
+    if (!el) return;
+    el.textContent = on ? 'STREAMING' : 'STOPPED';
+    el.style.color = on ? 'green' : 'gray';
+  }
+
+  /* Called from ultra-run.js WS dispatcher on each accel_stream msg. */
+  Ultra.onAccelStream = function(ev) {
+    if (!accelStream.running) return;
+    const samples = ev.samples || [];
+    if (!samples.length) return;
+
+    const seq  = ev.seq | 0;
+    const tick = ev.tick_ms | 0;
+    const last = samples[samples.length - 1];
+    const xr = last[0], yr = last[1], zr = last[2];
+
+    /* LIS2HH12 ±2g, 16-bit left-justified → 0.061 mg/LSB. */
+    const SENS  = 0.061;
+    const xMg   = xr * SENS;
+    const yMg   = yr * SENS;
+    const zMg   = zr * SENS;
+    const magMg = Math.sqrt(xMg*xMg + yMg*yMg + zMg*zMg);
+
+    /* Gravity rests on +Y; decoupled pitch/roll formulas so
+     * rotation around one axis doesn't leak into the other. */
+    const pitch = Math.atan2(xr, yr) * 180 / Math.PI;
+    const roll  = Math.atan2(zr, yr) * 180 / Math.PI;
+
+    /* Rate from MCU tick deltas (16 samples per IRQ). */
+    if (accelStream.lastTick > 0 && tick > accelStream.lastTick) {
+      const dt = tick - accelStream.lastTick;
+      accelStream.dtAvg = accelStream.dtAvg === 0
+        ? dt : (0.8 * accelStream.dtAvg + 0.2 * dt);
+    }
+    accelStream.lastTick = tick;
+
+    /* Dropped-batch detection via ISR seq (16-bit rolling). */
+    if (accelStream.lastSeq >= 0) {
+      const expected = (accelStream.lastSeq + 1) & 0xFFFF;
+      if (seq !== expected) {
+        accelStream.lost += ((seq - expected) & 0xFFFF);
+        $('#eng-accel-live-lost').textContent = String(accelStream.lost);
+      }
+    }
+    accelStream.lastSeq = seq;
+
+    const rateHz = accelStream.dtAvg > 0
+      ? 16000 / accelStream.dtAvg : 0;
+
+    $('#eng-accel-live-x').textContent     = xMg.toFixed(1);
+    $('#eng-accel-live-y').textContent     = yMg.toFixed(1);
+    $('#eng-accel-live-z').textContent     = zMg.toFixed(1);
+    $('#eng-accel-live-mag').textContent   = magMg.toFixed(1);
+    $('#eng-accel-live-pitch').textContent = pitch.toFixed(2);
+    $('#eng-accel-live-roll').textContent  = roll.toFixed(2);
+    $('#eng-accel-live-seq').textContent   = String(seq);
+    $('#eng-accel-live-rate').textContent  = rateHz.toFixed(1);
+
+    /* Feed the FFT ring buffers. Sample rate feeds the bin axis.
+     * Init lazily here — the chart needs a visible container, and
+     * the engineering pane starts hidden. */
+    if (!accelFft) accelFft = initAccelFft();
+    if (accelFft) accelFft.push(samples, rateHz);
+  };
+
+  /* =============================================================
+   * Accelerometer FFT
+   * =============================================================
+   *
+   * Ring buffer of FFT_N=755 raw samples per axis. When the
+   * selected axis hits FFT_N, run a Hann-windowed DFT and plot
+   * the magnitude spectrum (one-sided, 0..fs/2) via Chart.js.
+   *
+   * N=755 → ~1-second window at the firmware's current 800 Hz
+   * ODR / ~755 Hz delivered sample rate. Straight O(N^2) DFT —
+   * ~570k multiplies per update, still cheap at ~1 Hz refresh.
+   */
+  const FFT_N    = 755;
+  const SENS_MG  = 0.061;   /* LIS2HH12 ±2g sensitivity */
+  let   accelFft = null;
+
+  function initAccelFft() {
+    const canvas = $('#eng-accel-fft-canvas');
+    if (!canvas || !window.Chart) return null;
+
+    const chart = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels:   [],
+        datasets: [{
+          label: 'mag (mg)',
+          data: [],
+          borderColor: '#2b7cff',
+          backgroundColor: 'rgba(43,124,255,0.15)',
+          borderWidth: 1,
+          pointRadius: 0,
+          tension: 0,
+        }],
+      },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: {
+            title: { display: true, text: 'frequency (Hz)' },
+            ticks: { maxTicksLimit: 12 },
+          },
+          y: {
+            type: 'linear',
+            title: { display: true, text: 'magnitude (mg)' },
+          },
+        },
+      },
+    });
+
+    const buf = { x: [], y: [], z: [] };
+    let fsLast = 377;   /* EWMA-smoothed sample rate */
+
+    /* Hann window cached — weights only depend on N. */
+    const hann = new Float64Array(FFT_N);
+    for (let i = 0; i < FFT_N; i++) {
+      hann[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (FFT_N - 1)));
+    }
+
+    function computeSpectrum(samples) {
+      /* One-sided magnitude spectrum of a windowed real signal. */
+      const N    = samples.length;
+      const half = (N >> 1) + 1;
+      const mag  = new Float64Array(half);
+      for (let k = 0; k < half; k++) {
+        let re = 0, im = 0;
+        const w = -2 * Math.PI * k / N;
+        for (let n = 0; n < N; n++) {
+          const s = samples[n] * hann[n];
+          const a = w * n;
+          re += s * Math.cos(a);
+          im += s * Math.sin(a);
+        }
+        /* Normalise by window sum so bin amplitude ≈ input peak. */
+        mag[k] = (2 * Math.sqrt(re * re + im * im)) / N;
+      }
+      return mag;
+    }
+
+    function selectedAxis() {
+      const r = document.querySelector(
+        'input[name="eng-accel-fft-axis"]:checked',
+      );
+      return r ? r.value : 'x';
+    }
+
+    function redraw() {
+      const axis = selectedAxis();
+      const b    = buf[axis];
+      if (b.length < FFT_N) {
+        $('#eng-accel-fft-status').textContent = (
+          `filling ${b.length}/${FFT_N}…`
+        );
+        return;
+      }
+      /* Use the most recent FFT_N samples; keep the tail as a
+       * sliding window so each render reflects the last second. */
+      const win = b.slice(-FFT_N);
+      const mag = computeSpectrum(win);
+      const fs  = Math.max(fsLast, 1);
+      const labels = new Array(mag.length);
+      for (let k = 0; k < mag.length; k++) {
+        labels[k] = (k * fs / FFT_N).toFixed(1);
+      }
+      /* Drop DC bin from the plot — it's dominated by gravity
+       * (~1 g on Y) and squashes the visible dynamic range. */
+      chart.data.labels = labels.slice(1);
+      chart.data.datasets[0].data = Array.from(mag).slice(1);
+      chart.data.datasets[0].label = `${axis.toUpperCase()} mag (mg)`;
+      const logY = $('#eng-accel-fft-logy').checked;
+      chart.options.scales.y.type = logY ? 'logarithmic' : 'linear';
+      chart.update('none');
+      $('#eng-accel-fft-status').textContent = (
+        `fs≈${fs.toFixed(0)} Hz  bin=${(fs / FFT_N).toFixed(2)} Hz`
+      );
+    }
+
+    function push(newSamples, rateHz) {
+      if (rateHz > 50) {
+        fsLast = rateHz;
+      }
+      for (const s of newSamples) {
+        /* Store in mg so both axis labels and the spectrum come
+         * out in consistent units regardless of Hann weighting. */
+        buf.x.push(s[0] * SENS_MG);
+        buf.y.push(s[1] * SENS_MG);
+        buf.z.push(s[2] * SENS_MG);
+      }
+      const MAX = FFT_N * 4;
+      if (buf.x.length > MAX) {
+        buf.x.splice(0, buf.x.length - MAX);
+        buf.y.splice(0, buf.y.length - MAX);
+        buf.z.splice(0, buf.z.length - MAX);
+      }
+    }
+
+    function clear() {
+      buf.x.length = 0;
+      buf.y.length = 0;
+      buf.z.length = 0;
+      chart.data.labels = [];
+      chart.data.datasets[0].data = [];
+      chart.update('none');
+      $('#eng-accel-fft-status').textContent = 'idle';
+    }
+
+    /* Redraw at 1 Hz so CPU stays low. The ring buffer gets
+     * appended every stream batch (~25 Hz) via push(). */
+    setInterval(redraw, 1000);
+
+    document
+      .querySelectorAll('input[name="eng-accel-fft-axis"]')
+      .forEach(el => el.addEventListener('change', redraw));
+    $('#eng-accel-fft-logy').addEventListener('change', redraw);
+
+    return { push, clear };
+  }
+
+  /* No eager init — built lazily on the first stream batch so
+   * Chart.js sees a laid-out (non-zero-size) parent container. */
 
   /* ---- TEMPERATURE wiring ---- */
   function wireEngTemp() {

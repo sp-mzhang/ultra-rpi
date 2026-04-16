@@ -47,20 +47,19 @@ def find_pproc_port() -> str | None:
     ("siphox-pproc-X.Y.Z"). We read and discard the
     ACK, then check the board ID.
 
+    On-board Pi UARTs (/dev/ttyAMAx) are excluded from the
+    probe — ttyAMA3 is the STM32 link and writing "stop\r id\r"
+    to it stacks a second open on top of stm32_monitor,
+    corrupting the kernel tty state and wedging engineering
+    commands until the STM32 is reset.
+
     Returns:
         Port device path (e.g. /dev/ttyACM0) or None.
     '''
-    all_ports = serial.tools.list_ports.comports()
-    excluded = [
-        p.device for p in all_ports
-        if '/ttyAMA' in p.device
-    ]
     ports = [
-        p for p in all_ports
-        if '/ttyAMA' not in p.device
+        p for p in serial.tools.list_ports.comports()
+        if not p.device.startswith('/dev/ttyAMA')
     ]
-    if excluded:
-        LOG.info('PProc scan excluded: %s', excluded)
     LOG.info(
         'Scanning %d serial ports for PProc reader: %s',
         len(ports),

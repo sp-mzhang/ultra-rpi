@@ -10,6 +10,7 @@ dependencies removed.
 from __future__ import annotations
 
 import logging
+import queue
 import struct
 import threading
 import time
@@ -36,6 +37,57 @@ DEFAULT_SPEED_UL_S = 50
 Z_USTEPS_PER_MM = fp.Z_USTEPS_PER_MM
 
 GANTRY_Z_MIN_MM = fp.GANTRY_Z_MIN_POS / Z_USTEPS_PER_MM
+
+
+class _PendingResult:
+    '''Single-shot rendezvous between RX thread and a send_command
+    caller. wait() blocks the caller; set_result() unblocks it from
+    the RX thread. abort_evt lets request_abort() jolt the wait
+    loose without waiting for the timeout.'''
+
+    __slots__ = ('_evt', '_value')
+
+    def __init__(self) -> None:
+        self._evt   = threading.Event()
+        self._value = None
+
+    def set_result(self, value) -> None:
+        self._value = value
+        self._evt.set()
+
+    def wait(
+            self,
+            timeout_s: float,
+            abort_evt: Optional[threading.Event] = None,
+    ):
+        '''Block up to timeout_s. Returns the stored value, or
+        None on timeout / abort. Polled in 50 ms slices so abort
+        is responsive without sacrificing CPU.'''
+        deadline = time.time() + timeout_s
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return None
+            if self._evt.wait(timeout=min(remaining, 0.05)):
+                return self._value
+            if abort_evt is not None and abort_evt.is_set():
+                return None
+
+
+# Map of MSG_*_DONE id → unpack function. Used by _dispatch_rx to
+# decode the matching async event for send_command_wait_done.
+_DONE_UNPACKERS: dict[int, callable] = {
+    fp.MSG_PUMP_DONE:   fp.unpack_msg_pump_done,
+    fp.MSG_GANTRY_DONE: fp.unpack_msg_gantry_done,
+    fp.MSG_LIFT_DONE:   fp.unpack_msg_lift_done,
+}
+
+
+def _unpack_done(done_msg_id: int, data: bytes) -> dict:
+    fn = _DONE_UNPACKERS.get(done_msg_id)
+    if fn is None:
+        return {}
+    return fn(data)
 
 
 class STM32Interface:
@@ -68,17 +120,46 @@ class STM32Interface:
         self._baud = baud
         self._ser: Optional[serial.Serial] = None
         self._seq = 0
-        self._parser = fp.FrameParser()
-        self._lock = threading.Lock()
         self._abort_flag = threading.Event()
         self._motor_telem_cb = None
+
+        # ---- Two-thread serial pipeline ----
+        # The previous design held a single self._lock around every
+        # send/receive cycle, which starved the always-on telem
+        # reader and let the kernel TTY input buffer overrun under
+        # load. New design: one TX worker drains a queue of frames
+        # to write; one RX worker continuously reads bytes, parses
+        # frames, and either fans them out to async callbacks or
+        # fulfils a pending Future keyed by (rsp_cmd, seq). No lock
+        # is held for the duration of a send_command wait, so RX
+        # never stops draining.
+        self._stop_workers = threading.Event()
+        self._tx_queue: queue.Queue = queue.Queue(maxsize=256)
+        self._tx_thread: Optional[threading.Thread] = None
+        self._rx_thread: Optional[threading.Thread] = None
+        self._tx_write_lock = threading.Lock()  # short, just around write()
+
+        # Pending request matchers. Keyed by (rsp_cmd_id, seq).
+        # Filled by send_command, fulfilled by the RX thread when
+        # the matching response arrives.
+        self._pending_ack: dict[tuple[int, int], '_PendingResult'] = {}
+        # Done-event matchers for send_command_wait_done. Keyed by
+        # (done_msg_id, original_cmd_id). Fulfilled by RX when the
+        # async DONE broadcast carrying matching cmd_id arrives.
+        self._pending_done: dict[tuple[int, int], '_PendingResult'] = {}
+        # Active pressure-sample collectors, one per in-flight
+        # send_command(*, collect_pressure=True). RX appends to
+        # every list when a MSG_PRESSURE arrives.
+        self._pressure_collectors: list[list[dict]] = []
+        self._pending_lock = threading.Lock()
+
         LOG.info(
             f'STM32Interface created: '
             f'{port=} {baud=}',
         )
 
     def connect(self) -> bool:
-        '''Open the serial port.
+        '''Open the serial port and start the TX/RX worker threads.
 
         Returns:
             True if the port was opened successfully,
@@ -100,17 +181,190 @@ class STM32Interface:
                 f'Connected: UART {self._port} '
                 f'@ {self._baud}',
             )
-            return True
         except serial.SerialException as err:
             LOG.error(f'Connection failed: {err}')
             return False
 
+        # Start the dedicated RX/TX worker threads. RX must come up
+        # first so any bytes that arrive while we're starting TX
+        # don't fill the kernel buffer.
+        self._stop_workers.clear()
+        # Drain any stale items from a previous session.
+        while True:
+            try:
+                self._tx_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        self._rx_thread = threading.Thread(
+            target=self._rx_loop, daemon=True,
+            name='stm32-rx',
+        )
+        self._tx_thread = threading.Thread(
+            target=self._tx_loop, daemon=True,
+            name='stm32-tx',
+        )
+        self._rx_thread.start()
+        self._tx_thread.start()
+        LOG.info('STM32 RX/TX worker threads started')
+        return True
+
     def disconnect(self) -> None:
-        '''Close the serial port.'''
+        '''Stop the worker threads and close the serial port.'''
+        # Signal both workers to exit. A poison-pill enqueue makes
+        # sure the TX worker wakes from its blocking get() promptly
+        # even if no command was pending.
+        self._stop_workers.set()
+        try:
+            self._tx_queue.put_nowait(None)
+        except queue.Full:
+            pass
+
+        for t_attr in ('_rx_thread', '_tx_thread'):
+            t = getattr(self, t_attr, None)
+            if t is not None:
+                t.join(timeout=2.0)
+                setattr(self, t_attr, None)
+
+        # Cancel any pending Futures so callers waiting on them
+        # don't hang past disconnect.
+        with self._pending_lock:
+            for fut in list(self._pending_ack.values()):
+                fut.set_result(None)
+            for fut in list(self._pending_done.values()):
+                fut.set_result(None)
+            self._pending_ack.clear()
+            self._pending_done.clear()
+            self._pressure_collectors.clear()
+
         if self._ser:
-            self._ser.close()
+            try:
+                self._ser.close()
+            except Exception:
+                pass
             self._ser = None
             LOG.info('Disconnected')
+
+    # ----------------------------------------------------------------
+    # Worker threads
+    # ----------------------------------------------------------------
+
+    def _tx_loop(self) -> None:
+        '''Dedicated writer. Drains _tx_queue → serial.write().
+
+        Frames built by send_command land here as bytes objects. A
+        sentinel of None means "shut down" (used by disconnect()).
+        Writes are guarded by a tiny mutex so a future caller that
+        bypasses the queue and writes directly can't interleave
+        bytes mid-frame; in normal operation only this thread holds
+        it.
+        '''
+        while not self._stop_workers.is_set():
+            try:
+                frame = self._tx_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if frame is None:
+                break
+            ser = self._ser
+            if ser is None:
+                continue
+            try:
+                with self._tx_write_lock:
+                    ser.write(frame)
+                    ser.flush()
+            except Exception as err:
+                LOG.warning(f'TX write failed: {err}')
+
+    def _rx_loop(self) -> None:
+        '''Dedicated reader. Continuously parses frames and either
+        dispatches them to async callbacks or fulfils a pending
+        request Future. NEVER takes a lock that send_command holds,
+        so the kernel TTY input buffer can't accumulate during a
+        command wait.
+        '''
+        parser = fp.FrameParser()
+        while not self._stop_workers.is_set():
+            ser = self._ser
+            if ser is None or not ser.is_open:
+                self._stop_workers.wait(0.05)
+                continue
+            try:
+                raw = ser.read(1)
+            except (serial.SerialException, OSError) as err:
+                if not self._stop_workers.is_set():
+                    LOG.debug(f'RX read error: {err}')
+                self._stop_workers.wait(0.05)
+                continue
+            if not raw:
+                continue
+            result = parser.feed(raw[0])
+            if result is None:
+                continue
+            cmd, data = result
+            try:
+                self._dispatch_rx(cmd, data)
+            except Exception as err:
+                LOG.warning(f'RX dispatch raised: {err}')
+
+    def _dispatch_rx(self, cmd: int, data: bytes) -> None:
+        '''Route one parsed frame. Called only from _rx_loop.'''
+        # 1. Accel stream push frames (share wire id with their ACK
+        #    — disambiguate by length).
+        if cmd == fp.RSP_ACCEL_STREAM and len(data) >= 8:
+            self._dispatch_accel_stream(data)
+            return
+
+        # 2. Async push frames (0xA0xx → 0xB0xx range).
+        if fp.is_async_msg(cmd):
+            # Pressure samples are collected by any in-flight
+            # send_command(*, collect_pressure=True).
+            if (cmd & 0xFF) == (fp.MSG_PRESSURE & 0xFF):
+                try:
+                    d = fp.unpack_msg_pressure(data)
+                except Exception:
+                    d = {}
+                with self._pending_lock:
+                    collectors = list(self._pressure_collectors)
+                if collectors:
+                    sample = {
+                        'ts':  d.get('timestamp_ms', 0),
+                        'p':   d.get('pressure_raw', 0),
+                        'pos': d.get('pump_position', 0),
+                    }
+                    for c in collectors:
+                        c.append(sample)
+
+            # Motor telemetry callback (filters on its own).
+            self._dispatch_motor_telem(cmd, data)
+
+            # DONE-event matchers for send_command_wait_done.
+            with self._pending_lock:
+                pending_done_items = list(self._pending_done.items())
+            for key, fut in pending_done_items:
+                done_msg_id, expected_cmd_id = key
+                if (cmd & 0xFF) != (done_msg_id & 0xFF):
+                    continue
+                try:
+                    msg = _unpack_done(done_msg_id, data)
+                except Exception:
+                    continue
+                if msg.get('cmd_id') != expected_cmd_id:
+                    continue
+                with self._pending_lock:
+                    self._pending_done.pop(key, None)
+                fut.set_result(msg)
+            return
+
+        # 3. Sync responses (0x9xxx range, len ≥ 4 → seq prefix).
+        if len(data) < 4:
+            return
+        seq = int.from_bytes(data[0:4], 'little')
+        key = (cmd, seq)
+        with self._pending_lock:
+            fut = self._pending_ack.pop(key, None)
+        if fut is not None:
+            fut.set_result((cmd, data))
 
     def _dispatch_motor_telem(
             self, rsp_cmd: int, rsp_data: bytes,
@@ -136,68 +390,65 @@ class STM32Interface:
         '''
         self._motor_telem_cb = cb
 
-    def start_telem_reader(self) -> None:
-        '''Start a background thread that reads UART frames
-        and dispatches motor telemetry to the callback.
+    # Diagnostic counters for the accel stream pipeline. Read via
+    # the /api/diag/accel_counters endpoint so we can compare:
+    #   STM32 isr_seq delta   = batches the firmware sent
+    #   accel_dispatched      = batches stm32_interface decoded and
+    #                            handed to the registered callback
+    #   accel_cb_exceptions   = callback raised (would silently drop)
+    accel_dispatched     = 0
+    accel_cb_exceptions  = 0
 
-        Must be called while no command is in flight (the
-        reader acquires _lock in short bursts).
+    def _dispatch_accel_stream(
+            self, rsp_data: bytes,
+    ) -> None:
+        '''Forward accel-stream batch to registered callback.
+
+        Accel stream frames carry wire id RSP_ACCEL_STREAM
+        (0x9E03), which is in the response-id range rather
+        than the 0xA0xx/0xB0xx async range is_async_msg
+        checks, so dispatch has to be explicit.
         '''
-        if getattr(self, '_telem_stop', None) is not None:
+        STM32Interface.accel_dispatched += 1
+        cb = getattr(self, '_accel_stream_cb', None)
+        if cb is None:
             return
-        self._telem_stop = threading.Event()
+        try:
+            cb(fp.unpack_accel_stream(rsp_data))
+        except Exception:
+            STM32Interface.accel_cb_exceptions += 1
 
-        def _loop():
-            while not self._telem_stop.is_set():
-                if not self._ser or not self._ser.is_open:
-                    self._telem_stop.wait(0.2)
-                    continue
-                if self._ser.in_waiting == 0:
-                    self._telem_stop.wait(0.02)
-                    continue
-                acquired = self._lock.acquire(timeout=0.05)
-                if not acquired:
-                    self._telem_stop.wait(0.01)
-                    continue
-                try:
-                    result = self._recv_frame(
-                        timeout_s=0.02,
-                    )
-                finally:
-                    self._lock.release()
-                if result is None:
-                    continue
-                rsp_cmd, rsp_data = result
-                if not fp.is_async_msg(rsp_cmd):
-                    LOG.debug(
-                        'telem-reader: dropped non-async '
-                        'frame 0x%04X (%d bytes)',
-                        rsp_cmd, len(rsp_data),
-                    )
-                    continue
-                self._dispatch_motor_telem(
-                    rsp_cmd, rsp_data,
-                )
+    def set_accel_stream_callback(self, cb) -> None:
+        '''Register a callback for accel stream batches.
 
-        self._telem_thread = threading.Thread(
-            target=_loop, daemon=True,
-            name='telem-reader',
-        )
-        self._telem_thread.start()
-        LOG.info('Telemetry reader started')
+        Fires ~25 Hz once accel_stream_start is sent. Each
+        invocation receives the dict from unpack_accel_stream:
+        seq, tick_ms, count, buf_used, samples=[(x,y,z), ...].
+
+        Args:
+            cb: Callable(dict) or None to unregister.
+        '''
+        self._accel_stream_cb = cb
+
+    def start_telem_reader(self) -> None:
+        '''No-op in the two-thread design.
+
+        Kept for API compatibility with callers (api_stm32.py)
+        that used to start a separate background reader after
+        /connect. The dedicated RX worker thread now starts in
+        connect() and runs continuously, so there's nothing to
+        kick off here.
+        '''
+        LOG.debug('start_telem_reader: no-op (RX worker always on)')
 
     def stop_telem_reader(self) -> None:
-        '''Stop the background telemetry reader thread and
-        disable firmware telemetry.'''
-        stop = getattr(self, '_telem_stop', None)
-        if stop is None:
-            return
-        stop.set()
-        t = getattr(self, '_telem_thread', None)
-        if t is not None:
-            t.join(timeout=2.0)
-        self._telem_stop = None
-        self._telem_thread = None
+        '''Disable firmware motor telemetry; clear the callback.
+
+        Used to also tear down the background reader thread, which
+        is now owned by connect()/disconnect() — so this only sends
+        the firmware "set_motor_telem enable=False" command and
+        unhooks the user callback.
+        '''
         self._motor_telem_cb = None
         try:
             self.send_command(
@@ -209,7 +460,6 @@ class STM32Interface:
             )
         except Exception:
             pass
-        LOG.info('Telemetry reader stopped')
 
     def request_abort(self) -> None:
         '''Signal all in-flight waits to exit immediately.
@@ -316,60 +566,34 @@ class STM32Interface:
             cmd: dict,
             timeout_s: float = 30.0,
             collect_pressure: bool = False,
-            lock_timeout: float | None = None,
+            lock_timeout: float | None = None,   # accepted but ignored
     ) -> Optional[dict]:
-        '''Send binary command and wait for response.
+        '''Send binary command, wait for the matching response.
 
-        Converts the command dict to binary frame format, sends
-        it, and waits for a matching response. Async messages
-        (status, pressure, events) are consumed silently.
-
-        Thread-safe: acquires _lock for the entire
-        send/receive cycle.
+        Implementation: builds the frame, registers a Future keyed
+        by (rsp_cmd_id, seq), enqueues the frame on the TX worker,
+        then blocks on the Future. The RX worker resolves it. No
+        lock is held during the wait, so concurrent commands and
+        the always-on async stream don't starve each other.
 
         Args:
             cmd: Command dict (e.g. {'cmd': 'ping'}).
-            timeout_s: Timeout in seconds.
-            collect_pressure: If True, collect pressure
-                telemetry during waiting.
-            lock_timeout: If set, try to acquire the serial
-                lock for at most this many seconds. Returns
-                None immediately if the lock is busy (useful
-                for non-blocking status polls).
+            timeout_s: Wait timeout in seconds.
+            collect_pressure: If True, attach every MSG_PRESSURE
+                that arrives during the wait as
+                response['_pressure_samples'].
+            lock_timeout: Kept for API compatibility with the old
+                serial-lock design. The new implementation has no
+                blocking lock to wait on, so this parameter is
+                ignored.
 
         Returns:
-            Response dict or None on timeout / lock busy.
+            Decoded response dict, or None on timeout / abort.
         '''
-        if not self._ser:
+        del lock_timeout  # no-op in the new design
+        if self._ser is None:
             LOG.error('Not connected')
             return None
-
-        if lock_timeout is not None:
-            acquired = self._lock.acquire(
-                timeout=lock_timeout,
-            )
-            if not acquired:
-                return None
-            try:
-                return self._send_command_inner(
-                    cmd, timeout_s, collect_pressure,
-                )
-            finally:
-                self._lock.release()
-
-        with self._lock:
-            return self._send_command_inner(
-                cmd, timeout_s, collect_pressure,
-            )
-
-    def _send_command_inner(
-            self,
-            cmd: dict,
-            timeout_s: float = 30.0,
-            collect_pressure: bool = False,
-    ) -> Optional[dict]:
-        '''Inner send_command (caller must hold _lock).'''
-        self._drain_rx()
 
         cmd_name = cmd.get('cmd', '')
         cmd_id = fp.CMD_NAME_TO_ID.get(cmd_name)
@@ -379,97 +603,59 @@ class STM32Interface:
 
         seq = self._next_seq()
         payload = self._pack_command(
-            cmd_name=cmd_name,
-            seq=seq,
-            cmd=cmd,
+            cmd_name=cmd_name, seq=seq, cmd=cmd,
         )
+        rsp_id = fp.cmd_to_rsp(cmd_id)
+        key    = (rsp_id, seq)
+        fut    = _PendingResult()
+        pressure: list[dict] = []
 
-        expected_rsp = fp.cmd_to_rsp(cmd_id)
+        with self._pending_lock:
+            self._pending_ack[key] = fut
+            if collect_pressure:
+                self._pressure_collectors.append(pressure)
 
-        LOG.info(
-            f'TX: {cmd_name} (0x{cmd_id:04X}) '
-            f'{seq=}',
-        )
-        self._send_frame(
-            cmd_id=cmd_id,
-            payload=payload,
-        )
-
-        start_time = time.time()
-        pressure_samples: list[dict] = []
-
-        while (time.time() - start_time) < timeout_s:
-            if self._abort_flag.is_set():
-                LOG.warning(
-                    f'ABORT: cancelling wait for '
-                    f'{cmd_name}',
-                )
+        try:
+            frame = fp.build_frame(command=cmd_id, data=payload)
+            try:
+                self._tx_queue.put(frame, timeout=1.0)
+            except queue.Full:
+                LOG.error('TX queue full — dropping send_command')
                 return None
-            remaining = timeout_s - (
-                time.time() - start_time
+
+            LOG.info(
+                f'TX: {cmd_name} (0x{cmd_id:04X}) {seq=}',
             )
-            result = self._recv_frame(
-                timeout_s=min(remaining, 0.05),
-            )
+
+            result = fut.wait(timeout_s, abort_evt=self._abort_flag)
             if result is None:
-                continue
+                if self._abort_flag.is_set():
+                    LOG.warning(
+                        f'ABORT: cancelling wait for {cmd_name}',
+                    )
+                else:
+                    LOG.warning(
+                        f'Command {cmd_name} timed out after '
+                        f'{timeout_s:.1f}s',
+                    )
+                return None
 
             rsp_cmd, rsp_data = result
-
-            if fp.is_async_msg(rsp_cmd):
-                if (
-                    collect_pressure
-                    and rsp_cmd == fp.MSG_PRESSURE
-                ):
-                    d = fp.unpack_msg_pressure(rsp_data)
-                    pressure_samples.append({
-                        'ts': d.get('timestamp_ms', 0),
-                        'p': d.get('pressure_raw', 0),
-                        'pos': d.get(
-                            'pump_position', 0,
-                        ),
-                    })
-                self._dispatch_motor_telem(
-                    rsp_cmd, rsp_data,
-                )
-                continue
-
-            if rsp_cmd != expected_rsp:
-                LOG.warning(
-                    f'{cmd_name}: unexpected rsp_cmd '
-                    f'0x{rsp_cmd:04X} (expected '
-                    f'0x{expected_rsp:04X}) -- skipping',
-                )
-                continue
-
             decoded = self._decode_response(
-                rsp_cmd=rsp_cmd,
-                data=rsp_data,
-                cmd_name=cmd_name,
+                rsp_cmd=rsp_cmd, data=rsp_data, cmd_name=cmd_name,
             )
-
-            rsp_seq = decoded.get('seq', -1)
-            if rsp_seq != seq:
-                LOG.warning(
-                    f'{cmd_name}: seq mismatch '
-                    f'got={rsp_seq} expected={seq} '
-                    f'-- skipping stale response',
-                )
-                continue
-
             LOG.info(f'RX: {cmd_name} {decoded}')
-            if collect_pressure and pressure_samples:
-                decoded['_pressure_samples'] = (
-                    pressure_samples
-                )
+            if collect_pressure and pressure:
+                decoded['_pressure_samples'] = pressure
             return decoded
-
-        LOG.warning(
-            f'Command {cmd_name} timed out after '
-            f'{timeout_s:.1f}s '
-            f'(in_waiting={self._ser.in_waiting if self._ser else "N/A"})',
-        )
-        return None
+        finally:
+            with self._pending_lock:
+                self._pending_ack.pop(key, None)
+                if collect_pressure:
+                    try:
+                        self._pressure_collectors.remove(pressure)
+                    except ValueError:
+                        pass
 
     def send_command_wait_done(
             self,
@@ -477,62 +663,32 @@ class STM32Interface:
             timeout_s: float = 120.0,
             collect_pressure: bool = False,
     ) -> Optional[dict]:
-        '''Send a command and wait for ACK then DONE.
+        '''Send a command, await its ACK, then await its async DONE.
 
-        All long-running commands follow the same firmware
-        pattern after the liquid_service unification:
-          1. Immediate ACK (RSP_xxx) -- command accepted.
-          2. Optional data RSP -- same cmd_id but larger
-             payload (e.g. lld_perform returns z_position).
-          3. Async DONE broadcast (MSG_PUMP_DONE,
-             MSG_GANTRY_DONE, or MSG_LIFT_DONE).
+        Long-running firmware commands ack synchronously then
+        broadcast a DONE event when the underlying motion finishes:
+          - lift_*  → MSG_LIFT_DONE
+          - pump_* and liquid cmds → MSG_PUMP_DONE
+          - everything else        → MSG_GANTRY_DONE
 
-        DONE routing:
-          - lift_*  -> MSG_LIFT_DONE  (0xA009)
-          - pump_* and liquid cmds (smart_aspirate,
-            well_dispense, cart_dispense, cart_dispense_bf,
-            tip_mix, lld_perform) -> MSG_PUMP_DONE (0xA007)
-          - everything else (home_*, lid_move,
-            gantry_tip_swap, move_*) -> MSG_GANTRY_DONE
-            (0xA008)
-
-        Thread-safe: acquires _lock for the entire
-        send/ACK/DONE cycle.
+        Implementation: registers two Futures up front (ACK and
+        DONE) so the RX worker can fulfil whichever arrives first
+        without races. Releases both on every exit path.
 
         Args:
             cmd: Command dict (e.g. {'cmd': 'home_all'}).
             timeout_s: Total timeout covering both phases.
-            collect_pressure: If True, accumulate
-                MSG_PRESSURE (0xA004) async messages during
-                the wait loop and attach them to the result
-                dict as '_pressure_samples'.
+            collect_pressure: If True, accumulate MSG_PRESSURE
+                async events into result['_pressure_samples'].
 
         Returns:
-            Dict with at least 'status' and 'error_code',
-            plus any rich data from an intermediate RSP
-            (e.g. 'z_position' for lld_perform).
-            When collect_pressure is True, includes
-            '_pressure_samples' list of dicts with keys
-            timestamp_ms, pressure, position.
-            None on timeout.
+            Dict with 'status' and 'error_code', merged with any
+            intermediate data RSP (e.g. 'z_position' from
+            lld_perform). None on timeout / abort.
         '''
-        if not self._ser:
+        if self._ser is None:
             LOG.error('Not connected')
             return None
-
-        with self._lock:
-            return self._send_command_wait_done_inner(
-                cmd, timeout_s, collect_pressure,
-            )
-
-    def _send_command_wait_done_inner(
-            self,
-            cmd: dict,
-            timeout_s: float = 120.0,
-            collect_pressure: bool = False,
-    ) -> Optional[dict]:
-        '''Inner wait_done (caller must hold _lock).'''
-        self._drain_rx()
 
         cmd_name = cmd.get('cmd', '')
         cmd_id = fp.CMD_NAME_TO_ID.get(cmd_name)
@@ -548,137 +704,124 @@ class STM32Interface:
             'cart_dispense', 'cart_dispense_bf', 'tip_mix',
             'lld_perform',
         }
-
-        is_lift = cmd_name.startswith('lift_')
-        is_pump_done = cmd_name in _PUMP_DONE_CMDS
-        if is_lift:
+        if cmd_name.startswith('lift_'):
             done_msg = fp.MSG_LIFT_DONE
-            unpack_done = fp.unpack_msg_lift_done
-        elif is_pump_done:
+        elif cmd_name in _PUMP_DONE_CMDS:
             done_msg = fp.MSG_PUMP_DONE
-            unpack_done = fp.unpack_msg_pump_done
         else:
             done_msg = fp.MSG_GANTRY_DONE
-            unpack_done = fp.unpack_msg_gantry_done
+        # The DONE broadcast wire ID has +0x1000 applied like every
+        # other Proto_SendResponse, so the matcher key must use the
+        # 0xB-prefixed wire form.
+        done_wire = done_msg + 0x1000
 
-        seq = self._next_seq()
-        payload = self._pack_command(
+        seq      = self._next_seq()
+        payload  = self._pack_command(
             cmd_name=cmd_name, seq=seq, cmd=cmd,
         )
+        rsp_id   = fp.cmd_to_rsp(cmd_id)
+        ack_key  = (rsp_id, seq)
+        done_key = (done_wire, cmd_id)
 
-        LOG.debug(
-            f'TX(wait_done): {cmd_name} '
-            f'(0x{cmd_id:04X}) {seq=}',
-        )
-        self._send_frame(cmd_id=cmd_id, payload=payload)
+        ack_fut  = _PendingResult()
+        done_fut = _PendingResult()
+        pressure: list[dict] = []
 
-        start_time = time.time()
-        got_ack = False
-        data_rsp: Optional[dict] = None
-        pressure_samples: list[dict] = []
+        with self._pending_lock:
+            self._pending_ack[ack_key]   = ack_fut
+            self._pending_done[done_key] = done_fut
+            if collect_pressure:
+                self._pressure_collectors.append(pressure)
 
-        while (time.time() - start_time) < timeout_s:
-            if self._abort_flag.is_set():
-                LOG.warning(
-                    f'ABORT: cancelling wait_done '
-                    f'for {cmd_name}',
+        try:
+            frame = fp.build_frame(command=cmd_id, data=payload)
+            try:
+                self._tx_queue.put(frame, timeout=1.0)
+            except queue.Full:
+                LOG.error(
+                    'TX queue full — dropping send_command_wait_done',
                 )
                 return None
-            remaining = timeout_s - (
-                time.time() - start_time
-            )
-            result = self._recv_frame(
-                timeout_s=min(remaining, 0.05),
-            )
-            if result is None:
-                continue
-
-            rsp_cmd, rsp_data = result
-
-            if fp.is_async_msg(rsp_cmd):
-                rsp_low = rsp_cmd & 0x00FF
-                pressure_low = fp.MSG_PRESSURE & 0x00FF
-                if (
-                    collect_pressure
-                    and rsp_low == pressure_low
-                ):
-                    d = fp.unpack_msg_pressure(rsp_data)
-                    pressure_samples.append({
-                        'timestamp_ms': d.get(
-                            'timestamp_ms', 0,
-                        ),
-                        'pressure': d.get(
-                            'pressure_raw', 0,
-                        ),
-                        'position': d.get(
-                            'pump_position', 0,
-                        ),
-                    })
-                    continue
-                self._dispatch_motor_telem(
-                    rsp_cmd, rsp_data,
-                )
-                done_low = done_msg & 0x00FF
-                if rsp_low == done_low:
-                    msg = unpack_done(rsp_data)
-                    if msg.get('cmd_id') == cmd_id:
-                        err = msg.get('error', 0xFF)
-                        status = (
-                            'OK' if err == 0
-                            else 'ERROR'
-                        )
-                        LOG.debug(
-                            f'DONE({cmd_name}): '
-                            f'error={err}',
-                        )
-                        done_result: dict = {
-                            'status': status,
-                            'error_code': err,
-                        }
-                        if collect_pressure:
-                            done_result[
-                                '_pressure_samples'
-                            ] = pressure_samples
-                        if data_rsp:
-                            data_rsp.update(done_result)
-                            return data_rsp
-                        return done_result
-                continue
-
-            expected_rsp = fp.cmd_to_rsp(cmd_id)
-            if rsp_cmd != expected_rsp:
-                continue
-
-            decoded = self._decode_response(
-                rsp_cmd=rsp_cmd,
-                data=rsp_data,
-                cmd_name=cmd_name,
-            )
-            dec_err = decoded.get('error_code', 0xFF)
-
-            if not got_ack:
-                if dec_err != 0:
-                    LOG.warning(
-                        f'ACK({cmd_name}): '
-                        f'error={dec_err}',
-                    )
-                    return decoded
-                got_ack = True
-                LOG.debug(f'ACK({cmd_name}): OK')
-                continue
-
-            data_rsp = decoded
             LOG.debug(
-                f'DATA_RSP({cmd_name}): '
-                f'{decoded}',
+                f'TX(wait_done): {cmd_name} (0x{cmd_id:04X}) '
+                f'{seq=}',
             )
 
-        tag = 'ACK' if not got_ack else 'DONE'
-        LOG.warning(
-            f'{cmd_name} timed out waiting for {tag} '
-            f'after {timeout_s:.1f}s',
-        )
-        return None
+            deadline   = time.time() + timeout_s
+            data_rsp: Optional[dict] = None
+            got_ack    = False
+
+            # Two-phase wait. ACK comes first (immediate), then DONE
+            # arrives later as an async broadcast. We poll both
+            # Futures with a short slice so we can interleave them
+            # without holding the GIL for long.
+            while time.time() < deadline:
+                remaining = deadline - time.time()
+                if not got_ack:
+                    rsp = ack_fut.wait(
+                        min(remaining, 0.05),
+                        abort_evt=self._abort_flag,
+                    )
+                    if rsp is not None:
+                        rsp_cmd, rsp_data = rsp
+                        decoded = self._decode_response(
+                            rsp_cmd=rsp_cmd, data=rsp_data,
+                            cmd_name=cmd_name,
+                        )
+                        dec_err = decoded.get('error_code', 0xFF)
+                        if dec_err != 0:
+                            LOG.warning(
+                                f'ACK({cmd_name}): error={dec_err}',
+                            )
+                            return decoded
+                        got_ack = True
+                        LOG.debug(f'ACK({cmd_name}): OK')
+                        # If the ACK had non-trivial payload, treat
+                        # it as a data RSP (e.g. lld_perform).
+                        if len(rsp_data) > 5:
+                            data_rsp = decoded
+                        continue
+                    if self._abort_flag.is_set():
+                        return None
+                    continue
+
+                msg = done_fut.wait(
+                    min(remaining, 0.05),
+                    abort_evt=self._abort_flag,
+                )
+                if msg is None:
+                    if self._abort_flag.is_set():
+                        return None
+                    continue
+                err    = msg.get('error', 0xFF)
+                status = 'OK' if err == 0 else 'ERROR'
+                LOG.debug(f'DONE({cmd_name}): error={err}')
+                done_result: dict = {
+                    'status': status,
+                    'error_code': err,
+                }
+                if collect_pressure:
+                    done_result['_pressure_samples'] = pressure
+                if data_rsp:
+                    data_rsp.update(done_result)
+                    return data_rsp
+                return done_result
+
+            tag = 'ACK' if not got_ack else 'DONE'
+            LOG.warning(
+                f'{cmd_name} timed out waiting for {tag} '
+                f'after {timeout_s:.1f}s',
+            )
+            return None
+        finally:
+            with self._pending_lock:
+                self._pending_ack.pop(ack_key, None)
+                self._pending_done.pop(done_key, None)
+                if collect_pressure:
+                    try:
+                        self._pressure_collectors.remove(pressure)
+                    except ValueError:
+                        pass
 
     def _pack_command(
             self,
@@ -713,6 +856,9 @@ class STM32Interface:
                 'lift_move_top',
                 'led_set_all_off',
                 'accel_get_status',
+                'accel_stream_start',
+                'accel_stream_stop',
+                'accel_reset',
                 'fc_heater_get_status',
         ):
             return fp.pack_seq(seq)
