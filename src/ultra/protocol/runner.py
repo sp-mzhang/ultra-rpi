@@ -1054,7 +1054,7 @@ class ProtocolRunner:
             s['operation'] = operation
             s['phase'] = phase
         self.tracker.add_pressure_data(samples)
-        t_last = samples[-1].get('timestamp_ms', 0)
+        t_last = samples[-1].get('ts', 0)
         gui_max = 1000
         src = samples
         if len(samples) > gui_max:
@@ -1067,11 +1067,11 @@ class ProtocolRunner:
         sample_list = []
         for s in src:
             dt = (
-                s.get('timestamp_ms', 0) - t_last
+                s.get('ts', 0) - t_last
             ) / 1000.0
             sample_list.append({
-                'pressure': s.get('pressure', 0),
-                'position': s.get('position', 0),
+                'pressure': s.get('p', 0),
+                'position': s.get('pos', 0),
                 'dt': round(dt, 4),
             })
         self._event_bus.emit_sync(
@@ -1085,7 +1085,7 @@ class ProtocolRunner:
         self._open_pressure_csv()
         if self._pressure_csv_writer:
             for s in samples:
-                raw_ts = s.get('timestamp_ms', 0)
+                raw_ts = s.get('ts', 0)
                 ts_us = raw_ts * 1000
                 time_s = ts_us / 1_000_000.0
                 self._pressure_csv_writer.writerow([
@@ -1094,8 +1094,8 @@ class ProtocolRunner:
                     s.get('phase', 'cart_dispense'),
                     s.get('cycle', 0),
                     f'{time_s:.6f}',
-                    s.get('pressure', 0),
-                    s.get('position', 0),
+                    s.get('p', 0),
+                    s.get('pos', 0),
                     ts_us,
                 ])
             self._pressure_csv_file.flush()

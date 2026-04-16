@@ -146,6 +146,18 @@ class STM32Mock:
         elif cmd_name == 'read_z_drv':
             result['z_position_usteps'] = 0
             result['z_current_ma'] = 120
+        elif cmd_name == 'centrifuge_status':
+            result['driver_online'] = True
+            result['state'] = 1
+            result['rpm'] = 0
+            result['angle_001deg'] = 0
+            result['vbus_01v'] = 240
+            result['temp_001c'] = 3500
+            result['error_flags'] = '0x0000'
+        elif cmd_name == 'centrifuge_bldc_cmd':
+            result['bldc_cmd'] = f'0x{cmd.get("bldc_cmd", 0):04X}'
+            result['ok'] = True
+            result['data'] = '01'
 
         if collect_pressure:
             result['_pressure_samples'] = [

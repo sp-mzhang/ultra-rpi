@@ -148,6 +148,7 @@ class CentrifugeSpinStep(StepExecutor):
 
         rpm = params.get('rpm', 500)
         duration_s = params.get('duration_s', 5)
+        _log_bldc_health(runner.stm32, 'pre-spin')
         r = None
         for attempt in range(1, self._MAX_RETRIES + 1):
             r = runner.stm32.send_command(
@@ -165,12 +166,14 @@ class CentrifugeSpinStep(StepExecutor):
                 attempt, self._MAX_RETRIES,
             )
             if attempt < self._MAX_RETRIES:
+                _bldc_reset(runner.stm32)
                 time.sleep(self._RETRY_DELAY_S)
         if not _ok(r):
             LOG.error(
                 'centrifuge_start failed after %d attempts',
                 self._MAX_RETRIES,
             )
+            _check_bldc_errors(runner.stm32)
             return False
         time.sleep(float(duration_s))
         r_stop = runner.stm32.send_command(
@@ -244,6 +247,7 @@ class CentrifugeRotateStep(StepExecutor):
                 '(attempt %d/%d)',
                 attempt, self._MAX_RETRIES,
             )
+            _check_bldc_errors(runner.stm32)
             if attempt < self._MAX_RETRIES:
                 _bldc_reset(runner.stm32)
         return False
@@ -312,6 +316,7 @@ class CentrifugeShakeStep(StepExecutor):
                     'shake move_angle(%d) failed '
                     '(attempt %d/3)', angle, attempt,
                 )
+                _check_bldc_errors(runner.stm32)
                 if attempt < 3:
                     _bldc_reset(runner.stm32)
             return False
@@ -324,12 +329,16 @@ class CentrifugeShakeStep(StepExecutor):
         return _move(centre)
 
 
-def _bldc_reset(stm32: Any) -> None:
-    '''Stop the BLDC motor and clear any error state.
+def _bldc_reset(stm32: Any) -> bool:
+    '''Stop the BLDC motor, clear errors, and verify ready.
 
     Sends BLDC_STOP_MOTOR then BLDC_CLEAR_ERROR via the
-    centrifuge_bldc_cmd pass-through.  Used before retrying
-    a failed centrifuge move_angle.
+    centrifuge_bldc_cmd pass-through, then polls GET_STATE
+    and GET_ERROR to confirm the controller reached READY
+    (0x01) with no latched error flags.
+
+    Returns True if the controller is confirmed ready,
+    False if verification failed (caller may still retry).
     '''
     from ultra.hw import frame_protocol as fp
     LOG.info('BLDC reset: stopping motor + clearing error')
@@ -349,6 +358,116 @@ def _bldc_reset(stm32: Any) -> None:
         timeout_s=5.0,
     )
     time.sleep(0.5)
+
+    r_state = stm32.send_command(
+        cmd={
+            'cmd': 'centrifuge_bldc_cmd',
+            'bldc_cmd': fp.BLDC_GET_STATE,
+        },
+        timeout_s=5.0,
+    )
+    r_err = stm32.send_command(
+        cmd={
+            'cmd': 'centrifuge_bldc_cmd',
+            'bldc_cmd': fp.BLDC_GET_ERROR,
+        },
+        timeout_s=5.0,
+    )
+    state_hex = r_state.get('data', '') if r_state else ''
+    err_hex = r_err.get('data', '') if r_err else ''
+    state_val = (
+        int(state_hex[:2], 16) if len(state_hex) >= 2
+        else 0xFF
+    )
+    err_val = (
+        int.from_bytes(
+            bytes.fromhex(err_hex[:4]), 'little',
+        ) if len(err_hex) >= 4 else 0xFFFF
+    )
+    _BLDC_READY = 0x01
+    if state_val != _BLDC_READY:
+        LOG.warning(
+            'BLDC reset: state=0x%02X (expected READY '
+            '0x01), errors=0x%04X', state_val, err_val,
+        )
+        return False
+    if err_val != 0x0000:
+        LOG.warning(
+            'BLDC reset: errors=0x%04X still latched '
+            'after clear', err_val,
+        )
+        return False
+    LOG.info(
+        'BLDC reset OK: state=READY, errors=0x%04X',
+        err_val,
+    )
+    return True
+
+
+_BLDC_ERROR_FLAGS = {
+    0x0001: 'OVER_VOLT',
+    0x0002: 'UNDER_VOLT',
+    0x0004: 'OVER_TEMP',
+    0x0008: 'OVER_CURRENT',
+    0x0010: 'ENCODER',
+    0x0020: 'POSITION',
+}
+
+
+def _check_bldc_errors(stm32: Any) -> int:
+    '''Query centrifuge_status and log any BLDC error flags.
+
+    Returns the raw error_flags bitmask (0 = no errors).
+    '''
+    r = stm32.send_command(
+        cmd={'cmd': 'centrifuge_status'},
+        timeout_s=5.0,
+    )
+    if r is None:
+        LOG.warning('BLDC error check: status query failed')
+        return -1
+    flags_str = r.get('error_flags', '0x0000')
+    try:
+        flags = int(flags_str, 16)
+    except (ValueError, TypeError):
+        flags = 0
+    if flags:
+        names = [
+            name for bit, name in _BLDC_ERROR_FLAGS.items()
+            if flags & bit
+        ]
+        LOG.error(
+            'BLDC error flags=0x%04X: %s '
+            '(state=%s, vbus=%s, temp=%s)',
+            flags, '+'.join(names) or 'UNKNOWN',
+            r.get('state', '?'),
+            r.get('vbus_01v', '?'),
+            r.get('temp_001c', '?'),
+        )
+    return flags
+
+
+def _log_bldc_health(stm32: Any, label: str = '') -> None:
+    '''Log BLDC VBUS voltage and board temperature.'''
+    r = stm32.send_command(
+        cmd={'cmd': 'centrifuge_status'},
+        timeout_s=5.0,
+    )
+    if r is None:
+        return
+    vbus = r.get('vbus_01v', 0)
+    temp = r.get('temp_001c', 0)
+    vbus_v = vbus / 10.0 if isinstance(vbus, (int, float)) else 0
+    temp_c = temp / 100.0 if isinstance(temp, (int, float)) else 0
+    LOG.info(
+        'BLDC health%s: VBUS=%.1fV  temp=%.1fC  '
+        'state=%s  rpm=%s  flags=%s',
+        f' ({label})' if label else '',
+        vbus_v, temp_c,
+        r.get('state', '?'),
+        r.get('rpm', '?'),
+        r.get('error_flags', '0x0000'),
+    )
 
 
 def _centrifuge_goto_with_retry(
@@ -380,6 +499,7 @@ def _centrifuge_goto_with_retry(
             '%s failed (attempt %d/%d)',
             cmd_name, attempt, max_retries,
         )
+        _check_bldc_errors(runner.stm32)
         if attempt < max_retries:
             _bldc_reset(runner.stm32)
     return False
