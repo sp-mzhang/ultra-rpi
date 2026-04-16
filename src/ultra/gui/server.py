@@ -341,8 +341,8 @@ def create_app(application: 'Application') -> FastAPI:
     @app.websocket('/ws')
     async def websocket_endpoint(ws: WebSocket):
         await ws.accept()
-        broadcaster.connect(ws)
         await broadcaster.replay(ws)
+        broadcaster.connect(ws)
         try:
             while True:
                 data = await ws.receive_text()
