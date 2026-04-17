@@ -47,6 +47,9 @@ egress:
   s3_bucket: siphox-home
   s3_region: us-east-2
   zip_temp_dir: /tmp/ultra-egress
+  # Cap S3 upload throughput in bytes/sec (null = unlimited).
+  # Example: 524288 = 512 KiB/s, 1048576 = 1 MiB/s.
+  s3_max_bandwidth_bps: null
   dollop_host: 18.117.187.46
   dollop_port: 8080
   loop_sleep_s: 10.0

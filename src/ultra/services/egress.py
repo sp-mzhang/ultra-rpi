@@ -93,6 +93,9 @@ class EgressService:
             zip_temp_dir=egress_cfg.get(
                 'zip_temp_dir', None,
             ),
+            max_bandwidth_bps=egress_cfg.get(
+                's3_max_bandwidth_bps', None,
+            ),
         )
 
         dollop_host = egress_cfg.get(

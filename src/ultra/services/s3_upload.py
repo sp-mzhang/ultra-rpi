@@ -106,6 +106,7 @@ class S3Uploader:
             region: str = DEFAULT_REGION,
             device_sn: str = 'ultra-unknown',
             zip_temp_dir: str | None = None,
+            max_bandwidth_bps: int | None = None,
     ) -> None:
         '''Initialise the uploader.
 
@@ -116,12 +117,21 @@ class S3Uploader:
                 S3 key prefix.
             zip_temp_dir: Optional temp dir for ZIPs.
                 Defaults to sibling of run dir.
+            max_bandwidth_bps: Upload bandwidth cap in
+                bytes/sec. ``None`` or ``<= 0`` means
+                unlimited (default).
         '''
         self.bucket = bucket
         self.region = region
         self.prefix = f'Device/{device_sn}'
         self.zip_temp_dir = zip_temp_dir
+        self.max_bandwidth_bps = (
+            max_bandwidth_bps
+            if max_bandwidth_bps and max_bandwidth_bps > 0
+            else None
+        )
         self._client: Any = None
+        self._transfer_cfg: Any = None
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -137,6 +147,21 @@ class S3Uploader:
             )
             self._client = boto3.client('s3', config=cfg)
         return self._client
+
+    def _get_transfer_config(self) -> Any:
+        '''Build a TransferConfig honouring the BW cap.
+
+        Returns ``None`` when no cap is configured so callers
+        can skip the ``Config=`` kwarg entirely.
+        '''
+        if self.max_bandwidth_bps is None:
+            return None
+        if self._transfer_cfg is None:
+            from boto3.s3.transfer import TransferConfig
+            self._transfer_cfg = TransferConfig(
+                max_bandwidth=self.max_bandwidth_bps,
+            )
+        return self._transfer_cfg
 
     def upload_run_zip(
             self,
@@ -178,13 +203,25 @@ class S3Uploader:
 
         try:
             client = self._get_client()
-            LOG.info(
-                'Uploading %s -> s3://%s/%s',
-                zip_path, self.bucket, s3_key,
-            )
+            transfer_cfg = self._get_transfer_config()
+            if transfer_cfg is not None:
+                LOG.info(
+                    'Uploading %s -> s3://%s/%s '
+                    '(bw cap %d B/s)',
+                    zip_path, self.bucket, s3_key,
+                    self.max_bandwidth_bps,
+                )
+            else:
+                LOG.info(
+                    'Uploading %s -> s3://%s/%s',
+                    zip_path, self.bucket, s3_key,
+                )
             with open(zip_path, 'rb') as fh:
+                kwargs: dict[str, Any] = {}
+                if transfer_cfg is not None:
+                    kwargs['Config'] = transfer_cfg
                 client.upload_fileobj(
-                    fh, self.bucket, s3_key,
+                    fh, self.bucket, s3_key, **kwargs,
                 )
             LOG.info('Upload complete: %s', s3_key)
             return True, zip_path
