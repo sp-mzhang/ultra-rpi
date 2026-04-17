@@ -469,6 +469,7 @@ class ProtocolRunner:
             data_dir=data_dir,
             user=operator,
             name=self.recipe.name if self.recipe else 'run',
+            config=self._config,
             device_sn=device_sn,
             station_id=station_id,
             protocol_mode=protocol_mode,

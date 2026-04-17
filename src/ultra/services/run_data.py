@@ -173,6 +173,22 @@ class RunGroupWriter:
         self.rg_dir = op.join(date_dir, dir_name)
         os.makedirs(self.rg_dir, exist_ok=True)
 
+        # Build a sway-compatible ``config`` sub-dict.  The Dollop
+        # analysis notebooks read ``run.json['config']['device_sn']``,
+        # ``['station_id']``, ``['version']``, ``['protocol_mode']``
+        # -- these must live INSIDE the ``config`` key to match sway's
+        # layout (sway/utils/shelpers.py: ``config=self.config``).
+        try:
+            from ultra import __version__ as _ultra_version
+        except Exception:
+            _ultra_version = 'unknown'
+
+        cfg: dict[str, Any] = dict(config) if config else {}
+        cfg.setdefault('device_sn', device_sn)
+        cfg.setdefault('station_id', station_id)
+        cfg.setdefault('protocol_mode', protocol_mode)
+        cfg.setdefault('version', _ultra_version)
+
         self.rg_dict: dict[str, Any] = {
             'operator': user,
             'rungroup_name': name,
@@ -186,7 +202,7 @@ class RunGroupWriter:
             'local_directory_path': self.rg_dir,
             'remote_directory_path': '',
             'run_meta': {},
-            'config': config or {},
+            'config': cfg,
             'log_file_path': data_dir,
             'run_state': 'ready',
             'created_at': _ts_str(dt),
