@@ -43,6 +43,20 @@ gantry:
     # Firmware default: 6.0 mm/s.
     z_speed_mms: 6.0
 
+# Liquid-handling defaults (override firmware constants).
+# Each field can also be overridden per-step in a recipe by
+# setting the same key on a smart_aspirate / reagent_transfer
+# step (e.g. ``foil_pierce_mm: 3.0``).
+liquid:
+  foil_puncture:
+    # Z pierce-stroke depth relative to foil-contact Z, in mm.
+    # Applied after the first pLLD pass when foil_detect=True.
+    # Firmware default: 2.0 mm (FOIL_PIERCE_MM).
+    pierce_mm: 1.0
+    # Z speed during the pierce stroke, in steps/s.
+    # Firmware default: 2000 sps (FOIL_PIERCE_SPEED_SPS).
+    pierce_speed_sps: 2000
+
 # Per-unit calibration (editable in full machine_settings.yaml on S3).
 calibration:
   loc_offset_x_um: 0

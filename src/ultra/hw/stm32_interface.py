@@ -1194,6 +1194,12 @@ class STM32Interface:
                 foil_detect=cmd.get(
                     'foil_detect', True,
                 ),
+                foil_pierce_um=int(
+                    cmd.get('foil_pierce_um', 0),
+                ),
+                foil_pierce_speed_sps=int(
+                    cmd.get('foil_pierce_speed_sps', 0),
+                ),
             )
         if cmd_name == 'well_dispense':
             return fp.pack_well_dispense(
@@ -1682,6 +1688,8 @@ class STM32Interface:
             air_slug_ul: int = 0,
             stream: bool = False,
             foil_detect: bool = True,
+            foil_pierce_um: int = 0,
+            foil_pierce_speed_sps: int = 0,
             timeout_s: float = 120.0,
     ) -> Optional[dict]:
         '''LLD + aspirate in a single firmware command.
@@ -1701,6 +1709,10 @@ class STM32Interface:
             foil_detect: When True, firmware assumes foil
                 is intact and always punctures + re-detects.
                 Default True (safe for unaccessed wells).
+            foil_pierce_um: Puncture stroke depth in µm (below
+                foil-contact Z). 0 = firmware default.
+            foil_pierce_speed_sps: Puncture Z speed in steps/s.
+                0 = firmware default.
             timeout_s: Total timeout in seconds.
 
         Returns:
@@ -1719,6 +1731,8 @@ class STM32Interface:
             'air_slug_ul': air_slug_ul,
             'stream': stream,
             'foil_detect': foil_detect,
+            'foil_pierce_um': int(foil_pierce_um),
+            'foil_pierce_speed_sps': int(foil_pierce_speed_sps),
         }
 
         resp = self.send_command_wait_done(
@@ -2056,6 +2070,8 @@ class STM32Interface:
             air_slug_ul: int = 0,
             stream: bool = False,
             foil_detect: bool = True,
+            foil_pierce_um: int = 0,
+            foil_pierce_speed_sps: int = 0,
             timeout_s: float = 120.0,
     ) -> dict | None:
         '''Move to a location, then LLF-aspirate in one step.
@@ -2086,6 +2102,12 @@ class STM32Interface:
             foil_detect: When True, firmware assumes foil
                 is intact and always punctures + re-detects.
                 Default True (safe for unaccessed wells).
+            foil_pierce_um: Puncture stroke depth in µm
+                (below foil-contact Z).  0 = firmware default
+                (FOIL_PIERCE_MM, typically 2.0 mm).
+            foil_pierce_speed_sps: Puncture Z speed in steps/s.
+                0 = firmware default (FOIL_PIERCE_SPEED_SPS,
+                typically 2000 sps).
             timeout_s: Per-sub-step timeout in seconds
                 (default 120).
 
@@ -2129,6 +2151,8 @@ class STM32Interface:
             air_slug_ul=air_slug_ul,
             stream=stream,
             foil_detect=foil_detect,
+            foil_pierce_um=foil_pierce_um,
+            foil_pierce_speed_sps=foil_pierce_speed_sps,
         )
         if (
                 resp is None

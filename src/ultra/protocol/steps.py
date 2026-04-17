@@ -677,6 +677,44 @@ def _tip_swap_cfg(params: dict, runner: Any) -> dict:
     return out
 
 
+def _foil_puncture_cfg(params: dict, runner: Any) -> dict:
+    '''Build foil-puncture override kwargs for smart_aspirate_at.
+
+    Resolution order (first non-None wins):
+      1. Per-step ``params`` override in the recipe
+         (``foil_pierce_mm``, ``foil_pierce_speed_sps``).
+      2. App config ``liquid.foil_puncture.*`` (set in
+         ``config/ultra_default.yaml``).
+      3. Firmware default (0 sent on the wire -> firmware falls
+         back to ``FOIL_PIERCE_MM`` / ``FOIL_PIERCE_SPEED_SPS``).
+
+    Returns a dict ready to pass to ``smart_aspirate_at`` with
+    keys ``foil_pierce_um`` (int) and
+    ``foil_pierce_speed_sps`` (int).  Keys are omitted when the
+    resolved value is None so callers can use their own defaults.
+    '''
+    cfg = runner.config.get('liquid', {}).get('foil_puncture', {})
+
+    out: dict = {}
+    if 'foil_pierce_mm' in params:
+        out['foil_pierce_um'] = int(
+            round(float(params['foil_pierce_mm']) * 1000.0),
+        )
+    elif 'pierce_mm' in cfg:
+        out['foil_pierce_um'] = int(
+            round(float(cfg['pierce_mm']) * 1000.0),
+        )
+
+    if 'foil_pierce_speed_sps' in params:
+        out['foil_pierce_speed_sps'] = int(
+            params['foil_pierce_speed_sps'],
+        )
+    elif 'pierce_speed_sps' in cfg:
+        out['foil_pierce_speed_sps'] = int(cfg['pierce_speed_sps'])
+
+    return out
+
+
 @step_type('tip_pick')
 class TipPickStep(StepExecutor):
     '''Pick up a tip via gantry_tip_swap from_id=0.
@@ -876,6 +914,7 @@ class ReagentTransferStep(StepExecutor):
                 ),
                 stream=stream,
                 foil_detect=not source.foil_punctured,
+                **_foil_puncture_cfg(params, runner),
             )
             if sa is None:
                 return False
@@ -1010,6 +1049,7 @@ class ReagentTransferBFStep(StepExecutor):
                 ),
                 stream=stream,
                 foil_detect=not source.foil_punctured,
+                **_foil_puncture_cfg(params, runner),
             )
             if sa is None:
                 return False
@@ -1151,6 +1191,7 @@ class WellTransferReturnStep(StepExecutor):
                 'air_slug_ul', 50,
             ),
             foil_detect=not source.foil_punctured,
+            **_foil_puncture_cfg(params, runner),
         )
         if sa is None:
             return False
@@ -1234,6 +1275,7 @@ class WellToChipStep(StepExecutor):
             ),
             stream=params.get('stream', True),
             foil_detect=not source.foil_punctured,
+            **_foil_puncture_cfg(params, runner),
         )
         if sa is None:
             return False
@@ -1391,6 +1433,7 @@ class SmartAspirateStep(StepExecutor):
             ),
             stream=params.get('stream', False),
             foil_detect=not well.foil_punctured,
+            **_foil_puncture_cfg(params, runner),
         )
         if sa is None:
             return False
@@ -1447,6 +1490,7 @@ class DilutionTransferStep(StepExecutor):
             ),
             stream=params.get('stream', True),
             foil_detect=not source.foil_punctured,
+            **_foil_puncture_cfg(params, runner),
         )
         if sa is None:
             return False

@@ -1648,13 +1648,25 @@ def pack_smart_aspirate(
         air_slug_ul: int = 0,
         stream: bool = False,
         foil_detect: bool = True,
+        foil_pierce_um: int = 0,
+        foil_pierce_speed_sps: int = 0,
 ) -> bytes:
     '''Pack CMD_SMART_ASPIRATE payload.
 
-    Wire layout matches proto_cmd_smart_aspirate_t (29 bytes):
+    Base wire layout matches proto_cmd_smart_aspirate_t (29 bytes):
         seq(4) volume_ul(4) pump_speed_ul_s(4f) lld_threshold(1)
         z_entry(4) z_bottom(4) z_speed_sps(2) well_id(1) air_slug_ul(4)
         flags(1)
+
+    Extended wire layout (35 bytes) appends:
+        foil_pierce_um(4i) foil_pierce_speed_sps(2)
+
+    This packer always emits the 35-byte extended form.  When the
+    foil_pierce_* fields are 0 the firmware falls back to its own
+    constants (FOIL_PIERCE_MM / FOIL_PIERCE_SPEED_SPS) so older
+    callers that don't set them behave identically to before.  Older
+    firmware that only accepts the 29-byte base form will reject the
+    frame; deploy firmware and RPi together.
 
     Args:
         seq: Sequence number.
@@ -1676,6 +1688,12 @@ def pack_smart_aspirate(
         foil_detect: When True, firmware assumes foil is
             intact and always punctures + re-detects liquid.
             Default True (safe for unaccessed wells).
+        foil_pierce_um: Puncture stroke depth in µm (relative descent
+            below foil-contact Z).  0 = firmware default
+            (FOIL_PIERCE_MM, typically 2.0 mm).
+        foil_pierce_speed_sps: Puncture Z speed in steps/s.
+            0 = firmware default (FOIL_PIERCE_SPEED_SPS,
+            typically 2000 sps).
     '''
     flags = 0
     if stream:
@@ -1683,9 +1701,10 @@ def pack_smart_aspirate(
     if foil_detect:
         flags |= LIQUID_FLAG_FOIL_DETECT
     return struct.pack(
-        '<IIfBiiHBIB',
+        '<IIfBiiHBIBiH',
         seq, volume_ul, float(pump_speed_ul_s), lld_threshold,
         z_entry, z_bottom, z_speed_sps, well_id, air_slug_ul, flags,
+        int(foil_pierce_um), int(foil_pierce_speed_sps),
     )
 
 
