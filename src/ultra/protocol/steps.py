@@ -786,17 +786,25 @@ class ReagentTransferStep(StepExecutor):
             'reasp_ul',
             consts.get('reasp_ul', 12),
         )
-        remainder = asp_vol - cart_vol + reasp
+        tip_preload_ul = int(params.get('tip_preload_ul', 0))
+        skip_return = bool(params.get('skip_return', False))
+
+        if tip_preload_ul > 0:
+            remainder = tip_preload_ul - cart_vol + reasp
+        else:
+            remainder = asp_vol - cart_vol + reasp
 
         if params.get('skip_aspirate'):
             LOG.info(
                 'reagent_transfer: skip_aspirate '
-                '(liquid already in tip)',
+                '(liquid already in tip, preload=%d uL)',
+                tip_preload_ul,
             )
-            runner.tracker.update_well(
-                source.name, delta_ul=-asp_vol,
-                operation=f'asp {asp_vol}uL (pre-pulled)',
-            )
+            if tip_preload_ul <= 0 and asp_vol > 0:
+                runner.tracker.update_well(
+                    source.name, delta_ul=-asp_vol,
+                    operation=f'asp {asp_vol}uL (pre-pulled)',
+                )
         else:
             stream = params.get('stream', False)
             sa = runner.stm32.smart_aspirate_at(
@@ -857,6 +865,14 @@ class ReagentTransferStep(StepExecutor):
             runner.collect_pressure(
                 cd_r, params['label'],
             )
+
+        if skip_return:
+            LOG.info(
+                'reagent_transfer: skip_return '
+                '(tip keeps %d uL for next leg)',
+                int(remainder),
+            )
+            return True
 
         ok = runner.stm32.well_dispense_at(
             loc_id=source.loc_id,
@@ -1712,6 +1728,8 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('reasp_ul', default=12),
         _p('return_speed', default=100.0),
         _p('skip_aspirate', 'boolean', default=False),
+        _p('skip_return', 'boolean', default=False),
+        _p('tip_preload_ul', default=0),
         _p('stream', 'boolean', default=False),
     ],
     'reagent_transfer_bf': [

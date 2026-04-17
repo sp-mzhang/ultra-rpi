@@ -1,0 +1,363 @@
+name: CRP Ultra Latest
+description: >
+  HS CRP blood-analysis protocol aligned to the canonical
+  sway CRP flow chart (CRP_protocol_32C.csv). 4 phases:
+  centrifuge separation, 4 buffer dilutions + serum prep
+  with 2 serial dilutions (10x->100x->750x), 6 chip
+  dispenses (Hydrophilic, DI water, 2-stage PBST with
+  120s warm wait, sample buffer #1, sample, sample
+  buffer #2), and final lock. Air slug 25 uL, aspirate
+  20 uL/s throughout chip-dispense phase. No GNP.
+
+reader:
+  acq_mode: continuous
+  acq_time_total_s: 20000
+  acq_time_step_s: 4
+
+peak_detect:
+  fit_type: detect_peaks
+  stitch_th: 1.15
+  config_fit:
+    dist: 100
+    ignore_start: 400
+    min_power: -45
+    prom: 1.5
+
+constants:
+  air_slug_ul: 25
+  reasp_ul: 12
+  cart_disp_vel: 1.5
+
+wells:
+  # Buffer source wells (small)
+  S2:    {loc: 22, reagent: CRP Buffer 1, volume_ul: 180}
+  S4:    {loc: 24, reagent: CRP Buffer 2, volume_ul: 180}
+  S5:    {loc: 25, reagent: CRP Buffer 3, volume_ul: 130}
+  S6:    {loc: 26, reagent: CRP Buffer 4, volume_ul: 130}
+
+  # Reagent source wells
+  S7:    {loc: 27, reagent: Hydrophilic, volume_ul: 110}
+  S9:    {loc: 29, reagent: Sample Buffer, volume_ul: 180}
+  M3:    {loc: 35, reagent: DI Water, volume_ul: 200}
+  M5:    {loc: 37, reagent: PBST, volume_ul: 200}
+
+  # Mixing wells (medium, start empty)
+  M4:    {loc: 36, reagent: Mix10x, volume_ul: 0}
+  M6:    {loc: 38, reagent: Mix100x, volume_ul: 0}
+  M9:    {loc: 41, reagent: Mix750x, volume_ul: 0}
+
+  # Other
+  M2:    {loc: 34, reagent: Waste, volume_ul: 0}
+  SERUM: {loc: 18, reagent: Serum, volume_ul: 50}
+  PP4:   {loc: 11, reagent: Cartridge, volume_ul: 0}
+
+phases:
+  - name: A
+    label: Centrifuge
+    include: _common.yaml#centrifuge_phase
+
+  - name: B
+    label: Dilution and Serum Prep
+    steps:
+      - type: set_loc_offset
+        label: Apply gantry offset
+
+      - type: lid
+        label: Open lid
+        open: true
+
+      # --- Buffer dilutions (Tip 1) ---
+
+      - type: tip_pick
+        label: Pick Tip 1
+        tip_id: 1
+
+      - type: dilution_transfer
+        label: CRP Buffer 1 (S2 -> M4)
+        source: S2
+        dest: M4
+        volume: 180
+        asp_speed: 80.0
+        stream: true
+
+      - type: dilution_transfer
+        label: CRP Buffer 2 (S4 -> M6)
+        source: S4
+        dest: M6
+        volume: 180
+        asp_speed: 80.0
+        stream: true
+
+      - type: dilution_transfer
+        label: CRP Buffer 3 (S5 -> M9)
+        source: S5
+        dest: M9
+        volume: 130
+        asp_speed: 80.0
+        stream: true
+
+      - type: dilution_transfer
+        label: CRP Buffer 4 (S6 -> M9)
+        source: S6
+        dest: M9
+        volume: 130
+        asp_speed: 80.0
+        stream: true
+
+      # --- Serum aspiration (Tip 2) ---
+
+      - type: tip_swap
+        label: Tip swap 1 -> 2
+        from_id: 1
+        to_id: 2
+
+      - type: move_to_location
+        label: Move to serum port
+        well: SERUM
+
+      - type: centrifuge_goto_serum
+        label: Rotate to serum position
+
+      - type: smart_aspirate
+        label: Aspirate serum
+        well: SERUM
+        volume: 50
+        speed: 75.0
+        air_slug: 50
+        piston_reset: true
+        stream: true
+
+      - type: home_z
+        label: Home Z after serum aspirate
+
+      - type: centrifuge_goto_pipette
+        label: Rotate to pipette position
+
+      - type: well_dispense
+        label: Dispense serum to M4
+        well: M4
+        volume: 20
+        speed: 20.0
+        blowout: false
+
+      - type: well_dispense
+        label: Waste to M2
+        well: M2
+        volume: 30
+        speed: 100.0
+        blowout: true
+
+      # --- Serial dilutions (Tips 3-4) ---
+
+      - type: tip_swap
+        label: Tip swap 2 -> 3
+        from_id: 2
+        to_id: 3
+
+      - type: tip_mix
+        label: Mix M4 (10x dilution)
+        well: M4
+        mix_vol: 100
+        speed: 100.0
+        cycles: 4
+
+      - type: dilution_transfer
+        label: 10x to 100x (M4 -> M6)
+        source: M4
+        dest: M6
+        volume: 20
+        asp_speed: 20.0
+        stream: true
+
+      - type: tip_mix
+        label: Mix M6 (100x dilution)
+        well: M6
+        mix_vol: 100
+        speed: 100.0
+        cycles: 4
+
+      - type: tip_swap
+        label: Tip swap 3 -> 4
+        from_id: 3
+        to_id: 4
+
+      - type: dilution_transfer
+        label: 100x to 750x (M6 -> M9)
+        source: M6
+        dest: M9
+        volume: 40
+        asp_speed: 20.0
+        stream: true
+
+      - type: tip_mix
+        label: Mix M9 (750x dilution)
+        well: M9
+        mix_vol: 100
+        speed: 100.0
+        cycles: 4
+
+      - type: tip_return
+        label: Return Tip 4
+        tip_id: 4
+
+  - name: C
+    label: Main Reagent Dispensing
+    steps:
+      - type: tip_pick
+        label: Pick Tip 5
+        tip_id: 5
+
+      - type: lld
+        label: Pre-flight LLD
+        threshold: 20
+
+      # Hydrophilic Coating (S7 -> PP4)
+      # CSV: air 25 @ 20, asp 110 @ 20, cart 70 @ 0.5,
+      # reasp 12 @ 0.5, post-delay 5s, return @ 16.7
+      - type: reagent_transfer
+        label: cart_dispense_Hydrophilic
+        source: S7
+        target: PP4
+        asp_vol: 110
+        cart_vol: 70
+        asp_speed: 20.0
+        cart_vel: 0.5
+        air_slug: 25
+        reasp_ul: 12
+        return_speed: 16.7
+        stream: true
+
+      - type: delay
+        label: Post-Hydrophilic wait
+        seconds: 5
+
+      - type: tip_swap
+        label: Tip swap 5 -> 6
+        from_id: 5
+        to_id: 6
+
+      # DI Water (M3 -> PP4)
+      # CSV: air 25 @ 20, asp 190 @ 20, cart 160 @ 1.5,
+      # reasp 12 @ 1.5, post-delay 5s, return @ 16.7
+      - type: reagent_transfer
+        label: cart_dispense_DI_Water
+        source: M3
+        target: PP4
+        asp_vol: 190
+        cart_vol: 160
+        asp_speed: 20.0
+        cart_vel: 1.5
+        air_slug: 25
+        reasp_ul: 12
+        return_speed: 16.7
+        stream: true
+
+      - type: delay
+        label: Post-DI_Water wait
+        seconds: 5
+
+      # PBST (M5 -> PP4) -- 2-stage dispense with warm wait
+      # CSV row 11: 120s warm wait on air-slug row.
+      # CSV: air 25 @ 20, asp 200 @ 20, then
+      #   fast leg: cart 100 @ 3.33 (200 uL/min)
+      #   slow leg: cart 90 @ 0.5 (30 uL/min), reasp 10
+      # post-delay 1s after slow leg, return 45 uL @ 33.3
+      - type: delay
+        label: PBST chip warm wait
+        seconds: 120
+
+      - type: reagent_transfer
+        label: cart_dispense_PBST_fast
+        source: M5
+        target: PP4
+        asp_vol: 200
+        cart_vol: 100
+        asp_speed: 20.0
+        cart_vel: 3.33
+        air_slug: 25
+        reasp_ul: 0
+        skip_return: true
+        stream: true
+
+      - type: reagent_transfer
+        label: cart_dispense_PBST_slow
+        source: M5
+        target: PP4
+        asp_vol: 0
+        cart_vol: 90
+        cart_vel: 0.5
+        reasp_ul: 10
+        return_speed: 33.3
+        skip_aspirate: true
+        tip_preload_ul: 100
+        stream: true
+
+      - type: delay
+        label: Post-PBST wait
+        seconds: 1
+
+      # Sample buffer #1 (S9 -> PP4)
+      # CSV: air 25 @ 20, asp 70 @ 20, cart 60 @ 0.5,
+      # no reasp, return @ 33.3
+      - type: reagent_transfer
+        label: cart_dispense_SampleBuffer_1
+        source: S9
+        target: PP4
+        asp_vol: 70
+        cart_vol: 60
+        asp_speed: 20.0
+        cart_vel: 0.5
+        air_slug: 25
+        reasp_ul: 0
+        return_speed: 33.3
+        stream: true
+
+      # Sample (M9 750x dilution -> PP4)
+      # CSV: air 25 @ 20, asp 70 @ 20, cart 60 @ 0.25
+      # (15 uL/min, slow for sample), no reasp, return @ 33.3
+      - type: reagent_transfer
+        label: cart_dispense_Sample
+        source: M9
+        target: PP4
+        asp_vol: 70
+        cart_vol: 60
+        asp_speed: 20.0
+        cart_vel: 0.25
+        air_slug: 25
+        reasp_ul: 0
+        return_speed: 33.3
+        stream: true
+
+      # Sample buffer #2 (S9 -> PP4) -- same as #1
+      - type: reagent_transfer
+        label: cart_dispense_SampleBuffer_2
+        source: S9
+        target: PP4
+        asp_vol: 70
+        cart_vol: 60
+        asp_speed: 20.0
+        cart_vel: 0.5
+        air_slug: 25
+        reasp_ul: 0
+        return_speed: 33.3
+        stream: true
+
+      - type: timing_marker
+        label: Analysis_Trigger_Post_SampleBuffer2
+        event_type: start
+        trigger_analysis: true
+
+      - type: timing_marker
+        label: Analysis_Trigger_Post_SampleBuffer2
+        event_type: stop
+
+      - type: tip_return
+        label: Return Tip 6
+        tip_id: 6
+
+      - type: home_close
+        label: Home all + close lid
+
+  - name: D
+    label: Lock
+    include: _common.yaml#lock_phase
