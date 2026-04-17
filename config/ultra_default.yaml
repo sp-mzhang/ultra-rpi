@@ -56,6 +56,17 @@ liquid:
     # Z speed during the pierce stroke, in steps/s.
     # Firmware default: 2000 sps (FOIL_PIERCE_SPEED_SPS).
     pierce_speed_sps: 2000
+  cartridge_dispense:
+    # Offset applied to the pre-flight LLD-detected cartridge Z
+    # before it becomes the dispense height. Positive values
+    # move the tip toward Z home (i.e. less negative / up) so
+    # the tip sits slightly above the detected port surface
+    # during every cart_dispense. Set to 0.0 to dispense at
+    # the detected surface itself.
+    # Can be overridden per-recipe via
+    # ``constants.cartridge_lld_offset_mm`` or per-step on the
+    # ``lld`` step via ``offset_mm``.
+    lld_offset_mm: 0.5
 
 # Per-unit calibration (editable in full machine_settings.yaml on S3).
 calibration:

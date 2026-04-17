@@ -812,17 +812,40 @@ class LLDStep(StepExecutor):
                 'lld_threshold', 20,
             ),
         )
+        # Offset applied to the LLD-detected Z before it's used
+        # as the cart-dispense height.  Positive = toward Z home
+        # (less negative), so the tip sits slightly above the
+        # detected surface during dispense.
+        # Resolution order: step params -> recipe constants ->
+        # app config -> 0.0.
+        cfg_offset = (
+            runner.config.get('liquid', {})
+            .get('cartridge_dispense', {})
+            .get('lld_offset_mm', 0.0)
+        )
+        offset_mm = float(
+            params.get(
+                'offset_mm',
+                runner.recipe.constants.get(
+                    'cartridge_lld_offset_mm',
+                    cfg_offset,
+                ),
+            ),
+        )
         r = runner.stm32.perform_lld(
             threshold=threshold,
         )
         if r and r.get('detected'):
             z_usteps = r.get('z_position', 0)
+            z_detected_mm = z_usteps / Z_USTEPS_PER_MM
             runner.cartridge_z_mm = (
-                z_usteps / Z_USTEPS_PER_MM
+                z_detected_mm + offset_mm
             )
             LOG.info(
-                'LLD detected: z=%d usteps = %.2f mm',
-                z_usteps, runner.cartridge_z_mm,
+                'LLD detected: z=%d usteps = %.2f mm, '
+                'offset=%.2f mm -> cartridge_z=%.2f mm',
+                z_usteps, z_detected_mm,
+                offset_mm, runner.cartridge_z_mm,
             )
         else:
             default_z = runner.recipe.constants.get(
