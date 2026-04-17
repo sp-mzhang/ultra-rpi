@@ -45,7 +45,7 @@ class FcLiquidSeqRequest(BaseModel):
 
 
 def create_fc_sequence_router(
-        app: 'Application',  # noqa: ARG001
+        app: 'Application',
 ) -> APIRouter:
     router = APIRouter()
 
@@ -138,22 +138,42 @@ def create_fc_sequence_router(
                 from ultra.hw.stm32_interface import (
                     Z_USTEPS_PER_MM,
                 )
+                cfg_offset = float(
+                    app.config.get('liquid', {})
+                    .get('cartridge_dispense', {})
+                    .get('lld_offset_mm', 0.0),
+                )
+                default_z = float(
+                    app.config.get('calibration', {})
+                    .get('default_cartridge_z_mm', -23.8),
+                )
                 lld_r = stm32.perform_lld(threshold=20)
-                cartridge_z = 0.0
                 if lld_r and lld_r.get('detected'):
                     z_us = lld_r.get('z_position', 0)
-                    cartridge_z = z_us / Z_USTEPS_PER_MM
+                    z_detected = z_us / Z_USTEPS_PER_MM
+                    cartridge_z = z_detected + cfg_offset
                     LOG.info(
-                        'FC seq LLD: z=%d usteps '
-                        '= %.2f mm',
-                        z_us, cartridge_z,
+                        'FC seq LLD: z=%d usteps = %.2f mm, '
+                        'offset=%.2f mm -> cartridge_z=%.2f mm',
+                        z_us, z_detected,
+                        cfg_offset, cartridge_z,
                     )
                 else:
+                    cartridge_z = default_z
                     LOG.warning(
                         'FC seq LLD not detected, '
-                        'using cartridge_z=0 (resp=%s)',
-                        lld_r,
+                        'using default_cartridge_z=%.2f mm '
+                        '(resp=%s)',
+                        cartridge_z, lld_r,
                     )
+                # Home Z so the next XY move is safe regardless
+                # of where LLD left the tip.
+                r = stm32.send_command_wait_done(
+                    cmd={'cmd': 'home_z_axis'},
+                    timeout_s=30.0,
+                )
+                if not _check(r, 'Home Z (post-LLD)'):
+                    return
                 if _aborted():
                     return
 
