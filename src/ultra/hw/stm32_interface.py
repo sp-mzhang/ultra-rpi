@@ -2442,6 +2442,12 @@ class STM32Interface:
             timeout_s,
             dispense_time + float(sleep_s) + 60.0,
         )
+        # When the caller is chaining another cart dispense at
+        # this same port (skip_home_z=True), force the firmware
+        # reasp-retract to 0.  Otherwise the tip ends 2 mm above
+        # cart_z, and the next leg would dispense into air above
+        # the port.
+        effective_z_retract = 0 if skip_home_z else z_retract_mm
         r = self.send_command_wait_done(
             cmd={
                 'cmd': 'cart_dispense',
@@ -2449,7 +2455,7 @@ class STM32Interface:
                 'vel': vel_ul_s,
                 'reasp': reasp_ul,
                 'sleep_s': sleep_s,
-                'z_retract_mm': z_retract_mm,
+                'z_retract_mm': effective_z_retract,
                 'stream': stream,
             },
             timeout_s=long_timeout,

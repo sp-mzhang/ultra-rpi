@@ -33,12 +33,17 @@ constants:
   skip_centrifuge_shake: true
 
 wells:
-  # Reagent source wells (CSV A1..E1 map to ultra S/M slots)
-  S7: {loc: 27, reagent: Hydrophilic,   volume_ul: 110}  # CSV A1
-  M3: {loc: 35, reagent: DI Water,      volume_ul: 200}  # CSV B1
-  M5: {loc: 37, reagent: PBST,          volume_ul: 220}  # CSV C1
-  S9: {loc: 29, reagent: Sample Buffer, volume_ul: 180}  # CSV D1
-  M9: {loc: 41, reagent: Samples,       volume_ul: 80}   # CSV E1
+  # Reagent source wells (CSV A1..E1 map to ultra S/M slots).
+  # volume_ul = required loaded volume; must exceed asp_vol by
+  # ~30-50 uL so LLD can aspirate to the end of asp_vol without
+  # the tip becoming uncovered and sucking air mid-aspirate.
+  # S9 (Sample Buffer) is drawn twice (asp 70 + return 35, twice)
+  # so it needs 2x the per-shot margin.
+  S7: {loc: 27, reagent: Hydrophilic,   volume_ul: 150}  # CSV A1 (asp 110)
+  M3: {loc: 35, reagent: DI Water,      volume_ul: 250}  # CSV B1 (asp 190)
+  M5: {loc: 37, reagent: PBST,          volume_ul: 260}  # CSV C1 (asp 200)
+  S9: {loc: 29, reagent: Sample Buffer, volume_ul: 220}  # CSV D1 (asp 70 x2)
+  M9: {loc: 41, reagent: Samples,       volume_ul: 120}  # CSV E1 (asp 70)
 
   # Cartridge target
   PP4: {loc: 11, reagent: Cartridge, volume_ul: 0}
