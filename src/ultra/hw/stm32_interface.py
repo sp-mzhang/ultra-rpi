@@ -2357,6 +2357,8 @@ class STM32Interface:
             stream: bool = False,
             timeout_s: float = 120.0,
             pre_dispense_cb: object = None,
+            skip_preamble: bool = False,
+            skip_home_z: bool = False,
     ) -> dict | bool:
         '''Move to a location and firmware cart-dispense.
 
@@ -2377,42 +2379,58 @@ class STM32Interface:
             timeout_s: Per-sub-step timeout in seconds.
             pre_dispense_cb: Optional callable invoked right
                 before the pump command fires (after move + Z).
+            skip_preamble: If True, skip move_to_location and
+                the Z descent to cartridge_z. Use when the
+                caller has already positioned the tip at the
+                cartridge port (e.g. a previous cart_dispense
+                that was issued with ``skip_home_z=True``).
+            skip_home_z: If True, do not home the Z axis after
+                the dispense completes. Use to chain multiple
+                cart dispenses at the same port without the
+                tip leaving the cartridge between legs.
 
         Returns:
             When stream is False: True on success.
             When stream is True: dict with 'ok' and
             '_pressure_samples' on success. False on failure.
         '''
-        r = self.send_command_wait_done(
-            cmd={
-                'cmd': 'move_to_location',
-                'location_id': loc_id,
-                'speed_01mms': move_speed_01mms,
-            },
-            timeout_s=timeout_s,
-        )
-        if not _resp_ok(r):
-            LOG.error(
-                f'cart_dispense_at: move_to({loc_id})'
-                f' FAILED',
-            )
-            return False
-        time.sleep(0.3)
-
-        if cartridge_z:
+        if not skip_preamble:
             r = self.send_command_wait_done(
                 cmd={
-                    'cmd': 'move_z_axis',
-                    'position_mm': cartridge_z,
+                    'cmd': 'move_to_location',
+                    'location_id': loc_id,
+                    'speed_01mms': move_speed_01mms,
                 },
                 timeout_s=timeout_s,
             )
             if not _resp_ok(r):
                 LOG.error(
-                    'cart_dispense_at: Z move FAILED',
+                    f'cart_dispense_at: move_to({loc_id})'
+                    f' FAILED',
                 )
                 return False
             time.sleep(0.3)
+
+            if cartridge_z:
+                r = self.send_command_wait_done(
+                    cmd={
+                        'cmd': 'move_z_axis',
+                        'position_mm': cartridge_z,
+                    },
+                    timeout_s=timeout_s,
+                )
+                if not _resp_ok(r):
+                    LOG.error(
+                        'cart_dispense_at: Z move FAILED',
+                    )
+                    return False
+                time.sleep(0.3)
+        else:
+            LOG.info(
+                'cart_dispense_at loc=%d: skip_preamble '
+                '(assuming tip already at cartridge port)',
+                loc_id,
+            )
 
         if callable(pre_dispense_cb):
             pre_dispense_cb()
@@ -2453,16 +2471,23 @@ class STM32Interface:
         )
         time.sleep(0.3)
 
-        rh = self.send_command_wait_done(
-            cmd={'cmd': 'home_z_axis'},
-            timeout_s=timeout_s,
-        )
-        if not _resp_ok(rh):
-            LOG.error(
-                'cart_dispense_at: home Z FAILED',
+        if not skip_home_z:
+            rh = self.send_command_wait_done(
+                cmd={'cmd': 'home_z_axis'},
+                timeout_s=timeout_s,
             )
-            return False
-        time.sleep(0.3)
+            if not _resp_ok(rh):
+                LOG.error(
+                    'cart_dispense_at: home Z FAILED',
+                )
+                return False
+            time.sleep(0.3)
+        else:
+            LOG.info(
+                'cart_dispense_at loc=%d: skip_home_z '
+                '(holding Z at cartridge port for next leg)',
+                loc_id,
+            )
         if stream:
             return {
                 'ok': True,

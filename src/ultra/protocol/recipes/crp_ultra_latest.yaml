@@ -125,6 +125,8 @@ phases:
 
       # CSV rows 12-13: air 25 @ 20, asp 200 @ 20,
       # fast cart 100 @ 3.33 (200 uL/min), skip return.
+      # hold_at_cart keeps Z at the cartridge port so the
+      # slow leg can fire back-to-back without a Z round-trip.
       - type: reagent_transfer
         label: cart_dispense_PBST_fast
         source: M5
@@ -136,11 +138,14 @@ phases:
         air_slug: 25
         reasp_ul: 0
         skip_return: true
+        hold_at_cart: true
         stream: true
 
       # CSV rows 14-15: slow cart 90 @ 0.5, reasp 10 @ 0.5.
       # Row 16: empty 45 @ 33.3 (handled by return_speed).
       # Tip preload = asp+air-cart_stage1 = 200+25-100 = 125 uL.
+      # assume_at_cart skips the XY move and Z descent since
+      # the fast leg left the tip already at the cart port.
       - type: reagent_transfer
         label: cart_dispense_PBST_slow
         source: M5
@@ -152,6 +157,7 @@ phases:
         return_speed: 33.3
         skip_aspirate: true
         tip_preload_ul: 125
+        assume_at_cart: true
         stream: true
 
       - type: delay

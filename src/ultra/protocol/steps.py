@@ -965,6 +965,8 @@ class ReagentTransferStep(StepExecutor):
             pre_dispense_cb=lambda: _emit_timing_marker(
                 runner, label, 'start',
             ),
+            skip_preamble=bool(params.get('assume_at_cart', False)),
+            skip_home_z=bool(params.get('hold_at_cart', False)),
         )
         if not cd_r:
             return False
@@ -1850,6 +1852,8 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('skip_return', 'boolean', default=False),
         _p('tip_preload_ul', default=0),
         _p('stream', 'boolean', default=False),
+        _p('hold_at_cart', 'boolean', default=False),
+        _p('assume_at_cart', 'boolean', default=False),
     ],
     'reagent_transfer_bf': [
         _p('source', 'string', well_ref=True, required=True),
