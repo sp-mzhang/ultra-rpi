@@ -961,6 +961,7 @@ class STM32Interface:
                 'accel_stream_start',
                 'accel_stream_stop',
                 'accel_reset',
+                'fw_update_start',
                 'fc_heater_get_status',
         ):
             return fp.pack_seq(seq)

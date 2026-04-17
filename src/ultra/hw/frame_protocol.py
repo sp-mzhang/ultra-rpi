@@ -380,6 +380,8 @@ CMD_NAME_TO_ID = {
     'accel_stream_stop':    CMD_ACCEL_STREAM_STOP,
     'accel_reset':          CMD_ACCEL_RESET,
     'temp_get_status':      CMD_TEMP_GET_STATUS,
+    'fw_update_start':     CMD_FW_UPDATE_START,
+    'fw_write_block':      CMD_FW_WRITE_BLOCK,
 }
 
 
@@ -2563,3 +2565,13 @@ def unpack_msg_error(data: bytes) -> dict:
         'error_code': error_code,
         'message': msg,
     }
+
+# OTA firmware update (0x90xx)
+CMD_FW_UPDATE_START   = 0x9001
+CMD_FW_WRITE_BLOCK    = 0x9002
+
+def pack_fw_update_start(seq: int) -> bytes:
+    return struct.pack('<I', seq)
+
+def pack_fw_write_block(seq: int, offset: int, data: bytes) -> bytes:
+    return struct.pack('<II', seq, offset) + data

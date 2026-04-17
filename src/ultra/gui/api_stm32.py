@@ -140,13 +140,29 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             STM32StatusMonitor,
         )
         STM32StatusMonitor.stop_active()
-        # Give the kernel tty buffer + Pi UART hardware time to fully
-        # settle after the monitor thread's read()/close() — otherwise
-        # the engineering Serial open occasionally inherits a tty state
-        # where poll() says "readable" but read() returns 0 bytes, and
-        # every command from the web UI times out until the service is
-        # reset. 1.2 s is empirical; 0.3 s wasn't enough.
-        await asyncio.sleep(1.2)
+        # The monitor's serial close can leave the Pi's PL011 tty
+        # in a wedged state where subsequent writes silently fail
+        # (bytes never reach the wire). Force-reset the tty via
+        # stty before reopening so the driver reinitialises cleanly.
+        import subprocess
+        stm32_port = app.config.get('stm32', {}).get(
+            'port', '/dev/ttyAMA3',
+        )
+        stm32_baud = app.config.get('stm32', {}).get(
+            'baud', 921600,
+        )
+        await asyncio.sleep(0.5)
+        try:
+            subprocess.run(
+                ['stty', '-F', stm32_port,
+                 str(stm32_baud), 'cs8', '-cstopb',
+                 '-parenb', '-crtscts', 'raw',
+                 '-echo', '-echoe', '-echok'],
+                timeout=2, check=False,
+            )
+        except Exception:
+            pass
+        await asyncio.sleep(0.3)
 
         from ultra.hw.stm32_interface import (
             STM32Interface,
