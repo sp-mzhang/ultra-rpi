@@ -12,11 +12,33 @@ import logging
 import os
 import os.path as op
 import sqlite3
+import threading
 import time
 from datetime import datetime, timezone
-from typing import NamedTuple
+from functools import wraps
+from typing import Any, Callable, NamedTuple
 
 LOG = logging.getLogger(__name__)
+
+
+def _locked(method: Callable[..., Any]) -> Callable[..., Any]:
+    '''Serialize EgressDB method calls via the instance lock.
+
+    The connection is opened with ``check_same_thread=False``
+    so it can be used from both the asyncio loop thread (event
+    handlers like ``_on_protocol_done``) and the egress worker
+    thread (the upload tick). This decorator guards every
+    method body so transactions never interleave at the Python
+    level. The underlying SQLite WAL mode handles concurrent
+    access safely at the storage layer.
+    '''
+
+    @wraps(method)
+    def wrapper(self: 'EgressDB', *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 DOLLOP_DEFAULT_ID = -1
 DOLLOP_SKIP_ID = -2
@@ -77,9 +99,17 @@ class EgressDB:
     ) -> None:
         self.db_path = db_path
         os.makedirs(op.dirname(db_path), exist_ok=True)
-        self.con = sqlite3.connect(db_path)
+        # check_same_thread=False so the connection can be
+        # shared between the asyncio loop thread (event
+        # handlers) and the egress worker thread.  All access
+        # is serialised via ``self._lock`` (see _locked).
+        self.con = sqlite3.connect(
+            db_path, check_same_thread=False,
+        )
         self.max_retries = max_retries
+        self._lock = threading.RLock()
 
+    @_locked
     def close(self) -> None:
         '''Close database connection.'''
         self.con.close()
@@ -88,6 +118,7 @@ class EgressDB:
     # Initialisation
     # ----------------------------------------------------------
 
+    @_locked
     def init_db(self) -> None:
         '''Create all tables if they do not exist.'''
         con = self.con
@@ -152,6 +183,7 @@ class EgressDB:
     # Heartbeat
     # ----------------------------------------------------------
 
+    @_locked
     def update_heartbeat(self, ts_str: str) -> None:
         '''Update heartbeat timestamp.'''
         with self.con:
@@ -165,6 +197,7 @@ class EgressDB:
     # Run insert / query
     # ----------------------------------------------------------
 
+    @_locked
     def insert_run(
             self, *,
             run_uuid: str,
@@ -204,6 +237,7 @@ class EgressDB:
                 ),
             )
 
+    @_locked
     def get_unegressed_run(
             self,
             prev_rowid: int | None = None,
@@ -231,6 +265,7 @@ class EgressDB:
         row = cur.fetchone()
         return EgressTuple(*row) if row else None
 
+    @_locked
     def get_run_by_rowid(
             self, rowid: int,
     ) -> EgressTuple | None:
@@ -243,6 +278,7 @@ class EgressDB:
         row = cur.fetchone()
         return EgressTuple(*row) if row else None
 
+    @_locked
     def mark_egressed(
             self, *,
             rowid: int,
@@ -258,6 +294,7 @@ class EgressDB:
                 (egress_ts_str, rowid, run_uuid),
             )
 
+    @_locked
     def mark_egress_error(self, run_uuid: str) -> None:
         '''Increment egress error counter.'''
         with self.con:
@@ -268,6 +305,7 @@ class EgressDB:
                 (run_uuid,),
             )
 
+    @_locked
     def set_api_rungroup_id(
             self, *,
             rungroup_uuid: str,
@@ -281,6 +319,7 @@ class EgressDB:
                 (rungroup_id, rungroup_uuid),
             )
 
+    @_locked
     def set_api_run_id(
             self, *,
             run_uuid: str,
@@ -294,6 +333,7 @@ class EgressDB:
                 (run_id, run_uuid),
             )
 
+    @_locked
     def count_rungroup_runs(
             self, rungroup_id: int,
     ) -> int:
@@ -306,6 +346,7 @@ class EgressDB:
         row = cur.fetchone()
         return row[0] if row else 0
 
+    @_locked
     def count_egressed_runs(
             self, rungroup_id: int,
     ) -> int:
@@ -322,6 +363,7 @@ class EgressDB:
     # Dollop recovery
     # ----------------------------------------------------------
 
+    @_locked
     def insert_dollop_recovery(
             self, rungroup_id: int,
             rungroup_dir_path: str,
@@ -335,6 +377,7 @@ class EgressDB:
                 (rungroup_id, rungroup_dir_path),
             )
 
+    @_locked
     def get_dollop_recovery_rg(
             self,
     ) -> tuple[int, int, str] | None:
@@ -351,6 +394,7 @@ class EgressDB:
         row = cur.fetchone()
         return tuple(row) if row else None  # type: ignore
 
+    @_locked
     def delete_dollop_recovery_rg(
             self, rungroup_dir_path: str,
     ) -> None:
@@ -362,6 +406,7 @@ class EgressDB:
                 (rungroup_dir_path,),
             )
 
+    @_locked
     def insert_dollop_recovery_run(
             self, *,
             run_id: int,
@@ -380,6 +425,7 @@ class EgressDB:
                 ),
             )
 
+    @_locked
     def get_dollop_recovery_run(
             self,
     ) -> tuple[int, int, str, str] | None:
@@ -398,6 +444,7 @@ class EgressDB:
         row = cur.fetchone()
         return tuple(row) if row else None  # type: ignore
 
+    @_locked
     def delete_dollop_recovery_run(
             self, run_id: int,
     ) -> None:
@@ -413,6 +460,7 @@ class EgressDB:
     # S3 deletion tracking
     # ----------------------------------------------------------
 
+    @_locked
     def insert_s3_deletion(
             self, *,
             egress_ts_str: str,
@@ -450,6 +498,7 @@ class EgressDB:
     # listing / summary
     # ----------------------------------------------------------
 
+    @_locked
     def get_all_uuids(self) -> set[str]:
         '''Return the set of all run UUIDs in the table.
 
@@ -465,6 +514,7 @@ class EgressDB:
         )
         return {row[0] for row in cur.fetchall()}
 
+    @_locked
     def get_all_runs(self) -> list[EgressTuple]:
         '''Return all runs ordered newest first.
 
@@ -482,6 +532,7 @@ class EgressDB:
             EgressTuple(*row) for row in cur.fetchall()
         ]
 
+    @_locked
     def clear_all(self) -> int:
         '''Mark all rows as egressed so the startup scan
         does not re-queue them.
@@ -496,6 +547,7 @@ class EgressDB:
         self.con.commit()
         return cur.rowcount
 
+    @_locked
     def clear_egressed(self) -> int:
         '''Delete only successfully uploaded runs.
 
@@ -509,6 +561,7 @@ class EgressDB:
         self.con.commit()
         return cur.rowcount
 
+    @_locked
     def get_summary(self) -> dict[str, int]:
         '''Return aggregate egress counts.
 
@@ -546,6 +599,7 @@ class EgressDB:
     # helpers
     # ----------------------------------------------------------
 
+    @_locked
     def _get_by_uuid(
             self, run_uuid: str,
     ) -> EgressTuple | None:

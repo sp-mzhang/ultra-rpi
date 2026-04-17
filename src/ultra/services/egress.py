@@ -17,6 +17,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -122,6 +123,17 @@ class EgressService:
         self._num_egressed = 0
         self._num_errors = 0
         self._hb_ts: float = 0.0
+
+        # Dedicated worker thread for the egress tick.  Using
+        # max_workers=1 keeps egress sequential (one upload at
+        # a time, same as today) while moving every blocking
+        # call (S3 upload, Dollop HTTP, rmtree, DB writes) off
+        # the asyncio event loop so the GUI / state machine /
+        # protocol trigger stay responsive during uploads.
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix='egress',
+        )
 
         self._event_bus.on(
             'protocol_done', self._on_protocol_done,
@@ -233,16 +245,29 @@ class EgressService:
     # ----------------------------------------------------------
 
     async def start(self) -> None:
-        '''Run the egress loop forever.'''
+        '''Run the egress loop forever.
+
+        Each iteration dispatches the (blocking) tick body to
+        the dedicated egress worker thread via ``run_in_executor``
+        so the asyncio event loop stays responsive even while a
+        multi-minute S3 upload is in flight.
+        '''
         LOG.info('EgressService starting')
         self._scan_existing_runs()
         await asyncio.sleep(0.5)
+        loop = asyncio.get_running_loop()
         while True:
             try:
-                await self._tick()
+                await loop.run_in_executor(
+                    self._executor, self._tick_sync,
+                )
             except Exception:
                 LOG.exception('Egress tick error')
             await asyncio.sleep(self._loop_sleep_s)
+
+    def shutdown(self) -> None:
+        '''Shut down the egress worker thread.'''
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     # ----------------------------------------------------------
     # event handler
@@ -311,7 +336,16 @@ class EgressService:
             },
         )
 
-    async def _tick(self) -> None:
+    def _tick_sync(self) -> None:
+        '''One iteration of the egress loop.
+
+        Runs entirely on the egress worker thread.  All DB,
+        S3, Dollop, and filesystem calls are synchronous and
+        may block for many seconds (S3) or minutes (large
+        runs).  ``event_bus.emit_sync`` is thread-safe via
+        ``call_soon_threadsafe`` so events still reach the
+        loop-thread WebSocket handlers.
+        '''
         self._heartbeat()
 
         run_tup = self._db.get_unegressed_run(
