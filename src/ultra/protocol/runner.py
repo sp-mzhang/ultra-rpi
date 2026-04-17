@@ -542,12 +542,33 @@ class ProtocolRunner:
         run_id = rdt.run_id
         if run_id == -1:
             try:
+                from ultra.services import (
+                    s3_upload as _s3u,
+                )
+                egress_cfg = self._config.get('egress', {})
+                s3_bucket = egress_cfg.get(
+                    's3_bucket', _s3u.DEFAULT_BUCKET,
+                )
+                device_sn = self._config.get(
+                    'device_sn',
+                    egress_cfg.get(
+                        'device_sn', 'ultra-001',
+                    ),
+                )
+                remote_url = _s3u.compute_run_s3_url(
+                    rdt.run_dir_path,
+                    bucket=s3_bucket,
+                    device_sn=device_sn,
+                )
                 run_dict = dollop.read_run_json(
                     rdt.run_dir_path,
                 )
                 run_dict['rungroup_id'] = rg_id
                 run_dict['local_directory_path'] = (
                     rdt.run_dir_path
+                )
+                run_dict['remote_directory_path'] = (
+                    remote_url
                 )
                 run_id = dollop.create_run(
                     run_dict,
@@ -566,6 +587,7 @@ class ProtocolRunner:
                 )
                 self._update_run_json_id(
                     rdt.run_dir_path, run_id, rg_id,
+                    remote_url=remote_url,
                 )
             else:
                 LOG.warning(
@@ -601,6 +623,7 @@ class ProtocolRunner:
     @staticmethod
     def _update_run_json_id(
             run_dir: str, run_id: int, rg_id: int,
+            remote_url: str = '',
     ) -> None:
         '''Patch run.json with Dollop-assigned IDs.
 
@@ -608,6 +631,10 @@ class ProtocolRunner:
             run_dir: Path to the run directory.
             run_id: Dollop-assigned Run ID.
             rg_id: Dollop-assigned RunGroup ID.
+            remote_url: Prospective S3 URL for the run zip.
+                Written to ``remote_directory_path`` so Dollop's
+                analysis helper can resolve files via
+                ``run['remote_directory_path']``.
         '''
         import json
         fp = os.path.join(run_dir, 'run.json')
@@ -616,6 +643,8 @@ class ProtocolRunner:
                 d = json.load(fh)
             d['run_id'] = run_id
             d['rungroup_id'] = rg_id
+            if remote_url:
+                d['remote_directory_path'] = remote_url
             with open(fp, 'w') as fh:
                 json.dump(
                     d, fh, sort_keys=True, indent=2,

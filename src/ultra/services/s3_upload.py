@@ -50,6 +50,41 @@ def _sanitize_path(path: str) -> str:
     return '/'.join(_sanitize(p) for p in parts if p)
 
 
+def compute_run_s3_url(
+        run_dir_path: str,
+        bucket: str = DEFAULT_BUCKET,
+        device_sn: str = 'ultra-unknown',
+) -> str:
+    '''Compute the prospective ``s3://`` URL for a run zip.
+
+    The Dollop analysis pipeline reads
+    ``run['remote_directory_path']`` to locate the zip on S3
+    (see ``AnalysisHelper.fetch_run_file`` in analysis-model-
+    store). Sway sets this at Run-creation time by computing
+    the deterministic S3 key in advance. We do the same here
+    so Dollop can resolve ``run.json`` et al. even before the
+    egress service finishes uploading.
+
+    The key layout matches ``S3Uploader.upload_run_zip``::
+
+        Device/{device_sn}/{rg_name}/{run_name}.zip
+
+    Args:
+        run_dir_path: Absolute path to the run directory.
+        bucket: Target S3 bucket.
+        device_sn: Device serial number for the key prefix.
+
+    Returns:
+        ``s3://{bucket}/Device/{device_sn}/{rg}/{run}.zip``.
+    '''
+    rg_dir = op.dirname(run_dir_path)
+    trim_dir = op.dirname(rg_dir)
+    rel = op.relpath(run_dir_path, trim_dir)
+    s3_rel = _sanitize_path(rel)
+    s3_key = f'Device/{device_sn}/{s3_rel}.zip'
+    return f's3://{bucket}/{s3_key}'
+
+
 def zip_directory(
         dir_path: str,
         zip_path: str,
@@ -162,6 +197,20 @@ class S3Uploader:
                 max_bandwidth=self.max_bandwidth_bps,
             )
         return self._transfer_cfg
+
+    def get_run_s3_url(self, run_dir_path: str) -> str:
+        '''Return the prospective ``s3://`` URL for a run zip.
+
+        Uses this uploader's configured ``bucket`` and
+        ``device_sn``-based prefix so the result matches
+        whatever ``upload_run_zip`` will produce.
+        '''
+        device_sn = self.prefix.split('/', 1)[-1]
+        return compute_run_s3_url(
+            run_dir_path,
+            bucket=self.bucket,
+            device_sn=device_sn,
+        )
 
     def upload_run_zip(
             self,

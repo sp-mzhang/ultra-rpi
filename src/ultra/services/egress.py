@@ -492,6 +492,28 @@ class EgressService:
         ts = edb.get_current_ts_str()
 
         if ok and zip_path:
+            # Make sure Dollop knows the S3 location of the zip
+            # so analysis notebooks can resolve files via
+            # ``run['remote_directory_path']``.  Safe to run
+            # every time -- sets the field on the Run row and
+            # records uploaded_at timestamp in one call.
+            remote_url = self._s3.get_run_s3_url(
+                tup.run_dir_path,
+            )
+            try:
+                dollop.update_run(
+                    tup.run_id,
+                    {
+                        'remote_directory_path': remote_url,
+                        'uploaded_at': ts,
+                    },
+                )
+            except Exception as exc:
+                LOG.warning(
+                    'Dollop update_run failed for %s: %s',
+                    tup.run_uuid[:8], exc,
+                )
+
             self._db.insert_s3_deletion(
                 egress_ts_str=ts,
                 run_dir_path=tup.run_dir_path,
@@ -556,6 +578,9 @@ class EgressService:
                 tup.run_dir_path
             )
             run_dict['rungroup_id'] = rg_id
+            run_dict['remote_directory_path'] = (
+                self._s3.get_run_s3_url(tup.run_dir_path)
+            )
 
             run_id = dollop.create_run(
                 run_dict,
