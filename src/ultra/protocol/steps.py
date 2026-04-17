@@ -634,12 +634,61 @@ class MoveToLocationStep(StepExecutor):
         return True
 
 
+def _tip_swap_cfg(params: dict, runner: Any) -> dict:
+    '''Build the motion-override kwargs for gantry_tip_swap.
+
+    Resolution order (first non-None wins):
+      1. Per-step ``params`` override in the recipe step
+         (``pick_depth_mm``, ``retract_mm``, ``x_eject_mm``,
+         ``xy_speed_mms``, ``z_speed_mms``).
+      2. App config ``gantry.tip_swap.*`` (set in
+         ``config/ultra_default.yaml``).
+      3. Firmware default (0 / firmware constant).
+
+    Returns a dict ready to merge into the ``gantry_tip_swap``
+    command payload with keys ``pick_depth_um``, ``retract_um``,
+    ``x_eject_um``, ``xy_speed_01mms``, ``z_speed_01mms``.
+    '''
+    cfg = runner.config.get('gantry', {}).get('tip_swap', {})
+
+    def _pick(key_mm: str, cfg_key: str) -> float | None:
+        if key_mm in params:
+            return float(params[key_mm])
+        if cfg_key in cfg:
+            return float(cfg[cfg_key])
+        return None
+
+    out: dict = {}
+    pd = _pick('pick_depth_mm', 'pick_depth_mm')
+    if pd is not None:
+        out['pick_depth_um'] = int(round(pd * 1000.0))
+    rt = _pick('retract_mm', 'retract_mm')
+    if rt is not None:
+        out['retract_um'] = int(round(rt * 1000.0))
+    xe = _pick('x_eject_mm', 'x_eject_mm')
+    if xe is not None:
+        out['x_eject_um'] = int(round(xe * 1000.0))
+    xy = _pick('xy_speed_mms', 'xy_speed_mms')
+    if xy is not None:
+        out['xy_speed_01mms'] = int(round(xy * 10.0))
+    zs = _pick('z_speed_mms', 'z_speed_mms')
+    if zs is not None:
+        out['z_speed_01mms'] = int(round(zs * 10.0))
+    return out
+
+
 @step_type('tip_pick')
 class TipPickStep(StepExecutor):
     '''Pick up a tip via gantry_tip_swap from_id=0.
 
     Sway uses gantry_tip_swap for all tip operations,
     not the raw tip_pickup command.
+
+    Z pickup depth, retract, X-eject offset and XY/Z speeds
+    default to firmware values but can be overridden via
+    ``config.gantry.tip_swap.*`` (applies to every tip op)
+    or per-step ``pick_depth_mm`` / ``retract_mm`` etc. in
+    the recipe.
     '''
 
     def execute(self, params, runner) -> bool:
@@ -649,6 +698,7 @@ class TipPickStep(StepExecutor):
                 'cmd': 'gantry_tip_swap',
                 'from_id': 0,
                 'to_id': tip_id,
+                **_tip_swap_cfg(params, runner),
             },
             timeout_s=120.0,
         )
@@ -669,6 +719,7 @@ class TipSwapStep(StepExecutor):
                 'cmd': 'gantry_tip_swap',
                 'from_id': from_id,
                 'to_id': to_id,
+                **_tip_swap_cfg(params, runner),
             },
             timeout_s=120.0,
         )
@@ -688,6 +739,7 @@ class TipReturnStep(StepExecutor):
                 'cmd': 'gantry_tip_swap',
                 'from_id': tip_id,
                 'to_id': 0,
+                **_tip_swap_cfg(params, runner),
             },
             timeout_s=120.0,
         )

@@ -931,6 +931,17 @@ class STM32Interface:
                 seq=seq,
                 from_id=int(cmd.get('from_id', 0)),
                 to_id=int(cmd.get('to_id', 0)),
+                x_eject_um=int(cmd.get('x_eject_um', 0)),
+                pick_depth_um=int(
+                    cmd.get('pick_depth_um', 0),
+                ),
+                retract_um=int(cmd.get('retract_um', 0)),
+                xy_speed_01mms=int(
+                    cmd.get('xy_speed_01mms', 250),
+                ),
+                z_speed_01mms=int(
+                    cmd.get('z_speed_01mms', 60),
+                ),
             )
         if cmd_name == 'lid_move':
             return fp.pack_lid_move(

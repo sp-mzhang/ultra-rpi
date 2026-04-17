@@ -21,6 +21,28 @@ reader:
   # Set to 0 to disable auto-recovery.
   recover_after_empty_blocks: 3
 
+# Gantry motion defaults (override firmware constants).
+# Each field can also be overridden per-step in a recipe by
+# setting the same key (e.g. ``pick_depth_mm: -24.0``) on a
+# ``tip_pick`` / ``tip_swap`` / ``tip_return`` step.
+gantry:
+  tip_swap:
+    # Absolute gantry Z target during tip pickup, in mm from
+    # home (negative = down). Firmware default: -22.0 mm.
+    pick_depth_mm: -23.0
+    # Upward retract after pickup, in mm.
+    # Firmware default: 2.0 mm.
+    retract_mm: 2.0
+    # +X seat offset from slot centre during eject, in mm.
+    # Firmware default: 7.5 mm.
+    x_eject_mm: 7.5
+    # XY cruise speed during tip swap, in mm/s.
+    # Firmware default: 25.0 mm/s.
+    xy_speed_mms: 25.0
+    # Z cruise speed during tip swap, in mm/s.
+    # Firmware default: 6.0 mm/s.
+    z_speed_mms: 6.0
+
 # Per-unit calibration (editable in full machine_settings.yaml on S3).
 calibration:
   loc_offset_x_um: 0

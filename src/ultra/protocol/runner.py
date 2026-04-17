@@ -113,6 +113,16 @@ class ProtocolRunner:
         return self._config
 
     @property
+    def config(self) -> dict[str, Any]:
+        '''Active (recipe-merged) application config.
+
+        Exposed for step executors that need app-level values
+        (e.g. ``gantry.tip_swap.pick_depth_mm``) that do not
+        belong in recipe constants.
+        '''
+        return self._active_config()
+
+    @property
     def is_running(self) -> bool:
         '''Whether a protocol is currently executing.'''
         return self._running
