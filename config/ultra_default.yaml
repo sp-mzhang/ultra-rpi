@@ -12,6 +12,14 @@ stm32:
 reader:
   port: auto
   dollop_name: reader7
+  # Number of consecutive "No TLV data captured" blocks
+  # that trigger a hard reconnect of the PProc reader
+  # (stop_stream -> disconnect -> reopen). The PProc
+  # occasionally gets into a state where it still ACKs the
+  # "start" command but emits no bytes; re-opening the
+  # CDC-ACM device is the only reliable recovery.
+  # Set to 0 to disable auto-recovery.
+  recover_after_empty_blocks: 3
 
 # Per-unit calibration (editable in full machine_settings.yaml on S3).
 calibration:

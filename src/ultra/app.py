@@ -347,9 +347,13 @@ class Application:
                 from ultra.reader.pipeline import (
                     ReaderPipeline,
                 )
+                reader_cfg = self.config.get('reader', {})
                 acquisition = AcquisitionService(
                     reader=self._reader,
                     event_bus=self.event_bus,
+                    recover_after_empty=reader_cfg.get(
+                        'recover_after_empty_blocks', 3,
+                    ),
                 )
                 pipeline = ReaderPipeline(
                     self.event_bus,

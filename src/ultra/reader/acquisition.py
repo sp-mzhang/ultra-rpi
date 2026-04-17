@@ -26,6 +26,18 @@ CAPTURE_SLEEP_S = 0.003
 BONUS_TIME_S = 1.2
 INTER_BLOCK_SLEEP_S = 0.001
 
+# Reader auto-recovery defaults.
+#
+# The PProc MCU occasionally goes into a state where it still
+# ACKs ``start`` / ``stop`` control commands but stops emitting
+# TLV bytes on the data endpoint (CDC-ACM DMA/buffer stall).
+# When that happens ``start_stream`` returns True but
+# ``read_bytes`` always returns b''. Re-opening the USB serial
+# device is the only reliable recovery.
+DEFAULT_RECOVER_AFTER_EMPTY = 3
+RECOVER_COOLDOWN_S = 1.0
+RECOVER_BACKOFF_S = 5.0
+
 BYTES_PER_SEC_TABLE = {
     1: 272_756, 2: 545_116, 3: 817_436,
     4: 1_089_796, 5: 1_362_136, 6: 1_634_486,
@@ -52,6 +64,7 @@ class AcquisitionService:
             reader: Any,
             event_bus: EventBus,
             output_dir: str = '/tmp/ultra-tlv',
+            recover_after_empty: int = DEFAULT_RECOVER_AFTER_EMPTY,
     ) -> None:
         '''Initialize the acquisition service.
 
@@ -59,11 +72,19 @@ class AcquisitionService:
             reader: ReaderInterface or ReaderMock.
             event_bus: Application event bus.
             output_dir: Directory for raw TLV block files.
+            recover_after_empty: Trigger a reader reconnect
+                after this many consecutive empty captures.
+                Set to 0 to disable auto-recovery.
         '''
         self._reader = reader
         self._event_bus = event_bus
         self._output_dir = output_dir
         self._block_counter = -1
+        self._recover_after_empty = max(
+            0, int(recover_after_empty),
+        )
+        self._empty_streak = 0
+        self._recover_attempts = 0
         os.makedirs(output_dir, exist_ok=True)
 
     def stop(self) -> None:
@@ -79,6 +100,118 @@ class AcquisitionService:
         except Exception as exc:
             LOG.warning(
                 'Error stopping reader stream: %s', exc,
+            )
+
+    def _note_empty_block(self, reason: str) -> None:
+        '''Record a failed/empty capture and recover if needed.
+
+        Called whenever ``capture_block`` returns ``None``
+        (either because ``start_stream`` never ACKed or
+        because zero TLV bytes arrived during the capture
+        window). Once ``recover_after_empty`` consecutive
+        empties have been seen, attempts a hard reconnect of
+        the underlying reader.
+
+        Args:
+            reason: Short tag describing the failure for
+                logging (``start_stream_failed`` or
+                ``no_bytes``).
+        '''
+        self._empty_streak += 1
+        if self._empty_streak == 1:
+            self._event_bus.emit_sync(
+                'reader_status',
+                {
+                    'status': 'empty',
+                    'reason': reason,
+                    'empty_streak': self._empty_streak,
+                },
+            )
+        if (
+            self._recover_after_empty > 0
+            and self._empty_streak
+            >= self._recover_after_empty
+        ):
+            self._recover_reader(reason=reason)
+
+    def _recover_reader(self, reason: str) -> None:
+        '''Hard-reconnect the reader serial port.
+
+        Called after ``recover_after_empty`` consecutive empty
+        captures. Performs ``stop_stream`` → ``disconnect`` →
+        sleep → ``connect`` on the underlying reader. The
+        ``ReaderInterface`` auto-detects its port on each
+        ``connect`` call, so this handles both a re-enumerated
+        ttyACM device and a stuck DMA buffer on the MCU.
+
+        Backs off progressively on repeated failures so a
+        fully unplugged reader does not spam reconnect
+        attempts.
+
+        Safe to call with either the real ``ReaderInterface``
+        or the mock reader: the mock's ``connect`` always
+        returns True and has no side effects.
+        '''
+        self._recover_attempts += 1
+        attempt = self._recover_attempts
+        LOG.warning(
+            'Reader stalled (%s); reconnecting '
+            '[attempt %d, streak=%d]',
+            reason, attempt, self._empty_streak,
+        )
+        self._event_bus.emit_sync(
+            'reader_status',
+            {
+                'status': 'reconnecting',
+                'attempt': attempt,
+                'reason': reason,
+            },
+        )
+        try:
+            self._reader.stop_stream()
+        except Exception as exc:
+            LOG.debug('stop_stream during recovery: %s', exc)
+        try:
+            self._reader.disconnect()
+        except Exception as exc:
+            LOG.debug('disconnect during recovery: %s', exc)
+
+        backoff = min(
+            RECOVER_COOLDOWN_S * attempt,
+            RECOVER_BACKOFF_S,
+        )
+        time.sleep(backoff)
+
+        try:
+            ok = bool(self._reader.connect())
+        except Exception as exc:
+            LOG.warning(
+                'Reader reconnect raised: %s', exc,
+            )
+            ok = False
+
+        if ok:
+            LOG.info(
+                'Reader reconnected after %d attempt(s)',
+                attempt,
+            )
+            # Reset the streak so the next capture gets a
+            # fresh chance; ``_recover_attempts`` is only
+            # cleared once a capture actually produces
+            # bytes (see capture_block).
+            self._empty_streak = 0
+        else:
+            LOG.warning(
+                'Reader reconnect failed (attempt %d); '
+                'will retry on next empty block',
+                attempt,
+            )
+            self._event_bus.emit_sync(
+                'reader_status',
+                {
+                    'status': 'reconnect_failed',
+                    'attempt': attempt,
+                },
             )
 
     def set_output_dir(self, path: str) -> None:
@@ -124,6 +257,7 @@ class AcquisitionService:
 
         if not self._reader.start_stream(acq_seconds):
             LOG.error('Failed to start reader stream')
+            self._note_empty_block(reason='start_stream_failed')
             return None
 
         start_time = time.time()
@@ -148,12 +282,33 @@ class AcquisitionService:
 
         if total_bytes == 0:
             LOG.warning('No TLV data captured')
+            self._note_empty_block(reason='no_bytes')
             return None
 
         end_time = time.time()
         duration = end_time - start_time
         self._block_counter += 1
         bc = self._block_counter
+
+        if self._empty_streak > 0 or self._recover_attempts > 0:
+            LOG.info(
+                'Reader recovered: %d byte block after '
+                '%d empty capture(s) / %d reconnect(s)',
+                total_bytes, self._empty_streak,
+                self._recover_attempts,
+            )
+            self._event_bus.emit_sync(
+                'reader_status',
+                {
+                    'status': 'recovered',
+                    'empty_streak': self._empty_streak,
+                    'reconnect_attempts': (
+                        self._recover_attempts
+                    ),
+                },
+            )
+        self._empty_streak = 0
+        self._recover_attempts = 0
 
         tlv_path = os.path.join(
             self._output_dir,
