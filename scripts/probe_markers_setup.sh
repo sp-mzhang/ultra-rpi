@@ -20,16 +20,49 @@ VENV_DIR="$PROJECT_DIR/.venv"
 echo "==> probe_markers_setup: installing libdmtx + python deps"
 
 # ---- system packages (libdmtx native lib + dmtxread CLI) ----
+# Package names changed in Debian Trixie (t64 transition):
+#   libdmtx0b      -> libdmtx0t64
+#   libdmtx-utils  -> dmtx-utils
+# Pick whichever the local apt cache knows about.
 if command -v apt-get >/dev/null 2>&1; then
     if [ "$(id -u)" -ne 0 ]; then
         SUDO="sudo"
     else
         SUDO=""
     fi
-    echo "  - apt: libdmtx0b libdmtx-utils python3-opencv"
+
     $SUDO apt-get update -qq
-    $SUDO apt-get install -y --no-install-recommends \
-        libdmtx0b libdmtx-utils python3-opencv
+
+    apt_pick() {
+        # echoes the first package name from "$@" that apt knows about,
+        # or empty if none are available
+        for pkg in "$@"; do
+            if apt-cache show "$pkg" >/dev/null 2>&1; then
+                echo "$pkg"
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    LIBDMTX_PKG="$(apt_pick libdmtx0t64 libdmtx0b || true)"
+    DMTX_UTILS_PKG="$(apt_pick dmtx-utils libdmtx-utils || true)"
+
+    APT_PKGS=()
+    [ -n "$LIBDMTX_PKG" ]     && APT_PKGS+=("$LIBDMTX_PKG")
+    [ -n "$DMTX_UTILS_PKG" ]  && APT_PKGS+=("$DMTX_UTILS_PKG")
+    APT_PKGS+=(python3-opencv)
+
+    if [ -z "$LIBDMTX_PKG" ]; then
+        echo "  ! could not find libdmtx0* in apt cache -- pylibdmtx will fail to load"
+    fi
+    if [ -z "$DMTX_UTILS_PKG" ]; then
+        echo "  ! could not find dmtx-utils / libdmtx-utils -- 'dmtxread' CLI will be missing"
+        echo "    (not required for the live stream script, only for offline JPG decode)"
+    fi
+
+    echo "  - apt: ${APT_PKGS[*]}"
+    $SUDO apt-get install -y --no-install-recommends "${APT_PKGS[@]}"
 else
     echo "  ! apt-get not found -- skipping system packages"
     echo "    install libdmtx + dmtxread manually for your distro"
