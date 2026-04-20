@@ -47,7 +47,10 @@ import io
 import logging
 import math
 import os
+import re
+import signal
 import socketserver
+import subprocess
 import sys
 import threading
 import time
@@ -97,14 +100,102 @@ def _grab_devices() -> list[str]:
     return sorted(glob.glob('/dev/video[0-9]*'))
 
 
+_VIDEO_PATH_RE = re.compile(r'^/dev/video(\d+)$')
+
+
+def _device_to_cv_index(device: str | int) -> int | str:
+    """OpenCV's V4L2 backend wants an integer index, not a path
+    ('/dev/video0' triggers the warning "backend is generally
+    available but can't be used to capture by name"). Convert
+    /dev/videoN -> N. Pure numeric strings ('0') -> int. Anything
+    else is returned as-is so non-V4L2 backends still work."""
+    if isinstance(device, int):
+        return device
+    s = str(device)
+    if s.isdigit():
+        return int(s)
+    m = _VIDEO_PATH_RE.match(s)
+    if m:
+        return int(m.group(1))
+    return s
+
+
+def _device_path(device: str | int) -> str:
+    """Inverse of _device_to_cv_index, used for `fuser` / log lines."""
+    if isinstance(device, int):
+        return f'/dev/video{device}'
+    s = str(device)
+    if s.isdigit():
+        return f'/dev/video{s}'
+    return s
+
+
+def _device_holders(device: str) -> list[tuple[int, str]]:
+    """Return [(pid, comm), ...] of processes currently holding
+    the given /dev/video* node. Empty list if free or fuser is not
+    available."""
+    if not device.startswith('/dev/'):
+        return []
+    try:
+        out = subprocess.run(
+            ['fuser', device],
+            capture_output=True, text=True, timeout=2,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return []
+    pids = [
+        int(p) for p in (out.stdout + ' ' + out.stderr).split()
+        if p.isdigit()
+    ]
+    if not pids:
+        return []
+    holders: list[tuple[int, str]] = []
+    for pid in pids:
+        try:
+            comm = Path(f'/proc/{pid}/comm').read_text().strip()
+        except OSError:
+            comm = '?'
+        holders.append((pid, comm))
+    return holders
+
+
+def _release_device(
+    device: str, holders: list[tuple[int, str]],
+) -> None:
+    """SIGTERM, then SIGKILL if needed, every process holding
+    the device. Caller is responsible for the wait + retry."""
+    for pid, comm in holders:
+        LOG.warning(
+            'sending SIGTERM to pid %d (%s) holding %s',
+            pid, comm, device,
+        )
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError as e:
+            LOG.warning('  SIGTERM failed: %s', e)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        time.sleep(0.2)
+        if not _device_holders(device):
+            return
+    for pid, _ in _device_holders(device):
+        LOG.warning('  pid %d still holding -- SIGKILL', pid)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError as e:
+            LOG.warning('  SIGKILL failed: %s', e)
+    time.sleep(0.3)
+
+
 def _try_open_one(
     device: str | int, width: int, height: int,
 ) -> cv2.VideoCapture | None:
     """Open exactly one V4L2 node. Returns the opened cap on
     success, None otherwise. Uses short timeouts so a non-capture
-    node (metadata / M2M) fails in ~1.5s instead of hanging 10s
-    in select()."""
-    cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
+    node (metadata / M2M) fails fast instead of hanging 10s in
+    select()."""
+    cv_target = _device_to_cv_index(device)
+    cap = cv2.VideoCapture(cv_target, cv2.CAP_V4L2)
     if not cap.isOpened():
         return None
     # OpenCV >=4.x: cap a slow device to <2s instead of 10s default.
@@ -130,27 +221,47 @@ def _try_open_one(
     actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     LOG.info(
-        'Camera open: %s @ %dx%d', device, actual_w, actual_h,
+        'Camera open: %s (cv_idx=%r) @ %dx%d',
+        _device_path(device), cv_target, actual_w, actual_h,
     )
     return cap
 
 
 def _open_camera(
-    device: str, width: int, height: int, scan: bool = False,
+    device: str,
+    width: int,
+    height: int,
+    scan: bool = False,
+    release: bool = False,
 ) -> cv2.VideoCapture | None:
     """Open the requested V4L2 device. Only falls back to scanning
     every /dev/videoN when scan=True; otherwise an explicit
     --device that fails returns None immediately so the caller can
     print a clear error instead of silently iterating through 24
-    metadata nodes."""
-    try:
-        primary: str | int = (
-            int(device) if str(device).isdigit() else device
-        )
-    except (TypeError, ValueError):
-        primary = device
+    metadata nodes.
 
-    cap = _try_open_one(primary, width, height)
+    If `release` is True and another process is holding the device,
+    SIGTERM/SIGKILL it first so we can take over.
+    """
+    primary_path = _device_path(device)
+    holders = _device_holders(primary_path)
+    if holders:
+        descr = ', '.join(f'{c}({p})' for p, c in holders)
+        if release:
+            LOG.warning(
+                '%s is held by %s -- releasing (--release)',
+                primary_path, descr,
+            )
+            _release_device(primary_path, holders)
+        else:
+            LOG.error(
+                '%s is currently held by %s. '
+                'Re-run with --release to free it.',
+                primary_path, descr,
+            )
+            return None
+
+    cap = _try_open_one(device, width, height)
     if cap is not None:
         return cap
 
@@ -159,16 +270,16 @@ def _open_camera(
             'Could not open %s (not a capture node, busy, or '
             'wrong format). Re-run with --scan to auto-detect, '
             'or check `v4l2-ctl --list-devices`.',
-            device,
+            primary_path,
         )
         return None
 
     LOG.warning(
         '%s did not yield frames -- scanning all /dev/video* '
-        '(this can take a few seconds on RPi)', device,
+        '(this can take a few seconds on RPi)', primary_path,
     )
     for d in _grab_devices():
-        if d == primary:
+        if d == primary_path:
             continue
         cap = _try_open_one(d, width, height)
         if cap is not None:
@@ -353,6 +464,7 @@ class StreamWorker:
         decode_every: int,
         record_dir: Path | None,
         scan: bool = False,
+        release: bool = False,
     ) -> None:
         self.device = device
         self.width = width
@@ -360,6 +472,7 @@ class StreamWorker:
         self.decode_every = max(1, decode_every)
         self.record_dir = record_dir
         self.scan = scan
+        self.release = release
         if record_dir is not None:
             record_dir.mkdir(parents=True, exist_ok=True)
 
@@ -378,7 +491,8 @@ class StreamWorker:
 
     def start(self) -> bool:
         cap = _open_camera(
-            self.device, self.width, self.height, scan=self.scan,
+            self.device, self.width, self.height,
+            scan=self.scan, release=self.release,
         )
         if cap is None:
             LOG.error('Could not open any camera')
@@ -618,6 +732,13 @@ def main() -> int:
              'because libcamera registers ~24 video nodes)',
     )
     ap.add_argument(
+        '--release', action='store_true',
+        help='if another process is already holding the camera '
+             '(checked with `fuser`), SIGTERM/SIGKILL it before '
+             'opening. Useful when a previous probe_stream did '
+             'not exit cleanly.',
+    )
+    ap.add_argument(
         '--port', type=int, default=8765,
         help='HTTP port to serve MJPEG on (default 8765)',
     )
@@ -670,6 +791,7 @@ def main() -> int:
         decode_every=args.decode_every,
         record_dir=record_dir,
         scan=args.scan,
+        release=args.release,
     )
     if not worker.start():
         return 2
