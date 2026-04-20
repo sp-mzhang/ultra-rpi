@@ -233,6 +233,10 @@ RSP_ACCEL_STREAM          = 0x9E03
 
 # Temperature sensors — EXT_NTC1/2, INT_NTC (0x91xx)
 # Response wire ID = 0x9101 + 0x1000 = 0xA101 (not treated as async).
+# OTA firmware update (0x9Fxx) -- 0x9Fxx so responses (0xAFxx) dont collide with 0xA0xx async broadcasts
+CMD_FW_UPDATE_START       = 0x9F01
+CMD_FW_WRITE_BLOCK        = 0x9F02
+
 CMD_TEMP_GET_STATUS       = 0x9101
 RSP_TEMP_STATUS           = 0xA101
 
@@ -2565,13 +2569,3 @@ def unpack_msg_error(data: bytes) -> dict:
         'error_code': error_code,
         'message': msg,
     }
-
-# OTA firmware update (0x90xx)
-CMD_FW_UPDATE_START   = 0x9001
-CMD_FW_WRITE_BLOCK    = 0x9002
-
-def pack_fw_update_start(seq: int) -> bytes:
-    return struct.pack('<I', seq)
-
-def pack_fw_write_block(seq: int, offset: int, data: bytes) -> bytes:
-    return struct.pack('<II', seq, offset) + data
