@@ -92,16 +92,10 @@ LOG = logging.getLogger('probe_stream')
 DEFAULT_DECODE_EVERY = 3
 
 # pylibdmtx scan window (ms). Lower = faster, less robust.
-# 200ms was too short -- libdmtx returned a single noisy 1-char
-# false positive and quit. Give it ~1.2s budget per scan.
-DECODE_TIMEOUT_MS = 1200
-
-# Reject obvious noise / false positives:
-# - DataMatrix labels in our system are at least ~30 px wide on
-#   720p; tiny libdmtx hits on textured background are usually
-#   < 25 px and 1-2 char payloads.
-MIN_MARKER_PX = 30
-MIN_PAYLOAD_LEN = 2
+# Defaults; both can be overridden from the CLI.
+DEFAULT_DECODE_TIMEOUT_MS = 1200
+DEFAULT_MIN_MARKER_PX = 18
+DEFAULT_MIN_PAYLOAD_LEN = 2
 
 
 def _grab_devices() -> list[str]:
@@ -296,31 +290,31 @@ def _open_camera(
     return None
 
 
-def _decode_markers(frame_bgr: np.ndarray) -> list[dict]:
-    """Run pylibdmtx, return marker dicts (same shape as
-    probe_markers.py::decode_markers but with the y-flip
-    handled here so callers get image-coord corners).
+def _decode_markers(
+    frame_bgr: np.ndarray,
+    timeout_ms: int = DEFAULT_DECODE_TIMEOUT_MS,
+    min_marker_px: int = DEFAULT_MIN_MARKER_PX,
+    min_payload_len: int = DEFAULT_MIN_PAYLOAD_LEN,
+) -> tuple[list[dict], list[dict]]:
+    """Run pylibdmtx and return (kept, rejected) marker dicts.
 
-    Drops detections that look like libdmtx false positives
-    (very small bounding box or 1-char payload)."""
+    `rejected` contains everything libdmtx returned that we filtered
+    out (too small or payload too short). The streamer can draw
+    these in a different colour so we can tell whether libdmtx is
+    finding nothing vs finding noise we're throwing away."""
     h = frame_bgr.shape[0]
-    # libdmtx is faster on a single-channel image and less likely
-    # to lock onto colour-noise edges in textured regions.
-    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     raw = pylibdmtx.decode(
-        gray, max_count=8, timeout=DECODE_TIMEOUT_MS,
+        rgb, max_count=8, timeout=timeout_ms,
     )
-    out: list[dict] = []
+    kept: list[dict] = []
+    rejected: list[dict] = []
     for det in raw:
         r = det.rect
         left, bottom_from_bot, w, hh = (
             r.left, r.top, r.width, r.height,
         )
-        if w < MIN_MARKER_PX or hh < MIN_MARKER_PX:
-            continue
         payload = det.data.decode('utf-8', errors='replace')
-        if len(payload.strip()) < MIN_PAYLOAD_LEN:
-            continue
         top = h - bottom_from_bot - hh
         bl = (left, top + hh)
         br = (left + w, top + hh)
@@ -330,13 +324,24 @@ def _decode_markers(frame_bgr: np.ndarray) -> list[dict]:
         cy = (bl[1] + br[1] + tr[1] + tl[1]) / 4.0
         dx, dy = br[0] - bl[0], br[1] - bl[1]
         ori = math.degrees(math.atan2(dy, dx))
-        out.append({
+        marker = {
             'payload': payload,
             'corners_px': [bl, br, tr, tl],
             'center_px': (cx, cy),
             'orientation_deg': ori,
-        })
-    return out
+            'size_px': (w, hh),
+        }
+        if w < min_marker_px or hh < min_marker_px:
+            marker['reject_reason'] = f'size<{min_marker_px}px'
+            rejected.append(marker)
+        elif len(payload.strip()) < min_payload_len:
+            marker['reject_reason'] = (
+                f'payload<{min_payload_len}ch'
+            )
+            rejected.append(marker)
+        else:
+            kept.append(marker)
+    return kept, rejected
 
 
 def _wrap180(deg: float) -> float:
@@ -381,10 +386,37 @@ def _annotate(
     frame_no: int,
     decode_ms: float,
     decode_age: int,
+    rejected: list[dict] | None = None,
 ) -> np.ndarray:
-    """Draw HUD onto a copy of the frame and return it."""
+    """Draw HUD onto a copy of the frame and return it.
+
+    `rejected` (when supplied, e.g. via --debug-decode) is drawn
+    with a thin orange dashed-look outline so we can see what
+    libdmtx found but our filter dropped."""
     out = frame_bgr.copy()
     h, w = out.shape[:2]
+
+    if rejected:
+        for j, m in enumerate(rejected):
+            pts = np.array(
+                m['corners_px'], dtype=np.int32,
+            ).reshape(-1, 1, 2)
+            cv2.polylines(
+                out, [pts], isClosed=True,
+                color=(0, 140, 255), thickness=1,
+            )
+            cx, cy = m['center_px']
+            wpx, hpx = m.get('size_px', (0, 0))
+            label = (
+                f"x{j} {m['payload'][:8]} "
+                f"({wpx}x{hpx} {m.get('reject_reason', '')})"
+            )
+            cv2.putText(
+                out, label,
+                (int(cx) + 6, int(cy) + 14),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+                (0, 140, 255), 1, cv2.LINE_AA,
+            )
 
     for i, m in enumerate(markers):
         pts = np.array(
@@ -482,6 +514,10 @@ class StreamWorker:
         record_dir: Path | None,
         scan: bool = False,
         release: bool = False,
+        decode_timeout_ms: int = DEFAULT_DECODE_TIMEOUT_MS,
+        min_marker_px: int = DEFAULT_MIN_MARKER_PX,
+        min_payload_len: int = DEFAULT_MIN_PAYLOAD_LEN,
+        debug_decode: bool = False,
     ) -> None:
         self.device = device
         self.width = width
@@ -490,6 +526,10 @@ class StreamWorker:
         self.record_dir = record_dir
         self.scan = scan
         self.release = release
+        self.decode_timeout_ms = decode_timeout_ms
+        self.min_marker_px = min_marker_px
+        self.min_payload_len = min_payload_len
+        self.debug_decode = debug_decode
         if record_dir is not None:
             record_dir.mkdir(parents=True, exist_ok=True)
 
@@ -533,6 +573,7 @@ class StreamWorker:
     def _loop(self) -> None:
         frame_no = 0
         last_markers: list[dict] = []
+        last_rejected: list[dict] = []
         last_decode_at = 0
         last_decode_ms = 0.0
         last_record_sec = 0
@@ -549,16 +590,39 @@ class StreamWorker:
             )
             if do_decode:
                 t0 = time.monotonic()
-                last_markers = _decode_markers(frame)
+                last_markers, last_rejected = _decode_markers(
+                    frame,
+                    timeout_ms=self.decode_timeout_ms,
+                    min_marker_px=self.min_marker_px,
+                    min_payload_len=self.min_payload_len,
+                )
                 last_decode_ms = (
                     time.monotonic() - t0
                 ) * 1000.0
                 last_decode_at = frame_no
+                if self.debug_decode and (
+                    last_markers or last_rejected
+                ):
+                    LOG.info(
+                        'decode#%d: kept=%d rejected=%d (%s)',
+                        frame_no,
+                        len(last_markers),
+                        len(last_rejected),
+                        ', '.join(
+                            f"{m['payload'][:8]!r}"
+                            f"@{m['size_px'][0]}x{m['size_px'][1]}"
+                            f"[{m.get('reject_reason', 'kept')}]"
+                            for m in (last_markers + last_rejected)
+                        ),
+                    )
 
             carousel_deg = _fuse_carousel_angle(last_markers)
             annot = _annotate(
                 frame, last_markers, carousel_deg, frame_no,
                 last_decode_ms, frame_no - last_decode_at,
+                rejected=(
+                    last_rejected if self.debug_decode else None
+                ),
             )
             ok, buf = cv2.imencode(
                 '.jpg', annot,
@@ -756,6 +820,32 @@ def main() -> int:
              'not exit cleanly.',
     )
     ap.add_argument(
+        '--decode-timeout-ms', type=int,
+        default=DEFAULT_DECODE_TIMEOUT_MS,
+        help=f'pylibdmtx scan budget per frame '
+             f'(default {DEFAULT_DECODE_TIMEOUT_MS} ms). '
+             f'Raise if real markers are missed.',
+    )
+    ap.add_argument(
+        '--min-marker-px', type=int,
+        default=DEFAULT_MIN_MARKER_PX,
+        help=f'reject detections smaller than this on either '
+             f'edge (default {DEFAULT_MIN_MARKER_PX} px). '
+             f'Lower to accept smaller cassette codes; raise '
+             f'to drop tiny noise hits.',
+    )
+    ap.add_argument(
+        '--min-payload-len', type=int,
+        default=DEFAULT_MIN_PAYLOAD_LEN,
+        help=f'reject detections with payload shorter than this '
+             f'(default {DEFAULT_MIN_PAYLOAD_LEN}).',
+    )
+    ap.add_argument(
+        '--debug-decode', action='store_true',
+        help='log every libdmtx hit and draw rejected ones in '
+             'orange so you can see what the filter is dropping.',
+    )
+    ap.add_argument(
         '--port', type=int, default=8765,
         help='HTTP port to serve MJPEG on (default 8765)',
     )
@@ -809,6 +899,10 @@ def main() -> int:
         record_dir=record_dir,
         scan=args.scan,
         release=args.release,
+        decode_timeout_ms=args.decode_timeout_ms,
+        min_marker_px=args.min_marker_px,
+        min_payload_len=args.min_payload_len,
+        debug_decode=args.debug_decode,
     )
     if not worker.start():
         return 2
