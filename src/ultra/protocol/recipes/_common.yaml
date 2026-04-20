@@ -39,30 +39,20 @@ centrifuge_phase:
       label: Rotate to pipette position
 
 lock_phase:
-  # Explicit lock sequence (mirrors what firmware's packed
-  # centrifuge_lock payload defaults would have done):
-  #   1. raise lift to mid height (28.0 mm) under cartridge
-  #   2. rotate carousel to the locking angle (80 deg)
-  #      -- auto-derived as angle_open_initial_deg (290)
-  #         minus 210 in pack_centrifuge_sequence()
-  #   3. raise lift to high height (38.0 mm) to press collar
-  #   4. actuate the lock (rotate the lock dog)
-  #   5. home everything
+  # centrifuge_lock is a macro: firmware's run_lock() already
+  # executes the full 5-step lock (see centrifuge_service.c):
+  #   1. lift to LOCK_PRE_LIFT_MM (28.0 mm, hard-coded)
+  #   2. rotate to angle_lock_initial_deg
+  #      (auto = angle_open_initial_deg - 210 = 80 deg)
+  #   3. lift to lift_high_01mm / 10  (default 38.0 mm)
+  #   4. rotate to angle_lock_end_deg + angle_extra_deg
+  #      (auto = open_init - 180 + 15 = 125 deg)
+  #   5. lift home
+  # Listing those steps explicitly here caused them to run twice,
+  # so we just fire the macro and finish with home_all.
   steps:
-    - type: lift_move
-      label: Raise lift to 28 mm (pre-lock)
-      target_mm: 28.0
-
-    - type: centrifuge_rotate
-      label: Rotate to locking angle (80 deg)
-      angle_001deg: 8000
-
-    - type: lift_move
-      label: Raise lift to 38 mm (engage collar)
-      target_mm: 38.0
-
     - type: centrifuge_lock
-      label: Rotate lock actuator
+      label: Lock sequence (28 -> 80 deg -> 38 -> 125 deg -> home)
 
     - type: home_all
       label: Home all (final)
