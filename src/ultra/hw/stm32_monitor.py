@@ -5,7 +5,7 @@ over UART and dispatches the parsed 36-byte payload to
 registered handlers. Generalized from the old DoorMonitor to
 decode all status fields.
 
-The STM32 broadcasts MSG_STATUS every ~1 s via
+The STM32 broadcasts MSG_STATUS every 500 ms via
 Proto_SendResponse which adds 0x1000 to the command ID, so
 MSG_STATUS (0xA001) arrives on the wire as 0xB001.
 '''
