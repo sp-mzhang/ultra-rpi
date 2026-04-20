@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 '''Binary frame protocol for RPi to STM32 communication.
 
-Implements the SOH-framed binary protocol matching the firmware
-usart_frame.h/c. Frame format:
+HDLC-style framing matching the firmware `app_protocol.c`:
 
-  [SOH][CMD_LSB][CMD_MSB][LEN][DATA...][CRC_LSB][CRC_MSB]
+  [0x7E] [stuffed: CMD_LSB CMD_MSB DATA... CRC_LSB CRC_MSB] [0x7E]
 
+Byte stuffing rule (run over the bytes between the two Flags):
+  0x7E in payload -> 0x7D 0x5E on wire
+  0x7D in payload -> 0x7D 0x5D on wire
+
+Frame boundary is the Flag byte itself; no LEN field on the wire.
+CRC-16/CCITT-FALSE over Command + Data only.
 All multi-byte fields are little-endian.
-CRC-16/CCITT-FALSE over Command + Length + Data.
 '''
 
 import struct
@@ -16,8 +20,9 @@ import struct
 # Frame constants
 # =============================================================================
 
-SOH = 0x01
-FRAME_OVERHEAD = 6
+HDLC_FLAG    = 0x7E
+HDLC_ESCAPE  = 0x7D
+HDLC_XOR     = 0x20
 MAX_DATA_LEN = 255
 
 # =============================================================================
@@ -428,18 +433,35 @@ def crc16_ccitt(data: bytes) -> int:
 # Frame build / parse
 # =============================================================================
 
+def _hdlc_stuff(data: bytes) -> bytes:
+    '''Apply HDLC byte stuffing.
+
+    0x7E in payload -> 0x7D 0x5E on wire.
+    0x7D in payload -> 0x7D 0x5D on wire.
+    All other bytes pass through.
+    '''
+    out = bytearray()
+    for b in data:
+        if b == HDLC_FLAG or b == HDLC_ESCAPE:
+            out.append(HDLC_ESCAPE)
+            out.append(b ^ HDLC_XOR)
+        else:
+            out.append(b)
+    return bytes(out)
+
+
 def build_frame(
         command: int,
         data: bytes = b'',
 ) -> bytes:
-    '''Build a binary frame.
+    '''Build an HDLC-framed binary frame.
 
     Args:
         command: 16-bit command ID.
-        data: Payload bytes (0-255 bytes).
+        data: Payload bytes (0-255 bytes, unstuffed).
 
     Returns:
-        Complete frame bytes including SOH and CRC.
+        On-wire frame: 0x7E + stuffed(CMD+DATA+CRC) + 0x7E.
 
     Raises:
         ValueError: If data exceeds 255 bytes.
@@ -450,38 +472,32 @@ def build_frame(
         )
 
     cmd_bytes = struct.pack('<H', command)
-    length_byte = struct.pack('B', len(data))
-
-    crc_input = cmd_bytes + length_byte + data
-    crc = crc16_ccitt(crc_input)
+    # CRC-16/CCITT-FALSE over CMD + DATA (unstuffed).
+    crc = crc16_ccitt(cmd_bytes + data)
     crc_bytes = struct.pack('<H', crc)
 
-    return (
-        bytes([SOH])
-        + cmd_bytes
-        + length_byte
-        + data
-        + crc_bytes
-    )
+    unstuffed = cmd_bytes + data + crc_bytes
+    return bytes([HDLC_FLAG]) + _hdlc_stuff(unstuffed) + bytes([HDLC_FLAG])
 
 
 class FrameParser:
-    '''Byte-by-byte frame parser state machine.
+    '''HDLC-style byte-by-byte frame parser.
 
-    Feed bytes via feed(). When a complete CRC-valid frame
-    arrives, feed() returns a (command, data) tuple.
+    Feed bytes via feed(). When a closing Flag ends a valid
+    CRC-checked frame, feed() returns a (command, data) tuple.
     '''
+
+    _IDLE     = 0
+    _IN_FRAME = 1
+    _ESCAPE   = 2
 
     def __init__(self) -> None:
         self.reset()
 
     def reset(self) -> None:
-        '''Reset parser to wait-for-SOH state.'''
-        self._state = 0
-        self._command = 0
-        self._length = 0
-        self._data = bytearray()
-        self._crc_received = 0
+        '''Reset parser to idle (waiting for opening Flag).'''
+        self._state = self._IDLE
+        self._buf = bytearray()
 
     def feed(self, byte: int) -> tuple[int, bytes] | None:
         '''Feed one byte into the parser.
@@ -490,51 +506,55 @@ class FrameParser:
             byte: Received byte (0-255).
 
         Returns:
-            (command, data) tuple when a valid frame is
-            complete, or None if more bytes needed or frame
-            was invalid.
+            (command, data) tuple when a closing Flag completes a
+            CRC-valid frame. None otherwise (incomplete frame,
+            empty frame between back-to-back Flags, or bad CRC).
         '''
-        if self._state == 0:  # WAIT_SOH
-            if byte == SOH:
-                self._command = 0
-                self._length = 0
-                self._data = bytearray()
-                self._crc_received = 0
-                self._state = 1
-        elif self._state == 1:  # CMD_LSB
-            self._command = byte
-            self._state = 2
-        elif self._state == 2:  # CMD_MSB
-            self._command |= (byte << 8)
-            self._state = 3
-        elif self._state == 3:  # LENGTH
-            self._length = byte
-            if self._length > 0:
-                self._state = 4
-            else:
-                self._state = 5
-        elif self._state == 4:  # READ_DATA
-            self._data.append(byte)
-            if len(self._data) >= self._length:
-                self._state = 5
-        elif self._state == 5:  # CRC_LSB
-            self._crc_received = byte
-            self._state = 6
-        elif self._state == 6:  # CRC_MSB
-            self._crc_received |= (byte << 8)
-            self._state = 0
-
-            crc_input = (
-                struct.pack('<H', self._command)
-                + bytes([self._length])
-                + bytes(self._data)
-            )
-            crc_calc = crc16_ccitt(crc_input)
-
-            if crc_calc == self._crc_received:
-                return (self._command, bytes(self._data))
+        if self._state == self._IDLE:
+            if byte == HDLC_FLAG:
+                self._state = self._IN_FRAME
+                self._buf = bytearray()
             return None
 
+        if self._state == self._IN_FRAME:
+            if byte == HDLC_FLAG:
+                # Closing Flag — dispatch if the buffer parses cleanly.
+                result = self._complete_frame()
+                self._buf = bytearray()
+                # Stay IN_FRAME: the same Flag can open the next frame.
+                return result
+            if byte == HDLC_ESCAPE:
+                self._state = self._ESCAPE
+                return None
+            self._buf.append(byte)
+            return None
+
+        if self._state == self._ESCAPE:
+            # A Flag always wins — an orphan Escape doesn't poison the
+            # next frame. 7E inside ESCAPE is a frame boundary.
+            if byte == HDLC_FLAG:
+                result = self._complete_frame()
+                self._buf = bytearray()
+                self._state = self._IN_FRAME
+                return result
+            self._buf.append(byte ^ HDLC_XOR)
+            self._state = self._IN_FRAME
+            return None
+
+        self._state = self._IDLE
+        return None
+
+    def _complete_frame(self) -> tuple[int, bytes] | None:
+        n = len(self._buf)
+        # Minimum: CMD(2) + CRC(2).
+        if n < 4:
+            return None
+        command = self._buf[0] | (self._buf[1] << 8)
+        rcv_crc = self._buf[n - 2] | (self._buf[n - 1] << 8)
+        payload = bytes(self._buf[2:n - 2])
+        crc_calc = crc16_ccitt(bytes(self._buf[0:2]) + payload)
+        if crc_calc == rcv_crc:
+            return (command, payload)
         return None
 
 
