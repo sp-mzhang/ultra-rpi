@@ -68,17 +68,32 @@ else
     echo "    install libdmtx + dmtxread manually for your distro"
 fi
 
-# ---- python venv (reuse the project's if present) ----
-if [ -d "$VENV_DIR" ]; then
-    echo "  - using existing venv: $VENV_DIR"
-    PIP="$VENV_DIR/bin/pip"
-else
-    echo "  - using system python3 (--user)"
-    PIP="pip3 install --user"
-fi
+# ---- python deps (pylibdmtx, numpy) ----
+# Three install modes, in order of preference:
+#   1) uv sync  -- project uses uv; pylibdmtx is in pyproject.toml already
+#   2) <venv>/bin/python -m pip  -- venv exists but no `pip` script (uv venv)
+#   3) pip3 install --user  -- no venv at all
+PYDEPS=(pylibdmtx numpy)
 
-echo "  - pip: pylibdmtx numpy"
-$PIP install --quiet pylibdmtx numpy
+if command -v uv >/dev/null 2>&1 && [ -f "$PROJECT_DIR/pyproject.toml" ]; then
+    echo "  - uv sync  (pulls pylibdmtx from pyproject.toml)"
+    ( cd "$PROJECT_DIR" && uv sync --quiet )
+elif [ -d "$VENV_DIR" ]; then
+    VENV_PY="$VENV_DIR/bin/python"
+    if [ ! -x "$VENV_PY" ]; then
+        echo "  ! venv python not executable: $VENV_PY"
+        exit 1
+    fi
+    echo "  - venv python -m pip: ${PYDEPS[*]}"
+    if ! "$VENV_PY" -m pip --version >/dev/null 2>&1; then
+        echo "    (bootstrapping pip into venv via ensurepip)"
+        "$VENV_PY" -m ensurepip --upgrade >/dev/null
+    fi
+    "$VENV_PY" -m pip install --quiet "${PYDEPS[@]}"
+else
+    echo "  - pip3 install --user: ${PYDEPS[*]}"
+    pip3 install --user --quiet "${PYDEPS[@]}"
+fi
 
 echo
 echo "==> done. Try:"
