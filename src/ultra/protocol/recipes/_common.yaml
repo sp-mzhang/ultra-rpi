@@ -39,9 +39,30 @@ centrifuge_phase:
       label: Rotate to pipette position
 
 lock_phase:
+  # Explicit lock sequence (mirrors what firmware's packed
+  # centrifuge_lock payload defaults would have done):
+  #   1. raise lift to mid height (28.0 mm) under cartridge
+  #   2. rotate carousel to the locking angle (80 deg)
+  #      -- auto-derived as angle_open_initial_deg (290)
+  #         minus 210 in pack_centrifuge_sequence()
+  #   3. raise lift to high height (38.0 mm) to press collar
+  #   4. actuate the lock (rotate the lock dog)
+  #   5. home everything
   steps:
+    - type: lift_move
+      label: Raise lift to 28 mm (pre-lock)
+      target_mm: 28.0
+
+    - type: centrifuge_rotate
+      label: Rotate to locking angle (80 deg)
+      angle_001deg: 8000
+
+    - type: lift_move
+      label: Raise lift to 38 mm (engage collar)
+      target_mm: 38.0
+
     - type: centrifuge_lock
-      label: Lock cartridge
+      label: Rotate lock actuator
 
     - type: home_all
       label: Home all (final)
