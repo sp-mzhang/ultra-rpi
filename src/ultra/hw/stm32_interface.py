@@ -282,6 +282,13 @@ class STM32Interface:
         request Future. NEVER takes a lock that send_command holds,
         so the kernel TTY input buffer can't accumulate during a
         command wait.
+
+        Drains the kernel buffer in one syscall per wake so the
+        per-byte GIL thrashing doesn't delay ACK futures when the
+        firmware's 500 ms MSG_STATUS broadcast and motor telemetry
+        streams are running. ser.read(1) blocks up to the port
+        timeout for the first byte; in_waiting picks up everything
+        else that has already arrived.
         '''
         parser = fp.FrameParser()
         while not self._stop_workers.is_set():
@@ -291,6 +298,16 @@ class STM32Interface:
                 continue
             try:
                 raw = ser.read(1)
+                if raw:
+                    pending = 0
+                    try:
+                        pending = ser.in_waiting
+                    except (serial.SerialException, OSError):
+                        pending = 0
+                    if pending:
+                        more = ser.read(pending)
+                        if more:
+                            raw = raw + more
             except (serial.SerialException, OSError) as err:
                 if not self._stop_workers.is_set():
                     LOG.debug(f'RX read error: {err}')
@@ -298,14 +315,15 @@ class STM32Interface:
                 continue
             if not raw:
                 continue
-            result = parser.feed(raw[0])
-            if result is None:
-                continue
-            cmd, data = result
-            try:
-                self._dispatch_rx(cmd, data)
-            except Exception as err:
-                LOG.warning(f'RX dispatch raised: {err}')
+            for b in raw:
+                result = parser.feed(b)
+                if result is None:
+                    continue
+                cmd, data = result
+                try:
+                    self._dispatch_rx(cmd, data)
+                except Exception as err:
+                    LOG.warning(f'RX dispatch raised: {err}')
 
     def _dispatch_rx(self, cmd: int, data: bytes) -> None:
         '''Route one parsed frame. Called only from _rx_loop.'''
