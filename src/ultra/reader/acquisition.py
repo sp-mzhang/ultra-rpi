@@ -320,7 +320,7 @@ class AcquisitionService:
         os.replace(tmp_path, tlv_path)
 
         self._write_time_log(bc, start_time, end_time)
-        self._append_root_time_log(start_time, end_time)
+        self._append_root_time_log(bc, start_time, end_time)
 
         LOG.info(
             'TLV block %d: %d bytes in %.1fs -> %s',
@@ -373,18 +373,44 @@ class AcquisitionService:
 
     def _append_root_time_log(
             self,
+            block_idx: int,
             t_start: float,
             t_end: float,
     ) -> None:
-        '''Append to the run-root time.log (legacy).
+        '''Append to the run-root time.log.
 
         The run directory is the parent of ``self._output_dir``
         (which points to ``{run_dir}/tlv/``).
+
+        Format matches sway's ``SaveManager.save_time_log``::
+
+            datetime,acquisition,start,end,duration
+
+        e.g.::
+
+            2023/10/26-14:54:30,0,1698346464.98,1698346470.38,5.40
+
+        Span's ``read_time_log_file`` skips the first line and
+        then requires 3 or 5 columns per row; anything else
+        raises ``ValueError('unknown time.log format')``.  The
+        legacy 2-column layout broke span loading, so we always
+        emit the 5-column form here.
         '''
+        dt = datetime.fromtimestamp(
+            t_start,
+            tz=timezone.utc,
+        ).astimezone()
+        ts = dt.strftime('%Y/%m/%d-%H:%M:%S')
+        dur = t_end - t_start
+
         run_dir = op.dirname(self._output_dir)
         fp = op.join(run_dir, 'time.log')
         with open(fp, 'a') as fh:
-            fh.write(f'{t_start:.2f}, {t_end:.2f}\n')
+            fh.write(
+                f'{ts},{block_idx},'
+                f'{t_start:.2f},{t_end:.2f},'
+                f'{dur:.2f}\n',
+            )
 
     def parse_tlv_chunks(
             self,

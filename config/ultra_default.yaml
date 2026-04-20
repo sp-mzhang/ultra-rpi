@@ -95,6 +95,16 @@ iot:
   claim_cert_dir: /etc/ultra/certs/
   credentials_dir: /etc/ultra/certs/device/
 
+logging:
+  # Global rotating log file for the ultra-rpi process.  Named
+  # ``sway.log`` for compatibility with span / dollop / analysis
+  # tools that look for ``sway.log`` inside each run dir.  At run
+  # finalize the byte range written during that run is snapshotted
+  # into ``{run_dir}/sway.log`` (see RunGroupWriter.export_sway_log).
+  # Rotating: 10 MB per file, 5 backups kept.
+  log_dir: ~/sway_logs
+  log_file: sway.log
+
 egress:
   enabled: true
   data_dir: ~/sway_runs

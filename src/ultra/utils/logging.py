@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import os
+import os.path as op
 import sys
 from collections import deque
-from typing import Callable
+from typing import Any, Callable
 
 
 LOG_FORMAT = (
@@ -111,3 +113,34 @@ def setup_logging(
     logging.getLogger('uvicorn.access').setLevel(
         logging.WARNING,
     )
+
+
+def resolve_log_file(
+        config: dict[str, Any] | None,
+) -> str | None:
+    '''Resolve the global ``sway.log`` path from config.
+
+    Reads ``logging.log_dir`` + ``logging.log_file`` (defaults
+    to ``~/sway_logs/sway.log``), expands ``~``, creates the
+    parent directory, and returns the absolute path.
+
+    Returns ``None`` if the config explicitly disables file
+    logging (``log_file: ''``).
+
+    Args:
+        config: Loaded configuration dict (may be None).
+
+    Returns:
+        Absolute log file path, or ``None`` if disabled.
+    '''
+    cfg = (config or {}).get('logging') or {}
+    log_dir = cfg.get('log_dir', '~/sway_logs')
+    log_file = cfg.get('log_file', 'sway.log')
+    if not log_file:
+        return None
+    log_dir = os.path.expanduser(log_dir)
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except OSError:
+        return None
+    return op.join(log_dir, log_file)

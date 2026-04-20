@@ -142,6 +142,7 @@ class RunGroupWriter:
             device_sn: str = 'ultra-001',
             station_id: int = 1,
             protocol_mode: str = 'ultra',
+            sway_log_fp: str | None = None,
     ) -> None:
         '''Create a new RunGroup directory.
 
@@ -156,7 +157,14 @@ class RunGroupWriter:
             station_id: Station ID for Dollop.
             protocol_mode: Protocol mode identifier
                 stored in rungroup.json metadata.
+            sway_log_fp: Path to the global rotating
+                ``sway.log`` file.  When set, ``mark_started``
+                snapshots the current file size so
+                ``export_sway_log`` can copy only the byte
+                range written during this run group.
         '''
+        self._sway_log_fp = sway_log_fp
+        self._sway_log_start_byte: int = 0
         self.rg_uuid = _get_uuid()
         dt = _ts_now()
         ts_file = _ts_file(dt)
@@ -308,16 +316,75 @@ class RunGroupWriter:
         return run_dir, rdt
 
     def mark_started(self) -> None:
-        '''Set run_state to started with timestamp.'''
+        '''Set run_state to started with timestamp.
+
+        Also snapshots the current byte offset of the global
+        sway.log file so ``export_sway_log`` can later copy
+        only the portion written during this run group.
+        '''
         self.rg_dict['run_state'] = 'started'
         self.rg_dict['started_at'] = _ts_str()
+        self._snapshot_sway_log_offset()
         self._write_rg_json()
+
+    def _snapshot_sway_log_offset(self) -> None:
+        '''Record the current sway.log byte size, if any.'''
+        if not self._sway_log_fp:
+            self._sway_log_start_byte = 0
+            return
+        try:
+            self._sway_log_start_byte = op.getsize(
+                self._sway_log_fp,
+            )
+        except OSError:
+            self._sway_log_start_byte = 0
 
     def mark_completed(self) -> None:
         '''Set run_state to completed with timestamp.'''
         self.rg_dict['run_state'] = 'completed'
         self.rg_dict['ended_at'] = _ts_str()
         self._write_rg_json()
+
+    def export_sway_log(self, run_dir: str) -> None:
+        '''Snapshot this run group's sway.log slice into ``run_dir``.
+
+        Copies the byte range ``[start_byte, EOF)`` from the
+        global sway.log into ``{run_dir}/sway.log``, where
+        ``start_byte`` is the file size captured at
+        ``mark_started`` time.  This mirrors sway's
+        ``export_last_run_sway_log`` behavior without needing a
+        sentinel string, and keeps the file name ``sway.log`` so
+        analysis tools (span / dollop) find it as expected.
+
+        No-op if no ``sway_log_fp`` was configured or the source
+        file does not exist.
+
+        Args:
+            run_dir: Destination run directory.
+        '''
+        if not self._sway_log_fp:
+            return
+        src = self._sway_log_fp
+        if not op.isfile(src):
+            LOG.warning(
+                'export_sway_log: source missing: %s', src,
+            )
+            return
+        dst = op.join(run_dir, 'sway.log')
+        try:
+            with open(src, 'rb') as fi:
+                fi.seek(self._sway_log_start_byte)
+                data = fi.read()
+            with open(dst, 'wb') as fo:
+                fo.write(data)
+            LOG.info(
+                'export_sway_log: wrote %d bytes to %s',
+                len(data), dst,
+            )
+        except OSError as exc:
+            LOG.warning(
+                'export_sway_log failed: %s', exc,
+            )
 
     def copy_rg_files_to_run(
             self, run_dir: str,
@@ -360,7 +427,9 @@ class RunGroupWriter:
         these files even if they remain empty.
         '''
         stubs = {
-            'time.log': 'start time, end time\n',
+            'time.log': (
+                'datetime,acquisition,start,end,duration\n'
+            ),
             'comments.log': 'datetime,start_time,comment\n',
             'result.log': (
                 'Analysis Configurations and Results\n'

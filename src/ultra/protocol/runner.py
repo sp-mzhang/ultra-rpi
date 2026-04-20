@@ -465,6 +465,9 @@ class ProtocolRunner:
         qr_cfg = self._config.get('quick_run', {})
         operator = qr_cfg.get('operator', 'ultra_rpi')
 
+        from ultra.utils.logging import resolve_log_file
+        sway_log_fp = resolve_log_file(self._config)
+
         rg = RunGroupWriter(
             data_dir=data_dir,
             user=operator,
@@ -473,6 +476,7 @@ class ProtocolRunner:
             device_sn=device_sn,
             station_id=station_id,
             protocol_mode=protocol_mode,
+            sway_log_fp=sway_log_fp,
         )
         rg.mark_started()
 
@@ -908,6 +912,7 @@ class ProtocolRunner:
                         rg_writer.copy_rg_files_to_run(
                             run_dir,
                         )
+                        rg_writer.export_sway_log(run_dir)
                 except Exception as exc:
                     LOG.warning(
                         'RunGroup finalize error: %s', exc,

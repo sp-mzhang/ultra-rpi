@@ -22,7 +22,7 @@ from typing import Any
 
 from ultra.config import load_config
 from ultra.events import EventBus
-from ultra.utils.logging import setup_logging
+from ultra.utils.logging import resolve_log_file, setup_logging
 
 LOG = logging.getLogger(__name__)
 
@@ -417,9 +417,13 @@ class Application:
 
 def main() -> None:
     '''Application entry point.'''
-    setup_logging()
     config = load_config()
-    LOG.info('Ultra RPi starting...')
+    log_file = resolve_log_file(config)
+    setup_logging(log_file=log_file)
+    if log_file:
+        LOG.info('Ultra RPi starting... (log_file=%s)', log_file)
+    else:
+        LOG.info('Ultra RPi starting...')
 
     app = Application(config)
     try:
