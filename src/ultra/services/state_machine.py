@@ -804,6 +804,16 @@ class UltraStateMachine:
             await asyncio.sleep(2.0)
         LOG.info('Protocol done')
 
+        # Let the protocol's STM32Interface fully release the UART
+        # before the monitor reopens the same port. STM32Interface.
+        # disconnect() joins its RX/TX threads and closes the fd,
+        # but the kernel tty layer needs a beat to release the
+        # device -- otherwise we end up with two readers on
+        # /dev/ttyAMA3 and the monitor misses MSG_STATUS broadcasts.
+        # The same empirical delay (0.5-1.2 s) is used in
+        # api_protocol.py /run and api_stm32.py /stm32/connect.
+        await asyncio.sleep(0.5)
+
         if self._monitor is not None:
             self._monitor.start()
 

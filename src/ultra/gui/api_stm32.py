@@ -79,6 +79,40 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                     ),
                 )
 
+        # Defense-in-depth: a previous protocol run (especially one
+        # driven by the state machine) may have leaked an
+        # STM32Interface that's still holding /dev/ttyAMA3 via its
+        # RX/TX worker threads.  Opening another fd on the same
+        # device "succeeds" on Linux but the two readers race for
+        # incoming bytes and every command from the engineering
+        # panel then times out.  Evict any such stragglers before
+        # we open our own.
+        try:
+            leaked = getattr(runner, 'stm32', None)
+            if (
+                leaked is not None
+                and not runner.is_running
+                and leaked is not eng_stm32.get('iface')
+            ):
+                LOG.warning(
+                    'Engineering connect: evicting leaked '
+                    'protocol-owned STM32Interface before '
+                    'opening engineering iface',
+                )
+                try:
+                    leaked.disconnect()
+                except Exception as derr:
+                    LOG.debug(
+                        'leaked stm32.disconnect failed: %s',
+                        derr,
+                    )
+                runner.stm32 = None
+        except Exception as err:
+            LOG.debug(
+                'Could not check for leaked runner stm32: %s',
+                err,
+            )
+
         from ultra.hw.stm32_monitor import (
             STM32StatusMonitor,
         )

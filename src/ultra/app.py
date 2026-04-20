@@ -224,6 +224,15 @@ class Application:
                 )
             )
 
+            # Defined outside the try so the finally block can clean
+            # up the locally-created interface even if connect() or
+            # the runner raises.  Without this, an STM32Interface
+            # leak holds /dev/ttyAMA3 open while the SM restarts the
+            # status monitor on the same port -- two readers race for
+            # incoming bytes and every subsequent command times out.
+            stm32 = None
+            stm32_created_here = False
+            runner = None
             try:
                 runner = self.get_runner()
 
@@ -244,8 +253,10 @@ class Application:
                             'STM32 connect failed '
                             '-- cannot run protocol',
                         )
+                        stm32 = None
                         sm.protocol_done.set()
                         continue
+                    stm32_created_here = True
                     if hasattr(
                         stm32, 'apply_motion_defaults_from_config',
                     ):
@@ -283,6 +294,25 @@ class Application:
                     exc_info=True,
                 )
             finally:
+                # Release the UART before the state machine
+                # restarts STM32StatusMonitor on the same port.
+                # Mirrors the cleanup in api_protocol.py /run.
+                if stm32_created_here and stm32 is not None:
+                    try:
+                        stm32.disconnect()
+                    except Exception as derr:
+                        LOG.warning(
+                            'Post-protocol stm32.disconnect '
+                            'failed: %s', derr,
+                        )
+                # Drop the runner's reference so a leaked iface
+                # can't keep the FDs alive after the executor
+                # thread exits.
+                if runner is not None:
+                    try:
+                        runner.stm32 = None
+                    except Exception:
+                        pass
                 sm.protocol_done.set()
                 LOG.info(
                     'protocol_done set -- '
