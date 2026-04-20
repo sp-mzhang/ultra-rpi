@@ -97,36 +97,82 @@ def _grab_devices() -> list[str]:
     return sorted(glob.glob('/dev/video[0-9]*'))
 
 
-def _open_camera(
-    device: str, width: int, height: int,
+def _try_open_one(
+    device: str | int, width: int, height: int,
 ) -> cv2.VideoCapture | None:
-    """Open the requested device, falling back to auto-scan."""
-    for d in [device, *(_grab_devices())]:
-        try:
-            idx = int(d) if str(d).isdigit() else d
-        except (TypeError, ValueError):
-            idx = d
-        cap = cv2.VideoCapture(idx)
-        if not cap.isOpened():
-            continue
-        if width:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        if height:
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        # warmup -- discard first 3 frames so auto-exposure
-        # doesn't make the first decode useless
-        for _ in range(3):
-            cap.read()
+    """Open exactly one V4L2 node. Returns the opened cap on
+    success, None otherwise. Uses short timeouts so a non-capture
+    node (metadata / M2M) fails in ~1.5s instead of hanging 10s
+    in select()."""
+    cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
+    if not cap.isOpened():
+        return None
+    # OpenCV >=4.x: cap a slow device to <2s instead of 10s default.
+    # These props are no-ops on unsupported builds, which is fine.
+    try:
+        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 1500)
+        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 1500)
+    except Exception:
+        pass
+    if width:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    if height:
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    # warmup: a non-capture node will return ok=False here
+    ok = False
+    for _ in range(3):
         ok, _ = cap.read()
         if ok:
-            actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            LOG.info(
-                'Camera open: %s @ %dx%d',
-                d, actual_w, actual_h,
-            )
-            return cap
+            break
+    if not ok:
         cap.release()
+        return None
+    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    LOG.info(
+        'Camera open: %s @ %dx%d', device, actual_w, actual_h,
+    )
+    return cap
+
+
+def _open_camera(
+    device: str, width: int, height: int, scan: bool = False,
+) -> cv2.VideoCapture | None:
+    """Open the requested V4L2 device. Only falls back to scanning
+    every /dev/videoN when scan=True; otherwise an explicit
+    --device that fails returns None immediately so the caller can
+    print a clear error instead of silently iterating through 24
+    metadata nodes."""
+    try:
+        primary: str | int = (
+            int(device) if str(device).isdigit() else device
+        )
+    except (TypeError, ValueError):
+        primary = device
+
+    cap = _try_open_one(primary, width, height)
+    if cap is not None:
+        return cap
+
+    if not scan:
+        LOG.error(
+            'Could not open %s (not a capture node, busy, or '
+            'wrong format). Re-run with --scan to auto-detect, '
+            'or check `v4l2-ctl --list-devices`.',
+            device,
+        )
+        return None
+
+    LOG.warning(
+        '%s did not yield frames -- scanning all /dev/video* '
+        '(this can take a few seconds on RPi)', device,
+    )
+    for d in _grab_devices():
+        if d == primary:
+            continue
+        cap = _try_open_one(d, width, height)
+        if cap is not None:
+            return cap
     return None
 
 
@@ -306,12 +352,14 @@ class StreamWorker:
         height: int,
         decode_every: int,
         record_dir: Path | None,
+        scan: bool = False,
     ) -> None:
         self.device = device
         self.width = width
         self.height = height
         self.decode_every = max(1, decode_every)
         self.record_dir = record_dir
+        self.scan = scan
         if record_dir is not None:
             record_dir.mkdir(parents=True, exist_ok=True)
 
@@ -329,7 +377,9 @@ class StreamWorker:
         self._record_history: deque[Path] = deque(maxlen=600)
 
     def start(self) -> bool:
-        cap = _open_camera(self.device, self.width, self.height)
+        cap = _open_camera(
+            self.device, self.width, self.height, scan=self.scan,
+        )
         if cap is None:
             LOG.error('Could not open any camera')
             return False
@@ -562,6 +612,12 @@ def main() -> int:
         help='V4L2 device path or index (default /dev/video0)',
     )
     ap.add_argument(
+        '--scan', action='store_true',
+        help='if --device fails, auto-scan all /dev/video* nodes '
+             '(off by default; on a Pi 5 this can take ~30s '
+             'because libcamera registers ~24 video nodes)',
+    )
+    ap.add_argument(
         '--port', type=int, default=8765,
         help='HTTP port to serve MJPEG on (default 8765)',
     )
@@ -613,6 +669,7 @@ def main() -> int:
         height=args.height,
         decode_every=args.decode_every,
         record_dir=record_dir,
+        scan=args.scan,
     )
     if not worker.start():
         return 2
