@@ -123,10 +123,10 @@ phases:
         label: cart_dispense_from_M4
         source: M4
         target: PP4
-        asp_vol: 30
+        asp_vol: 50
         cart_vol: 20
         asp_speed: 40.0
-        cart_vel: 25.0
+        cart_vel: 5
         air_slug: 20
         reasp_ul: 8
         return_speed: 100.0
