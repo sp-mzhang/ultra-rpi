@@ -195,12 +195,38 @@ class STM32StatusMonitor:
     # Lifecycle
     # ----------------------------------------------------------------
 
+    def is_door_open(self) -> bool:
+        '''Return True if the last MSG_STATUS reported door_open.
+
+        Safe to call from any thread -- just reads the last
+        parsed status dict. Returns False if no status has
+        been received yet.
+        '''
+        s = self._prev_status or {}
+        return bool(s.get('door_open'))
+
+    def is_door_closed(self) -> bool:
+        '''Return True if the last MSG_STATUS reported door_closed.'''
+        s = self._prev_status or {}
+        return bool(s.get('door_closed'))
+
+    def current_status(self) -> dict | None:
+        '''Snapshot of the most recent MSG_STATUS, or None.'''
+        return dict(self._prev_status) if self._prev_status else None
+
     def start(self) -> bool:
         '''Open serial and start the background reader thread.
 
         Returns:
             True if serial opened successfully.
         '''
+        # Reset the rising-edge baseline so the first status
+        # after a (re)start always has a chance to fire the
+        # drawer_opened / drawer_closed events.  Without this,
+        # a stop()/start() cycle inherits the previous run's
+        # door state and the next 'True is not True' edge check
+        # silently drops the event.
+        self._prev_status = None
         try:
             self._ser = serial.Serial(
                 port=self._port,

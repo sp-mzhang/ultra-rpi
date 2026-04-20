@@ -212,6 +212,36 @@ class UltraStateMachine:
             args=('cartridge_inserted',),
         ).start()
 
+    def _seed_open_if_level(self) -> None:
+        '''Fire drawer_opened_event if the door is already open.
+
+        The monitor's _door_handler only fires on a rising
+        edge (door_open False -> True).  When a state handler
+        clears the event and starts waiting, the door may
+        already be open -- in which case no rising edge is
+        coming and the SM would block forever.  This seed
+        makes the await level-sensitive on entry.
+        '''
+        if self._monitor is not None and self._monitor.is_door_open():
+            LOG.info(
+                'Drawer already open on entry '
+                '-- advancing without waiting for edge',
+            )
+            self.drawer_opened_event.set()
+
+    def _seed_closed_if_level(self) -> None:
+        '''Fire drawer_closed_event if the door is already closed.
+
+        Level-sensitive mirror of _seed_open_if_level; see
+        that docstring for rationale.
+        '''
+        if self._monitor is not None and self._monitor.is_door_closed():
+            LOG.info(
+                'Drawer already closed on entry '
+                '-- advancing without waiting for edge',
+            )
+            self.drawer_closed_event.set()
+
 
     def _apply_iot_config_to_env(self) -> None:
         '''Bridge YAML iot config into env vars.
@@ -634,6 +664,7 @@ class UltraStateMachine:
             'IDLE -- waiting for drawer open',
         )
         self.drawer_opened_event.clear()
+        self._seed_open_if_level()
         await self.drawer_opened_event.wait()
         LOG.info('Drawer opened')
         self._set_state(
@@ -647,6 +678,7 @@ class UltraStateMachine:
         self._schedule_cartridge_inserted()
         LOG.info('Waiting for cartridge load + close')
         self.drawer_closed_event.clear()
+        self._seed_closed_if_level()
         await self.drawer_closed_event.wait()
         LOG.info('Drawer closed')
         self._publish_event('drawer_closed')
@@ -668,6 +700,7 @@ class UltraStateMachine:
             '(blood sample)',
         )
         self.drawer_opened_event.clear()
+        self._seed_open_if_level()
         await self.drawer_opened_event.wait()
         self._publish_event('drawer_open')
         self._set_state(
@@ -682,6 +715,7 @@ class UltraStateMachine:
             'waiting for close',
         )
         self.drawer_closed_event.clear()
+        self._seed_closed_if_level()
         await self.drawer_closed_event.wait()
         LOG.info('Drawer closed -- starting protocol')
         self._publish_event('drawer_closed')
