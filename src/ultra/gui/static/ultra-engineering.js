@@ -2003,8 +2003,8 @@
       engCmd('lid_move', {
         open: 1,
         z_engage_um: Math.round(z * 1000),
-        xy_speed_01mms: 250,
-        z_speed_01mms: 60,
+        xy_speed_01mms: 0,
+        z_speed_01mms: 0,
         x_open_extra_um: Math.round(extra * 1000),
       });
     };
@@ -2016,8 +2016,8 @@
       engCmd('lid_move', {
         open: 0,
         z_engage_um: Math.round(z * 1000),
-        xy_speed_01mms: 250,
-        z_speed_01mms: 60,
+        xy_speed_01mms: 0,
+        z_speed_01mms: 0,
         x_open_extra_um: Math.round(extra * 1000),
       });
     };

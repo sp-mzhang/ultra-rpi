@@ -727,8 +727,8 @@ def pack_tip_swap(
         x_eject_um: int = 0,
         pick_depth_um: int = 0,
         retract_um: int = 0,
-        xy_speed_01mms: int = 250,
-        z_speed_01mms: int = 60,
+        xy_speed_01mms: int = 0,
+        z_speed_01mms: int = 0,
 ) -> bytes:
     '''Pack CMD_TIP_SWAP payload.
 
@@ -738,22 +738,24 @@ def pack_tip_swap(
 
     Optional motion overrides. 0 means use firmware default for that
     parameter:
-      x_eject_um    : +X seat offset from slot centre (µm); 0 = 10 mm def.
-      pick_depth_um : Signed absolute gantry Z target (µm from home,
+      x_eject_um    : +X seat offset from slot centre (um); 0 = 10 mm def.
+      pick_depth_um : Signed absolute gantry Z target (um from home,
                       negative); 0 = firmware default (-19 mm).
-      retract_um    : Z upward move after pickup (µm).
-      xy_speed_01mms: XY cruise speed in 0.1 mm/s; default 250 (25 mm/s).
-      z_speed_01mms : Z cruise speed in 0.1 mm/s; default 60 (6 mm/s).
+      retract_um    : Z upward move after pickup (um).
+      xy_speed_01mms: XY cruise speed in 0.1 mm/s; 0 = firmware default
+                      (s_tip_xy_speed_01mms, typically 25 mm/s).
+      z_speed_01mms : Z  cruise speed in 0.1 mm/s; 0 = firmware default
+                      (s_tip_z_speed_01mms, typically 6 mm/s).
 
     Args:
         seq           : sequence number.
         from_id       : tip slot to strip tip into (1-8); 0 = skip return.
         to_id         : tip slot to pick up from   (1-8); 0 = skip pickup.
-        x_eject_um    : optional +X offset (µm); 0 = firmware default (10 mm).
-        pick_depth_um : signed absolute gantry Z (µm, negative); 0 = def.
-        retract_um    : optional Z retract (µm); 0 = default.
-        xy_speed_01mms: XY cruise speed (0.1 mm/s); 250 = default.
-        z_speed_01mms : Z cruise speed (0.1 mm/s); 60 = default.
+        x_eject_um    : optional +X offset (um); 0 = firmware default (10 mm).
+        pick_depth_um : signed absolute gantry Z (um, negative); 0 = def.
+        retract_um    : optional Z retract (um); 0 = default.
+        xy_speed_01mms: XY cruise speed (0.1 mm/s); 0 = firmware default.
+        z_speed_01mms : Z  cruise speed (0.1 mm/s); 0 = firmware default.
 
     Returns:
         6 bytes (short form) when all optional params are at defaults;
@@ -763,8 +765,8 @@ def pack_tip_swap(
         x_eject_um == 0
         and pick_depth_um == 0
         and retract_um == 0
-        and xy_speed_01mms == 250
-        and z_speed_01mms == 60
+        and xy_speed_01mms == 0
+        and z_speed_01mms == 0
     )
     if _defaults:
         return struct.pack('<IBB', seq, from_id, to_id)
@@ -781,8 +783,8 @@ def pack_lid_move(
         seq: int,
         open: bool,
         z_engage_um: int = 0,
-        xy_speed_01mms: int = 250,
-        z_speed_01mms: int = 60,
+        xy_speed_01mms: int = 0,
+        z_speed_01mms: int = 0,
         x_open_extra_um: int = 0,
 ) -> bytes:
     '''Pack CMD_LID_MOVE payload.
@@ -792,20 +794,22 @@ def pack_lid_move(
 
     Optional motion overrides. 0 means use firmware default for that
     parameter:
-      z_engage_um    : Signed absolute gantry Z target (µm, negative);
-                       0 = firmware default (-4500 µm / -4.5 mm).
-      xy_speed_01mms : XY cruise speed in 0.1 mm/s; default 250 (25 mm/s).
-      z_speed_01mms  : Z cruise speed in 0.1 mm/s; default 60 (6 mm/s).
-      x_open_extra_um: Extra X travel away from home on open (µm);
+      z_engage_um    : Signed absolute gantry Z target (um, negative);
+                       0 = firmware default (-4500 um / -4.5 mm).
+      xy_speed_01mms : XY cruise speed in 0.1 mm/s; 0 = firmware default
+                       (s_lid_xy_speed_01mms, typically 25 mm/s).
+      z_speed_01mms  : Z  cruise speed in 0.1 mm/s; 0 = firmware default
+                       (s_lid_z_speed_01mms, typically 6 mm/s).
+      x_open_extra_um: Extra X travel away from home on open (um);
                        0 = firmware default (10 mm).
 
     Args:
         seq             : sequence number.
         open            : True = open lid, False = close lid.
-        z_engage_um     : signed absolute gantry Z (µm, negative); 0 = def.
-        xy_speed_01mms  : XY cruise speed (0.1 mm/s); 250 = default.
-        z_speed_01mms   : Z cruise speed (0.1 mm/s); 60 = default.
-        x_open_extra_um : extra X travel on open (µm); 0 = firmware default.
+        z_engage_um     : signed absolute gantry Z (um, negative); 0 = def.
+        xy_speed_01mms  : XY cruise speed (0.1 mm/s); 0 = firmware default.
+        z_speed_01mms   : Z  cruise speed (0.1 mm/s); 0 = firmware default.
+        x_open_extra_um : extra X travel on open (um); 0 = firmware default.
 
     Returns:
         5 bytes (short form) when all optional params are at defaults;
@@ -814,8 +818,8 @@ def pack_lid_move(
     '''
     _defaults = (
         z_engage_um == 0
-        and xy_speed_01mms == 250
-        and z_speed_01mms == 60
+        and xy_speed_01mms == 0
+        and z_speed_01mms == 0
         and x_open_extra_um == 0
     )
     if _defaults:

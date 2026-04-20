@@ -1052,10 +1052,10 @@ class STM32Interface:
                 ),
                 retract_um=int(cmd.get('retract_um', 0)),
                 xy_speed_01mms=int(
-                    cmd.get('xy_speed_01mms', 250),
+                    cmd.get('xy_speed_01mms', 0),
                 ),
                 z_speed_01mms=int(
-                    cmd.get('z_speed_01mms', 60),
+                    cmd.get('z_speed_01mms', 0),
                 ),
             )
         if cmd_name == 'lid_move':
@@ -1066,10 +1066,10 @@ class STM32Interface:
                     cmd.get('z_engage_um', 0),
                 ),
                 xy_speed_01mms=int(
-                    cmd.get('xy_speed_01mms', 250),
+                    cmd.get('xy_speed_01mms', 0),
                 ),
                 z_speed_01mms=int(
-                    cmd.get('z_speed_01mms', 60),
+                    cmd.get('z_speed_01mms', 0),
                 ),
                 x_open_extra_um=int(
                     cmd.get('x_open_extra_um', 0),
@@ -2082,7 +2082,7 @@ class STM32Interface:
             loc_id: int,
             volume_ul: int,
             speed_ul_s: int = 100,
-            move_speed_01mms: int = 250,
+            move_speed_01mms: int = 0,
             z_mm: float = -23.0,
             piston_reset: bool = False,
             timeout_s: float = 120.0,
@@ -2178,7 +2178,7 @@ class STM32Interface:
             loc_id: int,
             volume_ul: int,
             speed_ul_s: float = 100.0,
-            move_speed_01mms: int = 250,
+            move_speed_01mms: int = 0,
             well_id: int = fp.WELL_ID_AUTO,
             lld_threshold: int = 20,
             piston_reset: bool = True,
@@ -2302,7 +2302,7 @@ class STM32Interface:
             loc_id: int,
             volume_ul: int,
             speed_ul_s: int = 1000,
-            move_speed_01mms: int = 250,
+            move_speed_01mms: int = 0,
             z_mm: float = -23.0,
             timeout_s: float = 120.0,
     ) -> bool:
@@ -2387,7 +2387,7 @@ class STM32Interface:
             z_depth_mm: int = 0,
             z_retract_mm: int = 5,
             blowout: bool = True,
-            move_speed_01mms: int = 250,
+            move_speed_01mms: int = 0,
             timeout_s: float = 120.0,
     ) -> bool:
         '''Move to a well location, then firmware well-dispense.
@@ -2468,7 +2468,7 @@ class STM32Interface:
             sleep_s: int = 0,
             z_retract_mm: int = 2,
             cartridge_z: float = 0.0,
-            move_speed_01mms: int = 250,
+            move_speed_01mms: int = 0,
             stream: bool = False,
             timeout_s: float = 120.0,
             pre_dispense_cb: object = None,
@@ -2627,7 +2627,7 @@ class STM32Interface:
             sleep_s: int = 30,
             z_retract_mm: int = 2,
             cartridge_z: float = 0.0,
-            move_speed_01mms: int = 250,
+            move_speed_01mms: int = 0,
             stream: bool = False,
             timeout_s: float = 120.0,
             pre_dispense_cb: object = None,
@@ -2759,7 +2759,7 @@ class STM32Interface:
             cycles: int = 4,
             pull_vol_ul: int = 0,
             z_depth_mm: float = 0.0,
-            move_speed_01mms: int = 250,
+            move_speed_01mms: int = 0,
             timeout_s: float = 120.0,
     ) -> bool:
         '''Move to a well, descend Z, and firmware tip-mix.
