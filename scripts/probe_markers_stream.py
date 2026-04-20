@@ -92,7 +92,16 @@ LOG = logging.getLogger('probe_stream')
 DEFAULT_DECODE_EVERY = 3
 
 # pylibdmtx scan window (ms). Lower = faster, less robust.
-DECODE_TIMEOUT_MS = 200
+# 200ms was too short -- libdmtx returned a single noisy 1-char
+# false positive and quit. Give it ~1.2s budget per scan.
+DECODE_TIMEOUT_MS = 1200
+
+# Reject obvious noise / false positives:
+# - DataMatrix labels in our system are at least ~30 px wide on
+#   720p; tiny libdmtx hits on textured background are usually
+#   < 25 px and 1-2 char payloads.
+MIN_MARKER_PX = 30
+MIN_PAYLOAD_LEN = 2
 
 
 def _grab_devices() -> list[str]:
@@ -290,11 +299,16 @@ def _open_camera(
 def _decode_markers(frame_bgr: np.ndarray) -> list[dict]:
     """Run pylibdmtx, return marker dicts (same shape as
     probe_markers.py::decode_markers but with the y-flip
-    handled here so callers get image-coord corners)."""
+    handled here so callers get image-coord corners).
+
+    Drops detections that look like libdmtx false positives
+    (very small bounding box or 1-char payload)."""
     h = frame_bgr.shape[0]
-    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    # libdmtx is faster on a single-channel image and less likely
+    # to lock onto colour-noise edges in textured regions.
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     raw = pylibdmtx.decode(
-        rgb, max_count=8, timeout=DECODE_TIMEOUT_MS,
+        gray, max_count=8, timeout=DECODE_TIMEOUT_MS,
     )
     out: list[dict] = []
     for det in raw:
@@ -302,6 +316,11 @@ def _decode_markers(frame_bgr: np.ndarray) -> list[dict]:
         left, bottom_from_bot, w, hh = (
             r.left, r.top, r.width, r.height,
         )
+        if w < MIN_MARKER_PX or hh < MIN_MARKER_PX:
+            continue
+        payload = det.data.decode('utf-8', errors='replace')
+        if len(payload.strip()) < MIN_PAYLOAD_LEN:
+            continue
         top = h - bottom_from_bot - hh
         bl = (left, top + hh)
         br = (left + w, top + hh)
@@ -312,9 +331,7 @@ def _decode_markers(frame_bgr: np.ndarray) -> list[dict]:
         dx, dy = br[0] - bl[0], br[1] - bl[1]
         ori = math.degrees(math.atan2(dy, dx))
         out.append({
-            'payload': det.data.decode(
-                'utf-8', errors='replace',
-            ),
+            'payload': payload,
             'corners_px': [bl, br, tr, tl],
             'center_px': (cx, cy),
             'orientation_deg': ori,
