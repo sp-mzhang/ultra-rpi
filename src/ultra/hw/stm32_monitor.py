@@ -336,12 +336,17 @@ class STM32StatusMonitor:
     def _reader_loop(self) -> None:
         '''Continuously read SOH frames and dispatch status.'''
         parser = fp.FrameParser()
+        stats_t0 = time.monotonic()
+        bytes_seen = 0
+        frames_seen = 0
+        status_seen = 0
+        other_cmds: dict[int, int] = {}
         while self._running:
             if not self._ser or not self._ser.is_open:
                 time.sleep(0.05)
                 continue
             try:
-                raw = self._ser.read(1)
+                raw = self._ser.read(64)
             except (
                 serial.SerialException,
                 TypeError,
@@ -352,21 +357,62 @@ class STM32StatusMonitor:
                     time.sleep(0.1)
                 continue
 
-            if not raw:
-                continue
+            if raw:
+                bytes_seen += len(raw)
+                for b in raw:
+                    result = parser.feed(b)
+                    if result is None:
+                        continue
 
-            result = parser.feed(raw[0])
-            if result is None:
-                continue
+                    cmd, data = result
+                    frames_seen += 1
 
-            cmd, data = result
+                    if cmd == _MSG_STATUS_WIRE:
+                        status_seen += 1
+                        status = _parse_status_payload(data)
+                        if status:
+                            self._dispatch_status(status)
+                    elif cmd == _MSG_PRESSURE_WIRE:
+                        self._dispatch_pressure(data)
+                    else:
+                        other_cmds[cmd] = (
+                            other_cmds.get(cmd, 0) + 1
+                        )
 
-            if cmd == _MSG_STATUS_WIRE:
-                status = _parse_status_payload(data)
-                if status:
-                    self._dispatch_status(status)
-            elif cmd == _MSG_PRESSURE_WIRE:
-                self._dispatch_pressure(data)
+            # Periodic health log every 5 s so we can tell from
+            # journalctl whether the UART is silent, whether the
+            # parser is dropping frames, or whether the firmware
+            # is sending something unexpected.
+            now = time.monotonic()
+            if now - stats_t0 >= 5.0:
+                if bytes_seen == 0:
+                    LOG.warning(
+                        'STM32StatusMonitor: no bytes on '
+                        '%s in 5s -- firmware silent or '
+                        'UART not wired?',
+                        self._port,
+                    )
+                else:
+                    other_summary = (
+                        ', '.join(
+                            f'0x{c:04X}x{n}'
+                            for c, n in
+                            sorted(other_cmds.items())
+                        )
+                        or '-'
+                    )
+                    LOG.info(
+                        'STM32StatusMonitor stats: '
+                        'bytes=%d frames=%d status=%d '
+                        'other=[%s]',
+                        bytes_seen, frames_seen,
+                        status_seen, other_summary,
+                    )
+                stats_t0 = now
+                bytes_seen = 0
+                frames_seen = 0
+                status_seen = 0
+                other_cmds.clear()
 
     def _dispatch_status(self, status: dict) -> None:
         '''Invoke all registered handlers with status dict.'''
