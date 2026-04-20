@@ -42,13 +42,12 @@ gantry:
   #
   # Set any value to 0 to fall back to the firmware axis default.
   motion:
-    # Conservative bump from the pre-config operational default of
-    # 25 mm/s. Firmware can sustain up to ~150 mm/s (flat-torque
-    # ceiling is ~300 mm/s) -- raise these once 50 mm/s is validated.
+    # Operational defaults: 50 mm/s XY, 10 mm/s Z. Firmware can
+    # sustain higher XY (flat-torque ceiling is ~300 mm/s) -- raise
+    # once 50 mm/s is validated. Z keeps ~44% headroom under the
+    # firmware ceiling (GANTRY_Z_MAX_SPS = 18 mm/s).
     x_speed_mms: 50.0
     y_speed_mms: 50.0
-    # Z is lead-screw; firmware clamps at GANTRY_Z_MAX_SPS (~18 mm/s).
-    # Matches the old MOVE_GANTRY Z override for backward compatibility.
     z_speed_mms: 10.0
 
   tip_swap:
@@ -62,11 +61,11 @@ gantry:
     # Firmware default: 7.5 mm.
     x_eject_mm: 7.5
     # XY cruise speed during tip swap, in mm/s.
-    # Firmware default: 25.0 mm/s.
-    xy_speed_mms: 25.0
+    # Bumped to operational default; firmware default also 50 mm/s.
+    xy_speed_mms: 50.0
     # Z cruise speed during tip swap, in mm/s.
-    # Firmware default: 6.0 mm/s.
-    z_speed_mms: 6.0
+    # ~44% headroom under firmware ceiling (GANTRY_Z_MAX_SPS = 18 mm/s).
+    z_speed_mms: 10.0
 
 # Liquid-handling defaults (override firmware constants).
 # Each field can also be overridden per-step in a recipe by
