@@ -19,6 +19,7 @@ dependencies = [
     "openpyxl>=3.1",
     "boto3>=1.34,<=1.40.22",
     "opencv-python-headless>=4.8",
+    "pylibdmtx>=0.1.10",
     "paho-mqtt>=2.0",
     "awsiotsdk>=1.0",
     "bluezero>=0.8",
