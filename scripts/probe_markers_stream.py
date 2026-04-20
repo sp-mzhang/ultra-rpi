@@ -290,23 +290,82 @@ def _open_camera(
     return None
 
 
+def _enhance_for_decode(frame_bgr: np.ndarray) -> np.ndarray:
+    """CLAHE on the L channel of LAB. Boosts local contrast on
+    small features (DataMatrix cells) without over-amplifying
+    noise the way global histogram-eq does. Returns a 3-channel
+    BGR image so it can be fed back into pylibdmtx the same way
+    the raw frame would be."""
+    lab = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    l_eq = clahe.apply(l)
+    return cv2.cvtColor(
+        cv2.merge((l_eq, a, b)), cv2.COLOR_LAB2BGR,
+    )
+
+
+def _best_of(
+    decodes: list,
+) -> list:
+    """Given multiple `pylibdmtx.decode(...)` outputs (one per
+    preprocessing variant), keep the longest payload per spatial
+    location. Two detections are considered the same marker if
+    their bbox centers are within 25 px."""
+    out: list = []
+    for batch in decodes:
+        for det in batch:
+            r = det.rect
+            cx = r.left + abs(r.width) / 2.0
+            cy = r.top + abs(r.height) / 2.0
+            payload = det.data
+            replaced = False
+            for i, kept in enumerate(out):
+                kr = kept.rect
+                kcx = kr.left + abs(kr.width) / 2.0
+                kcy = kr.top + abs(kr.height) / 2.0
+                if abs(cx - kcx) < 25 and abs(cy - kcy) < 25:
+                    if len(payload) > len(kept.data):
+                        out[i] = det
+                    replaced = True
+                    break
+            if not replaced:
+                out.append(det)
+    return out
+
+
 def _decode_markers(
     frame_bgr: np.ndarray,
     timeout_ms: int = DEFAULT_DECODE_TIMEOUT_MS,
     min_marker_px: int = DEFAULT_MIN_MARKER_PX,
     min_payload_len: int = DEFAULT_MIN_PAYLOAD_LEN,
+    enhance: bool = False,
 ) -> tuple[list[dict], list[dict]]:
     """Run pylibdmtx and return (kept, rejected) marker dicts.
 
     `rejected` contains everything libdmtx returned that we filtered
     out (too small or payload too short). The streamer can draw
     these in a different colour so we can tell whether libdmtx is
-    finding nothing vs finding noise we're throwing away."""
+    finding nothing vs finding noise we're throwing away.
+
+    When `enhance=True`, also runs a CLAHE-boosted variant of the
+    frame and merges results, keeping the longest payload per
+    spatial location -- gives noticeably better full-payload
+    recovery on soft/blurry input."""
     h = frame_bgr.shape[0]
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    raw = pylibdmtx.decode(
-        rgb, max_count=8, timeout=timeout_ms,
-    )
+    decodes = [
+        pylibdmtx.decode(rgb, max_count=8, timeout=timeout_ms),
+    ]
+    if enhance:
+        enhanced = _enhance_for_decode(frame_bgr)
+        rgb_eq = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
+        decodes.append(
+            pylibdmtx.decode(
+                rgb_eq, max_count=8, timeout=timeout_ms,
+            ),
+        )
+    raw = _best_of(decodes)
     kept: list[dict] = []
     rejected: list[dict] = []
     for det in raw:
@@ -530,6 +589,7 @@ class StreamWorker:
         min_marker_px: int = DEFAULT_MIN_MARKER_PX,
         min_payload_len: int = DEFAULT_MIN_PAYLOAD_LEN,
         debug_decode: bool = False,
+        enhance: bool = False,
     ) -> None:
         self.device = device
         self.width = width
@@ -542,6 +602,7 @@ class StreamWorker:
         self.min_marker_px = min_marker_px
         self.min_payload_len = min_payload_len
         self.debug_decode = debug_decode
+        self.enhance = enhance
         if record_dir is not None:
             record_dir.mkdir(parents=True, exist_ok=True)
 
@@ -607,6 +668,7 @@ class StreamWorker:
                     timeout_ms=self.decode_timeout_ms,
                     min_marker_px=self.min_marker_px,
                     min_payload_len=self.min_payload_len,
+                    enhance=self.enhance,
                 )
                 last_decode_ms = (
                     time.monotonic() - t0
@@ -858,6 +920,13 @@ def main() -> int:
              'orange so you can see what the filter is dropping.',
     )
     ap.add_argument(
+        '--enhance', action='store_true',
+        help='also decode a CLAHE-boosted variant of each frame '
+             'and keep the longest payload per location. Roughly '
+             'doubles decode CPU but usually recovers full '
+             'multi-character payloads on soft/blurry frames.',
+    )
+    ap.add_argument(
         '--port', type=int, default=8765,
         help='HTTP port to serve MJPEG on (default 8765)',
     )
@@ -915,6 +984,7 @@ def main() -> int:
         min_marker_px=args.min_marker_px,
         min_payload_len=args.min_payload_len,
         debug_decode=args.debug_decode,
+        enhance=args.enhance,
     )
     if not worker.start():
         return 2
