@@ -269,6 +269,9 @@
   }
 
   async function pollEngPosition() {
+    if (Ultra.isUserCmdBusy && Ultra.isUserCmdBusy()) {
+      return;
+    }
     try {
       const r = await fetch(
         '/api/stm32/position?lift=true',
@@ -277,6 +280,103 @@
       const d = await r.json();
       updatePositionDisplay(d);
     } catch (_) { /* ignore */ }
+  }
+
+  /* Update All -- synchronous snapshot of every subsystem the
+   * engineering page exposes on the left/right status panels.
+   * Hits /api/stm32/status (which aggregates gantry + lift + door
+   * + pump + centrifuge in one round trip) plus /position for the
+   * homed LEDs.  Logs each step so the user sees feedback even
+   * when a subsystem is offline. */
+  async function updateAll() {
+    if (!engConnected) {
+      engLog('Update All: not connected');
+      return;
+    }
+    const btn = $('#eng-update-all');
+    if (btn) btn.disabled = true;
+    const t0 = performance.now();
+    engLog('Update All: refreshing...');
+    try {
+      const [posR, statR] = await Promise.all([
+        fetch('/api/stm32/position?lift=true')
+          .catch(() => null),
+        fetch('/api/stm32/status')
+          .catch(() => null),
+      ]);
+      let posD = null;
+      let statD = null;
+      if (posR && posR.ok) {
+        try { posD = await posR.json(); } catch (_) {}
+      }
+      if (statR && statR.ok) {
+        try { statD = await statR.json(); } catch (_) {}
+      }
+      if (posD) updatePositionDisplay(posD);
+      else if (statD) updatePositionDisplay(statD);
+
+      const parts = [];
+      const merged = statD || posD || {};
+      const lift = merged.lift || {};
+      const g = merged.gantry || {};
+      if (typeof g.x_mm === 'number') {
+        parts.push(
+          `pos=(${g.x_mm.toFixed(2)},`
+          + `${g.y_mm.toFixed(2)},`
+          + `${g.z_mm.toFixed(2)})mm`,
+        );
+      }
+      if (typeof lift.position_mm === 'number') {
+        parts.push(
+          `lift=${lift.position_mm.toFixed(2)}mm`,
+        );
+      }
+      if (merged.door) {
+        const d = merged.door;
+        const dst = d.door_open
+          ? 'open' : (d.door_closed ? 'closed' : '?');
+        parts.push(`door=${dst}`);
+      }
+      if (merged.pump) {
+        const p = merged.pump;
+        if (typeof p.position_steps === 'number') {
+          parts.push(
+            `pump_pos=${p.position_steps}`,
+          );
+        }
+        if (p.is_initialized != null) {
+          parts.push(
+            `pump_init=${p.is_initialized ? 'y' : 'n'}`,
+          );
+        }
+      }
+      if (merged.centrifuge) {
+        const c = merged.centrifuge;
+        if (typeof c.rpm === 'number') {
+          parts.push(`cf_rpm=${c.rpm}`);
+        }
+        if (c.locked != null) {
+          parts.push(
+            `cf_lock=${c.locked ? 'y' : 'n'}`,
+          );
+        }
+      }
+      const dt = (performance.now() - t0).toFixed(0);
+      if (parts.length === 0) {
+        engLog(
+          `Update All: no data (${dt} ms) -- `
+          + `STM32 may be disconnected`,
+        );
+      } else {
+        engLog(
+          `Update All (${dt} ms): ${parts.join(' ')}`,
+        );
+      }
+    } catch (e) {
+      engLog(`Update All ERR: ${e}`);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   let jogBusy = false;
@@ -410,8 +510,7 @@
     $('#eng-estop').onclick = () =>
       engCmd('abort', {}, false, 5);
 
-    $('#eng-update-all').onclick = () =>
-      pollEngPosition();
+    $('#eng-update-all').onclick = () => updateAll();
 
     const autoCb = $('#eng-auto-update');
     if (autoCb) {
@@ -1223,8 +1322,11 @@
     let ahPollId = null;
 
     async function ahRefreshStatus() {
+      if (Ultra.isUserCmdBusy && Ultra.isUserCmdBusy()) {
+        return;
+      }
       const r = await engCmd(
-        'air_heater_get_status', {}, false, 3,
+        'air_heater_get_status', {}, false, 3, 0.3,
       );
       if (!r) return;
       const s = (k) => r[k] != null ? r[k] : '--';
@@ -1408,6 +1510,9 @@
     const pidState = $('#eng-fc-pid-state');
 
     async function fcPoll() {
+      if (Ultra.isUserCmdBusy && Ultra.isUserCmdBusy()) {
+        return;
+      }
       const r = await fcRefresh(true);
       if (!r) return;
       if (typeof r.temp_c === 'number') {
@@ -1864,8 +1969,12 @@
         }
         if (autoCb.checked && engConnected) {
           engTempTimer = setInterval(async () => {
+            if (Ultra.isUserCmdBusy
+                && Ultra.isUserCmdBusy()) {
+              return;
+            }
             const r = await engCmd(
-              'temp_get_status', {}, false, 3,
+              'temp_get_status', {}, false, 3, 0.3,
             );
             $('#eng-temp-status-box').textContent =
               r ? JSON.stringify(r, null, 2)

@@ -13,6 +13,13 @@
 
   const WAIT_DONE_CMDS = new Set([]);
 
+  /* Count of user-initiated engCmd() calls currently in flight.
+   * Polling helpers (fcPoll, engTempTimer, pollEngPosition, etc.)
+   * peek at Ultra.isUserCmdBusy() and skip their tick when a click
+   * is waiting on the UART -- keeps the serial path clear so the
+   * user's command isn't queued behind four status pings. */
+  let userCmdInflight = 0;
+
   async function engCmd(
     cmd, params = {},
     waitDone = undefined,
@@ -30,6 +37,15 @@
     if (lockTimeout !== undefined) {
       body.lock_timeout = lockTimeout;
     }
+    /* Only user clicks (no explicit lockTimeout) count toward the
+     * busy gate -- polling calls pass lockTimeout precisely to opt
+     * out of contending with clicks. */
+    const isUserCall = lockTimeout === undefined;
+    if (isUserCall) userCmdInflight += 1;
+    const t0 = performance.now();
+    const paramStr = Object.keys(params).length
+      ? ' ' + JSON.stringify(params) : '';
+    engLog(`TX ${cmd}${paramStr}`);
     try {
       const res = await fetch(
         '/api/stm32/command', {
@@ -43,21 +59,39 @@
       if (res.status === 503 && lockTimeout != null) {
         return null;
       }
-      const j = await res.json();
+      let j = null;
+      try {
+        j = await res.json();
+      } catch (_) {
+        engLog(
+          `ERR ${cmd}: HTTP ${res.status} `
+          + `(no JSON body)`,
+        );
+        return null;
+      }
+      const dt = (performance.now() - t0).toFixed(0);
       if (!res.ok) {
         engLog(
-          `ERR ${cmd}: ${j.detail || res.status}`,
+          `ERR ${cmd}: ${j.detail || res.status} `
+          + `(${dt} ms)`,
         );
         return null;
       }
       engLog(
-        `${cmd}: ${JSON.stringify(j.response)}`,
+        `${cmd} (${dt} ms): `
+        + `${JSON.stringify(j.response)}`,
       );
       return j.response;
     } catch (e) {
       engLog(`ERR ${cmd}: ${e}`);
       return null;
+    } finally {
+      if (isUserCall) userCmdInflight -= 1;
     }
+  }
+
+  function isUserCmdBusy() {
+    return userCmdInflight > 0;
   }
 
   function engLog(msg) {
@@ -181,6 +215,7 @@
     hexDV,
     engCmd,
     engLog,
+    isUserCmdBusy,
     drawTimeSeries,
     wireSlider,
     statusDump,
