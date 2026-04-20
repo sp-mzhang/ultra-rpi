@@ -52,6 +52,33 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                        'connect engineering',
             )
 
+        # Refuse while the state machine needs the MSG_STATUS
+        # stream.  /stm32/connect stops the monitor and takes
+        # the UART exclusively, which would wedge the SM in
+        # IDLE / SELF_CHECK / AWAITING_PROTOCOL_START because
+        # no drawer events would ever be seen.
+        sm = app._state_machine
+        if sm is not None:
+            from ultra.services.state_machine import (
+                SystemState,
+            )
+            _SM_MONITOR_STATES = {
+                SystemState.IDLE,
+                SystemState.DRAWER_OPEN_LOAD_CARTRIDGE,
+                SystemState.SELF_CHECK,
+                SystemState.AWAITING_PROTOCOL_START,
+            }
+            if sm.state in _SM_MONITOR_STATES:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        'State machine is using the STM32 '
+                        f'UART (state={sm.state.value}) -- '
+                        'stop the state machine first '
+                        'before connecting engineering'
+                    ),
+                )
+
         from ultra.hw.stm32_monitor import (
             STM32StatusMonitor,
         )

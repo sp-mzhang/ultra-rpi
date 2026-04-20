@@ -212,6 +212,62 @@ class UltraStateMachine:
             args=('cartridge_inserted',),
         ).start()
 
+    def _ensure_monitor_running(self) -> None:
+        '''Re-start STM32StatusMonitor if something stopped it.
+
+        The engineering /stm32/connect endpoint, firmware
+        updates, and protocol execution all call
+        STM32StatusMonitor.stop_active() so they can take
+        /dev/ttyAMA3 exclusively.  If one of them forgets to
+        restart the monitor (e.g. user opened the engineering
+        panel and never clicked Disconnect), the SM would sit
+        forever in IDLE / SELF_CHECK / AWAITING_PROTOCOL_START
+        because no MSG_STATUS frames are being read and the
+        drawer events never fire.
+
+        This helper is called on entry to every state that
+        awaits a drawer event.  It releases the engineering
+        interface if it is still holding the UART, then
+        restarts the monitor.  Safe to call when the monitor
+        is already running -- it's a no-op in that case.
+        '''
+        if self._monitor is None:
+            return
+        if getattr(self._monitor, '_running', False):
+            return
+
+        try:
+            from ultra.gui._eng_state import eng_stm32
+            iface = eng_stm32.get('iface')
+            if iface is not None:
+                LOG.warning(
+                    'Engineering STM32 iface is holding the '
+                    'UART -- releasing it so the monitor can '
+                    'see drawer events',
+                )
+                try:
+                    iface.disconnect()
+                except Exception as err:
+                    LOG.warning(
+                        'iface.disconnect failed: %s', err,
+                    )
+                eng_stm32['iface'] = None
+        except Exception as err:
+            LOG.debug(
+                'Could not inspect engineering iface: %s', err,
+            )
+
+        LOG.info(
+            'Restarting STM32StatusMonitor so state machine '
+            'can receive drawer events',
+        )
+        try:
+            self._monitor.start()
+        except Exception as err:
+            LOG.error(
+                'Failed to restart STM32StatusMonitor: %s', err,
+            )
+
     def _seed_open_if_level(self) -> None:
         '''Fire drawer_opened_event if the door is already open.
 
@@ -663,6 +719,7 @@ class UltraStateMachine:
         LOG.info(
             'IDLE -- waiting for drawer open',
         )
+        self._ensure_monitor_running()
         self.drawer_opened_event.clear()
         self._seed_open_if_level()
         await self.drawer_opened_event.wait()
@@ -677,6 +734,7 @@ class UltraStateMachine:
         self._publish_event('drawer_open')
         self._schedule_cartridge_inserted()
         LOG.info('Waiting for cartridge load + close')
+        self._ensure_monitor_running()
         self.drawer_closed_event.clear()
         self._seed_closed_if_level()
         await self.drawer_closed_event.wait()
@@ -699,6 +757,7 @@ class UltraStateMachine:
             'Waiting for 2nd drawer open '
             '(blood sample)',
         )
+        self._ensure_monitor_running()
         self.drawer_opened_event.clear()
         self._seed_open_if_level()
         await self.drawer_opened_event.wait()
@@ -714,6 +773,7 @@ class UltraStateMachine:
             'Awaiting blood sample -- '
             'waiting for close',
         )
+        self._ensure_monitor_running()
         self.drawer_closed_event.clear()
         self._seed_closed_if_level()
         await self.drawer_closed_event.wait()
