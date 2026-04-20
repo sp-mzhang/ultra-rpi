@@ -6,10 +6,11 @@ description: >
   spin and shake skipped. 6 reagent dispenses on
   cartridge port A: Hydrophilic, DI water, PBST
   (120 s chip warm wait + 2-stage fast/slow), Sample
-  Buffer #1, Sample, Sample Buffer #2. One tip per
-  reagent, pre-flight LLD, analysis trigger after
-  the final dispense, then lock. Air slug 25 uL,
-  aspirate 20 uL/s, chip temp 32 C.
+  Buffer #1, Sample (aspirated directly from the
+  serum tube via centrifuge rotation), Sample Buffer
+  #2. One tip per reagent, pre-flight LLD, analysis
+  trigger after the final dispense, then lock. Air
+  slug 25 uL, aspirate 20 uL/s, chip temp 32 C.
   Aspirate volumes are CSV + 20 uL on every reagent
   so the tip always carries a 20 uL liquid cushion
   beyond the cart dispense volume; cart dispense
@@ -54,7 +55,12 @@ wells:
   M3: {loc: 35, reagent: DI Water,      volume_ul: 270}  # asp 210 (CSV 190 + 20)
   M5: {loc: 37, reagent: PBST,          volume_ul: 280}  # asp 220 (CSV 200 + 20)
   S9: {loc: 29, reagent: Sample Buffer, volume_ul: 240}  # asp 90 x2 (CSV 70 + 20)
-  M9: {loc: 41, reagent: Samples,       volume_ul: 140}  # asp 90 (CSV 70 + 20)
+
+  # Sample/serum tube on the centrifuge carousel.  CSV E1
+  # expects 70 uL aspirated; with the +20 uL cushion we pull
+  # 90 uL, so load at least ~150 uL into the tube to give LLD
+  # ~60 uL of headroom.
+  SERUM: {loc: 18, reagent: Sample, volume_ul: 150}
 
   # Cartridge target
   PP4: {loc: 11, reagent: Cartridge, volume_ul: 0}
@@ -215,23 +221,78 @@ phases:
         from_id: 4
         to_id: 5
 
-      # --- Sample (M9, CSV E1) ---
+      # --- Sample (SERUM tube, CSV E1) ---
+      # The sample comes from the serum tube on the centrifuge
+      # carousel instead of a pre-loaded S/M well, so we split
+      # the CSV row into two halves with a rotate-aspirate-
+      # rotate-dispense sequence (same pattern as crp_ultra).
+      #
       # CSV rows 21-24: air 25 @ 20, asp 70 @ 20,
-      # cart 60 @ 0.25 (15 uL/min), no reasp,
-      # empty 35 @ 33.3.  asp_vol = CSV + 20; tip returns
-      # 90 + 25 - 60 + 0 = 55 uL to M9.
+      # cart 60 @ 0.25 (15 uL/min), no reasp, empty 35 @ 33.3.
+      # asp_vol = CSV + 20 uL cushion = 90 uL; tip preload into
+      # the cart dispense is 90 liquid + 25 air = 115 uL.
+      # Tip returns 115 - 60 + 0 = 55 uL to SERUM.
+
+      - type: move_to_location
+        label: Move to serum port
+        well: SERUM
+
+      - type: centrifuge_goto_serum
+        label: Rotate to serum position
+
+      - type: smart_aspirate
+        label: Aspirate Sample from serum tube
+        well: SERUM
+        volume: 90
+        speed: 20.0
+        air_slug: 25
+        piston_reset: true
+        stream: true
+
+      - type: home_z
+        label: Home Z after serum aspirate
+
+      - type: centrifuge_goto_pipette
+        label: Rotate to pipette position
+
       - type: reagent_transfer
         label: cart_dispense_Sample
-        source: M9
+        source: SERUM
         target: PP4
-        asp_vol: 90
+        asp_vol: 0
         cart_vol: 60
-        asp_speed: 20.0
         cart_vel: 0.25
-        air_slug: 25
         reasp_ul: 0
-        return_speed: 33.3
+        skip_aspirate: true
+        skip_return: true
+        tip_preload_ul: 115
         stream: true
+
+      # Return the ~55 uL cushion (residual serum + air slug)
+      # to the SERUM tube.  The cart dispense left the tip
+      # above PP4 with the carousel at the pipette position,
+      # so we retract Z, rotate the carousel so SERUM is back
+      # under the serum port, blow the remainder into the
+      # tube, then rotate forward again so subsequent reagent
+      # dispenses can reach PP4.
+      - type: home_z
+        label: Home Z before rotate-to-serum
+
+      - type: centrifuge_goto_serum
+        label: Rotate back to serum for cushion return
+
+      - type: well_dispense
+        label: Return Sample cushion to serum tube
+        well: SERUM
+        volume: 55
+        speed: 33.3
+        blowout: true
+
+      - type: home_z
+        label: Home Z after serum return
+
+      - type: centrifuge_goto_pipette
+        label: Rotate back to pipette position
 
       - type: tip_swap
         label: Tip swap 5 -> 6
