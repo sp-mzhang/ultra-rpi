@@ -311,9 +311,20 @@ def _decode_markers(
     rejected: list[dict] = []
     for det in raw:
         r = det.rect
-        left, bottom_from_bot, w, hh = (
-            r.left, r.top, r.width, r.height,
+        # pylibdmtx may return signed width/height that encode the
+        # marker's flow direction (rotation in libdmtx's pixel
+        # walker). Normalise to a positive box for filtering and
+        # corner construction; keep the sign in `flow` for debug.
+        raw_left, raw_bottom_from_bot = r.left, r.top
+        raw_w, raw_hh = r.width, r.height
+        w = abs(raw_w)
+        hh = abs(raw_hh)
+        left = raw_left if raw_w >= 0 else raw_left + raw_w
+        bottom_from_bot = (
+            raw_bottom_from_bot if raw_hh >= 0
+            else raw_bottom_from_bot + raw_hh
         )
+
         payload = det.data.decode('utf-8', errors='replace')
         top = h - bottom_from_bot - hh
         bl = (left, top + hh)
@@ -330,6 +341,7 @@ def _decode_markers(
             'center_px': (cx, cy),
             'orientation_deg': ori,
             'size_px': (w, hh),
+            'flow': (raw_w, raw_hh),
         }
         if w < min_marker_px or hh < min_marker_px:
             marker['reject_reason'] = f'size<{min_marker_px}px'
