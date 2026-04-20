@@ -554,31 +554,36 @@ def pack_move_gantry(
         y_mm: float | None = None,
         z_mm: float | None = None,
         speed: float = 0.0,
+        z_speed: float = 0.0,
 ) -> bytes:
     '''Pack CMD_MOVE_GANTRY payload.
 
-    All positions in mm → µm on wire.  Speed in mm/s → 0.1 mm/s.
-    Firmware converts µm → µsteps internally for each axis.
+    All positions in mm -> um on wire. Speeds in mm/s -> 0.1 mm/s.
+    Firmware converts um -> usteps internally for each axis.
 
     Args:
-        seq  : sequence number.
-        x_mm : absolute X in mm; None = skip axis.
-        y_mm : absolute Y in mm; None = skip axis.
-        z_mm : absolute Z in mm; None = skip axis.
-        speed: cruise speed in mm/s; 0 = firmware default.
+        seq    : sequence number.
+        x_mm   : absolute X in mm; None = skip axis.
+        y_mm   : absolute Y in mm; None = skip axis.
+        z_mm   : absolute Z in mm; None = skip axis.
+        speed  : XY cruise speed in mm/s; 0 = firmware default.
+        z_speed: Z  cruise speed in mm/s; 0 = firmware default.
+                 Firmware still clamps Z at GANTRY_Z_MAX_SPS
+                 (~18 mm/s).
 
     Returns:
-        Packed bytes: struct.pack('<IiiiH', ...) = 18 bytes.
+        Packed bytes: struct.pack('<IiiiHH', ...) = 20 bytes.
     '''
     def _to_um(mm):
         if mm is None:
             return _INT32_MAX
         return int(round(mm * 1000.0))
 
-    speed_01mms = int(round(speed * 10.0))
-    return struct.pack('<IiiiH', seq,
+    speed_01mms   = int(round(speed   * 10.0))
+    z_speed_01mms = int(round(z_speed * 10.0))
+    return struct.pack('<IiiiHH', seq,
                        _to_um(x_mm), _to_um(y_mm), _to_um(z_mm),
-                       speed_01mms)
+                       speed_01mms, z_speed_01mms)
 
 
 def pack_lift_move(

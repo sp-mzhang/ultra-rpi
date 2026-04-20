@@ -26,6 +26,31 @@ reader:
 # setting the same key (e.g. ``pick_depth_mm: -24.0``) on a
 # ``tip_pick`` / ``tip_swap`` / ``tip_return`` step.
 gantry:
+  # Per-axis cruise speeds applied to every move the Pi issues
+  # (``move_gantry``, ``move_to_location``, ``move_z_axis``) when
+  # the caller does not pass an explicit ``speed`` / ``z_speed``
+  # field. Values are in mm/s.
+  #
+  # Firmware also carries its own axis defaults
+  # (``cfg->default_speed_sps`` in ``STM32CubeIDE/Drivers/gantry_hw.h``)
+  # and enforces a Z ceiling (``GANTRY_Z_MAX_SPS`` = 18 mm/s). A Z
+  # value above 18 mm/s here will be silently clamped by the firmware.
+  #
+  # XY is a coordinated move so the firmware carries one speed on
+  # the wire; when x_speed_mms and y_speed_mms differ, the smaller
+  # of the two is sent so neither axis is over-driven.
+  #
+  # Set any value to 0 to fall back to the firmware axis default.
+  motion:
+    # Conservative bump from the pre-config operational default of
+    # 25 mm/s. Firmware can sustain up to ~150 mm/s (flat-torque
+    # ceiling is ~300 mm/s) -- raise these once 50 mm/s is validated.
+    x_speed_mms: 50.0
+    y_speed_mms: 50.0
+    # Z is lead-screw; firmware clamps at GANTRY_Z_MAX_SPS (~18 mm/s).
+    # Matches the old MOVE_GANTRY Z override for backward compatibility.
+    z_speed_mms: 10.0
+
   tip_swap:
     # Absolute gantry Z target during tip pickup, in mm from
     # home (negative = down). Firmware default: -22.0 mm.

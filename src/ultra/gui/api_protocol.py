@@ -140,6 +140,8 @@ def create_protocol_router(app: 'Application') -> APIRouter:
                     status_code=500,
                     detail='Failed to connect to STM32',
                 )
+            if hasattr(stm32, 'apply_motion_defaults_from_config'):
+                stm32.apply_motion_defaults_from_config(app.config)
         runner.stm32 = stm32
         runner._calibration_version = req.calibration_version
         runner._recipe_slug = req.recipe

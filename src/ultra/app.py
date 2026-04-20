@@ -67,6 +67,11 @@ class Application:
         else:
             self._start_monitor(loop)
 
+        if self._stm32 is not None and hasattr(
+                self._stm32, 'apply_motion_defaults_from_config',
+        ):
+            self._stm32.apply_motion_defaults_from_config(self.config)
+
         from ultra.gui.server import create_app
         gui_cfg = self.config.get('gui', {})
         host = gui_cfg.get('host', '0.0.0.0')
@@ -241,6 +246,12 @@ class Application:
                         )
                         sm.protocol_done.set()
                         continue
+                    if hasattr(
+                        stm32, 'apply_motion_defaults_from_config',
+                    ):
+                        stm32.apply_motion_defaults_from_config(
+                            self.config,
+                        )
                 runner.stm32 = stm32
 
                 loop = asyncio.get_running_loop()
@@ -332,6 +343,12 @@ class Application:
                     ),
                     baud=stm32_cfg.get('baud', 921600),
                 )
+                if hasattr(
+                    stm32, 'apply_motion_defaults_from_config',
+                ):
+                    stm32.apply_motion_defaults_from_config(
+                        self.config,
+                    )
 
             use_mock = os.environ.get(
                 'ULTRA_MOCK', '',

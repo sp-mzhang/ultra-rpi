@@ -101,6 +101,8 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             ),
             baud=stm32_cfg.get('baud', 921600),
         )
+        if hasattr(stm32, 'apply_motion_defaults_from_config'):
+            stm32.apply_motion_defaults_from_config(app.config)
         loop = asyncio.get_running_loop()
         ok = await loop.run_in_executor(
             None, stm32.connect,

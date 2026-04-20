@@ -123,6 +123,15 @@ class STM32Interface:
         self._abort_flag = threading.Event()
         self._motor_telem_cb = None
 
+        # Gantry motion defaults (mm/s). Applied when a caller issues
+        # a move command without an explicit speed field. Zero = fall
+        # back to the firmware axis default (cfg->default_speed_sps).
+        # Overwritten at startup by set_motion_defaults() from YAML
+        # config (see gantry.motion in ultra_default.yaml).
+        self._mot_x_mms: float = 0.0
+        self._mot_y_mms: float = 0.0
+        self._mot_z_mms: float = 0.0
+
         # ---- Two-thread serial pipeline ----
         # The previous design held a single self._lock around every
         # send/receive cycle, which starved the always-on telem
@@ -447,6 +456,81 @@ class STM32Interface:
             cb: Callable(dict) or None to unregister.
         '''
         self._accel_stream_cb = cb
+
+    def set_motion_defaults(
+            self,
+            x_mms: float = 0.0,
+            y_mms: float = 0.0,
+            z_mms: float = 0.0,
+    ) -> None:
+        '''Set default gantry cruise speeds for unqualified moves.
+
+        Any move command (``move_gantry``, ``move_to_location``,
+        ``move_z_axis``) that omits an explicit ``speed`` / ``z_speed``
+        field will fall back to these defaults when the frame is
+        packed. Zero means "leave it as 0 and let the firmware pick
+        its own axis default" (``cfg->default_speed_sps`` in
+        ``gantry_hw.h``).
+
+        Typically called once at startup from ``app.py`` using the
+        ``gantry.motion`` block of ``config/ultra_default.yaml``.
+
+        Args:
+            x_mms: X-axis cruise speed in mm/s (0 = firmware default).
+            y_mms: Y-axis cruise speed in mm/s (0 = firmware default).
+            z_mms: Z-axis cruise speed in mm/s (0 = firmware default).
+                   Note: firmware still clamps Z at GANTRY_Z_MAX_SPS
+                   (~18 mm/s); higher requests are saturated there.
+        '''
+        self._mot_x_mms = max(0.0, float(x_mms))
+        self._mot_y_mms = max(0.0, float(y_mms))
+        self._mot_z_mms = max(0.0, float(z_mms))
+        LOG.info(
+            'Gantry motion defaults: '
+            f'x={self._mot_x_mms:g} mm/s '
+            f'y={self._mot_y_mms:g} mm/s '
+            f'z={self._mot_z_mms:g} mm/s',
+        )
+
+    def apply_motion_defaults_from_config(
+            self,
+            config: dict | None,
+    ) -> None:
+        '''Apply gantry.motion cruise-speed defaults from a config dict.
+
+        Reads the ``gantry.motion`` block of ``config`` (typically
+        ``config/ultra_default.yaml`` or a merged runtime config) and
+        forwards it to ``set_motion_defaults``. Missing keys default
+        to 0 (firmware axis default).
+
+        Args:
+            config: Full Ultra config dict, or None to skip.
+        '''
+        motion = (
+            (config or {}).get('gantry', {}).get('motion', {}) or {}
+        )
+        self.set_motion_defaults(
+            x_mms=float(motion.get('x_speed_mms', 0.0) or 0.0),
+            y_mms=float(motion.get('y_speed_mms', 0.0) or 0.0),
+            z_mms=float(motion.get('z_speed_mms', 0.0) or 0.0),
+        )
+
+    def _default_xy_mms(self) -> float:
+        '''Return the default XY cruise speed (mm/s).
+
+        The firmware protocol carries a single XY speed for
+        coordinated moves, so when per-axis defaults differ we fall
+        back to the smaller one (whichever axis is the slow axis
+        wins, keeping the motion within both limits). Returns 0 when
+        neither X nor Y default is set so the firmware axis default
+        kicks in.
+        '''
+        x, y = self._mot_x_mms, self._mot_y_mms
+        if x <= 0.0:
+            return y
+        if y <= 0.0:
+            return x
+        return min(x, y)
 
     def start_telem_reader(self) -> None:
         '''No-op in the two-thread design.
@@ -882,6 +966,9 @@ class STM32Interface:
             return fp.pack_seq(seq)
 
         if cmd_name == 'move_z_axis':
+            z_speed = float(cmd.get('speed', 0.0))
+            if z_speed <= 0.0:
+                z_speed = self._mot_z_mms
             return fp.pack_move_z_axis(
                 seq=seq,
                 position_mm=float(
@@ -890,15 +977,22 @@ class STM32Interface:
                         cmd.get('position', 0),
                     ),
                 ),
-                speed=float(cmd.get('speed', 0.0)),
+                speed=z_speed,
             )
         if cmd_name == 'move_gantry':
+            xy_speed = float(cmd.get('speed', 0.0))
+            if xy_speed <= 0.0:
+                xy_speed = self._default_xy_mms()
+            z_speed = float(cmd.get('z_speed', 0.0))
+            if z_speed <= 0.0:
+                z_speed = self._mot_z_mms
             return fp.pack_move_gantry(
                 seq=seq,
                 x_mm=cmd.get('x_mm'),
                 y_mm=cmd.get('y_mm'),
                 z_mm=cmd.get('z_mm'),
-                speed=float(cmd.get('speed', 0.0)),
+                speed=xy_speed,
+                z_speed=z_speed,
             )
         if cmd_name == 'lift_move':
             return fp.pack_lift_move(
@@ -916,14 +1010,17 @@ class STM32Interface:
                 well_id=cmd.get('well', 0),
             )
         if cmd_name == 'move_to_location':
+            speed_01mms = int(cmd.get('speed_01mms', 0))
+            if speed_01mms <= 0:
+                default_xy_mms = self._default_xy_mms()
+                if default_xy_mms > 0.0:
+                    speed_01mms = int(round(default_xy_mms * 10.0))
             return fp.pack_move_to_location(
                 seq=seq,
                 location_id=int(
                     cmd.get('location_id', 0),
                 ),
-                speed_01mms=int(
-                    cmd.get('speed_01mms', 0),
-                ),
+                speed_01mms=speed_01mms,
             )
         if cmd_name == 'th_power_en':
             return fp.pack_th_power_en(

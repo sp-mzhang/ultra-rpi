@@ -619,7 +619,11 @@ class MoveToLocationStep(StepExecutor):
                 'move_to_location: unknown well ref',
             )
             return False
-        speed = int(params.get('speed_01mms', 250))
+        # speed_01mms = 0 makes stm32_interface fall back to the
+        # gantry.motion defaults from ultra_default.yaml; any
+        # recipe that wants a different speed can still override
+        # by setting speed_01mms on the step.
+        speed = int(params.get('speed_01mms', 0))
         r = runner.stm32.send_command_wait_done(
             cmd={
                 'cmd': 'move_to_location',
@@ -1823,7 +1827,9 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
     ],
     'move_to_location': [
         _p('well', 'string', well_ref=True, required=True),
-        _p('speed_01mms', default=250),
+        # 0 = use gantry.motion defaults from ultra_default.yaml
+        # (applied in stm32_interface.pack_command).
+        _p('speed_01mms', default=0),
     ],
     'tip_pick': [
         _p('tip_id', default=4),
