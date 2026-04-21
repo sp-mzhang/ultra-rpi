@@ -13,6 +13,7 @@ from typing import (
 )
 
 from ultra.services.wifi_provisioning.ble_service import (
+    _BLUEZERO_IMPORT_ERROR,
     BLUEZERO_AVAILABLE,
     STATUS_CONNECTED,
     STATUS_CONNECTING,
@@ -175,8 +176,13 @@ class WiFiProvisioner:
 
         if not BLUEZERO_AVAILABLE:
             LOG.error(
-                'bluezero not available - '
-                'cannot start BLE provisioning',
+                'bluezero import failed (%s) -- cannot start '
+                'BLE provisioning. On Raspberry Pi OS, run: '
+                '`sudo apt install -y python3-dbus python3-gi '
+                'bluez` and recreate the venv with '
+                '`uv venv --system-site-packages` so it can see '
+                'the system python bindings.',
+                _BLUEZERO_IMPORT_ERROR or 'unknown import error',
             )
             return False
 

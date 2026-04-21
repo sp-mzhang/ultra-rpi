@@ -19,29 +19,45 @@ from typing import (
 
 LOG = logging.getLogger(__name__)
 
+_BLUEZERO_IMPORT_ERROR: Optional[str] = None
 try:
     from bluezero import (
         adapter,
         peripheral,
     )
     BLUEZERO_AVAILABLE = True
-except ImportError:
+except Exception as _err:  # noqa: BLE001 -- catch *anything* at import
+    # bluezero pulls in dbus + PyGObject at import time; on Debian
+    # those are apt-only packages (python3-dbus, python3-gi) and
+    # are NOT installed by `uv sync`. If they are missing bluezero
+    # raises ImportError from deep in its __init__; on some setups
+    # it can also raise RuntimeError ("No D-Bus session bus" etc).
     BLUEZERO_AVAILABLE = False
+    _BLUEZERO_IMPORT_ERROR = f'{type(_err).__name__}: {_err}'
     LOG.warning(
-        'bluezero not installed. BLE provisioning disabled. '
-        'Install with: pip install bluezero',
+        'bluezero import failed -- BLE provisioning disabled. '
+        'Error: %s. On Raspberry Pi OS, install the system '
+        'deps: `sudo apt install -y python3-dbus python3-gi '
+        'bluez` and ensure the venv is created with '
+        '`--system-site-packages` (or symlink cv2-style) so it '
+        'can see them.',
+        _BLUEZERO_IMPORT_ERROR,
     )
 
+_DBUS_IMPORT_ERROR: Optional[str] = None
 try:
     import dbus
     import dbus.mainloop.glib
     import dbus.service
     DBUS_AVAILABLE = True
-except ImportError:
+except Exception as _err:  # noqa: BLE001
     DBUS_AVAILABLE = False
+    _DBUS_IMPORT_ERROR = f'{type(_err).__name__}: {_err}'
     LOG.warning(
-        'dbus not available. '
-        'Pairing may require manual confirmation.',
+        'dbus python bindings not available: %s. '
+        'Pairing may require manual confirmation. '
+        'Install with: `sudo apt install -y python3-dbus`',
+        _DBUS_IMPORT_ERROR,
     )
 
 
