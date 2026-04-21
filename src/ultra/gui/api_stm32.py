@@ -656,10 +656,25 @@ def create_stm32_router(app: 'Application') -> APIRouter:
     _last_align_frame: dict = {'jpeg': None, 'ts': 0.0}
 
     def _load_aligner():
-        '''Build a CarouselAligner from the current app config.'''
+        '''Build a CarouselAligner from the current app config.
+
+        ``angle_open_initial_deg`` is sourced from the
+        ``calibration`` block (where the rest of the per-unit
+        tuning lives), so the vision alignment always tracks the
+        same "open-initial" value the firmware station gotos use.
+        '''
         from ultra.vision.carousel_align import CarouselAligner
         cfg = (app.config.get('carousel_align') or {})
-        return CarouselAligner.from_config(cfg), cfg
+        cal = (app.config.get('calibration') or {})
+        open_init = float(
+            cal.get('angle_open_initial_deg', 290.0),
+        )
+        return (
+            CarouselAligner.from_config(
+                cfg, angle_open_initial_deg=open_init,
+            ),
+            cfg,
+        )
 
     def _cache_annotated_frame(frame_bgr, result, side_markers):
         '''Render alignment overlay on ``frame_bgr`` and cache as
@@ -901,6 +916,7 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             result = await loop.run_in_executor(
                 None, lambda: aligner.compute(frame),
             )
+
             # Annotate + cache the frame for GUI preview regardless
             # of whether we end up commanding motion.
             side_markers = None
@@ -917,19 +933,29 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                     'moved': False,
                     'target_001deg': None,
                     'current_001deg': cur_001deg,
+                    'station_001deg': None,
                     'elapsed_s': round(time.time() - t0, 3),
                     'frame_ts': _last_align_frame.get('ts', 0),
                 })
 
             # --- Apply centrifuge correction ---
+            # Target anchors to the side's absolute station angle,
+            # NOT to the current motor position:
+            #     target_motor = station_deg + delta_motor_deg
+            # This is idempotent -- running Align twice cannot
+            # accumulate offset; each run lands at the same
+            # absolute target.
+            #
             # NOTE: centrifuge_move_angle is semi-blocking in firmware
             # (Centrifuge_Service_MoveAngle holds the FSM task on a
             # semaphore up to CENT_ANGLE_SEM_TIMEOUT_MS = 45 s, then
             # sends the RSP with actual_001deg). It does NOT emit
             # MSG_GANTRY_DONE. Use plain send_command so the RSP is
             # the completion signal -- mirroring protocol/steps.py.
+            station_deg = aligner.station_deg(result.side)
+            station_001 = int(round(station_deg * 100)) % 36000
             delta_001 = int(round(result.delta_motor_deg * 100))
-            target_001 = (cur_001deg + delta_001) % 36000
+            target_001 = (station_001 + delta_001) % 36000
             r = await loop.run_in_executor(
                 None,
                 lambda: stm32.send_command(
@@ -962,6 +988,7 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                     ),
                     'target_001deg': target_001,
                     'current_001deg': cur_001deg,
+                    'station_001deg': station_001,
                     'elapsed_s': round(time.time() - t0, 3),
                     'frame_ts': _last_align_frame.get('ts', 0),
                 })
@@ -969,6 +996,7 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                 'moved': True,
                 'target_001deg': target_001,
                 'current_001deg': cur_001deg,
+                'station_001deg': station_001,
                 'elapsed_s': round(time.time() - t0, 3),
                 'frame_ts': _last_align_frame.get('ts', 0),
             })

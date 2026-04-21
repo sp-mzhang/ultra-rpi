@@ -187,13 +187,35 @@ carousel_align:
   decode_timeout_ms: 500
   use_clahe_fallback: true
   sides:
+    # ``station_offset_from_open_deg`` is the side-specific offset
+    # from ``calibration.angle_open_initial_deg`` (see top of this
+    # file). The absolute motor station angle is derived as
+    #
+    #   station_deg = (angle_open_initial_deg + offset) mod 360
+    #
+    # and the alignment endpoint then commands
+    #
+    #   target_motor = station_deg + delta
+    #
+    # where ``delta`` is the camera-measured correction. Because
+    # the target anchors to the station (not to the current motor
+    # angle), running Align twice in a row is idempotent.
+    #
+    # Offsets below mirror the firmware goto-station derivations:
+    #   blister: open_initial - 270  (e.g. 290 -> 20)
+    #   serum:   open_initial - 180  (e.g. 290 -> 110)
+    #   pipette: open_initial -  90  (e.g. 290 -> 200)
     blister:
       markers: ['L', 'T', 'R', 'U']
       reference_deg: -90.0
+      station_offset_from_open_deg: -270
     pipette:
       markers: []                # TODO: fill in when defined
       reference_deg: 0.0
+      station_offset_from_open_deg: -90
   centrifuge:
     move_rpm: 1
-    polarity: 1                  # flip to -1 if motor rotates the
-                                 # wrong way on first on-device test
+    polarity: -1                 # marker angle vs carousel CW slope
+                                 # is +1 on this rig; motor drives
+                                 # carousel CCW -> offset must be
+                                 # applied with opposite sign.

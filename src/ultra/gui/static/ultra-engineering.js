@@ -1195,10 +1195,17 @@
     const tgt = (res.target_001deg === null
       || res.target_001deg === undefined)
       ? null : res.target_001deg / 100.0;
+    const stn = (res.station_001deg === null
+      || res.station_001deg === undefined)
+      ? null : res.station_001deg / 100.0;
+    const stnTxt = (stn === null)
+      ? ''
+      : '  [station=' + stn.toFixed(2) + ' deg]';
     $('#eng-cal-fromto').textContent =
       (cur === null ? '--' : cur.toFixed(2) + ' deg') +
       ' -> ' +
-      (tgt === null ? '--' : tgt.toFixed(2) + ' deg');
+      (tgt === null ? '--' : tgt.toFixed(2) + ' deg') +
+      stnTxt;
     $('#eng-cal-moved').textContent =
       res.moved === true ? 'yes'
         : res.moved === false ? 'no'

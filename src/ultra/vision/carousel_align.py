@@ -170,6 +170,21 @@ class SideConfig:
     name: str
     markers: set[str]
     reference_deg: float
+    # Offset applied to ``angle_open_initial_deg`` to derive the
+    # absolute motor angle where this side is mechanically at the
+    # gantry. Mirrors the firmware station derivations:
+    #   blister: -270, serum: -180, pipette: -90.
+    # The orchestrator commands
+    #   target_motor = station_deg + delta_motor_deg
+    # where station_deg = (angle_open_initial_deg + offset) % 360.
+    station_offset_from_open_deg: float = 0.0
+
+    def station_deg(self, angle_open_initial_deg: float) -> float:
+        '''Return the absolute station angle (0..360) for this side.'''
+        return (
+            angle_open_initial_deg
+            + self.station_offset_from_open_deg
+        ) % 360.0
 
 
 @dataclass
@@ -208,28 +223,58 @@ class CarouselAligner:
         min_markers: int = 2,
         decode_timeout_ms: int = 500,
         use_clahe_fallback: bool = True,
+        angle_open_initial_deg: float = 290.0,
     ) -> None:
         self.sides = sides
         self.polarity = 1 if polarity >= 0 else -1
         self.min_markers = max(1, int(min_markers))
         self.decode_timeout_ms = int(decode_timeout_ms)
         self.use_clahe_fallback = bool(use_clahe_fallback)
+        self.angle_open_initial_deg = float(angle_open_initial_deg)
+
+    def station_deg(self, side_name: str) -> float:
+        '''Absolute station angle for ``side_name`` (0..360).
+
+        Returns 0.0 if the side is unknown.
+        '''
+        side = self.sides.get(side_name)
+        if side is None:
+            return 0.0
+        return side.station_deg(self.angle_open_initial_deg)
 
     @classmethod
-    def from_config(cls, cfg: dict) -> 'CarouselAligner':
+    def from_config(
+        cls,
+        cfg: dict,
+        angle_open_initial_deg: float | None = None,
+    ) -> 'CarouselAligner':
         """Build from the ``carousel_align`` YAML section.
 
-        Missing keys fall back to sane defaults so a partial config
-        still boots (the endpoint raises cleanly if it's truly
-        unusable).
+        ``angle_open_initial_deg`` should come from the recipe /
+        ``calibration`` block; it's passed in explicitly so the
+        aligner doesn't have to reach into the app config. If
+        omitted, falls back to ``carousel_align.angle_open_initial_deg``
+        and finally to 290.
         """
         sides_cfg = (cfg or {}).get('sides', {}) or {}
         sides: dict[str, SideConfig] = {}
         for name, raw in sides_cfg.items():
             markers = set((raw or {}).get('markers') or [])
             ref = float((raw or {}).get('reference_deg', 0.0))
-            sides[name] = SideConfig(name, markers, ref)
+            offset = float(
+                (raw or {}).get(
+                    'station_offset_from_open_deg', 0.0,
+                ),
+            )
+            sides[name] = SideConfig(
+                name, markers, ref,
+                station_offset_from_open_deg=offset,
+            )
         cent = (cfg or {}).get('centrifuge', {}) or {}
+        if angle_open_initial_deg is None:
+            angle_open_initial_deg = float(
+                (cfg or {}).get('angle_open_initial_deg', 290.0),
+            )
         return cls(
             sides=sides,
             polarity=int(cent.get('polarity', 1)),
@@ -240,6 +285,7 @@ class CarouselAligner:
             use_clahe_fallback=bool(
                 (cfg or {}).get('use_clahe_fallback', True),
             ),
+            angle_open_initial_deg=float(angle_open_initial_deg),
         )
 
     # --- detection ------------------------------------------------
