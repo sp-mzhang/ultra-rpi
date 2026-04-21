@@ -12,8 +12,8 @@ No frames are saved to disk.
 '''
 from __future__ import annotations
 
-import glob
 import logging
+import os
 import threading
 import time
 from typing import Generator
@@ -80,9 +80,19 @@ class CameraStream:
         return cap
 
     def _auto_detect(self) -> 'cv2.VideoCapture | None':
-        '''Scan /dev/video* for the first device that produces frames.'''
-        candidates = sorted(glob.glob('/dev/video[0-9]*'))
-        for dev in candidates:
+        '''Scan /dev/video0 .. /dev/video23 in **numeric order**.
+
+        Lexicographic ``glob`` ordering visits video10-19 before
+        video2, which on a Pi hits the bcm2835 ISP pipeline devices
+        (video20-24) first -- each of which takes ~10 s to time out
+        on ``select()``. Numeric iteration finds a USB webcam on a
+        low index immediately, and only degrades to the slow ISP
+        devices at the very end.
+        '''
+        for idx in range(24):
+            dev = f'/dev/video{idx}'
+            if not os.path.exists(dev):
+                continue
             LOG.debug('Probing camera: %s', dev)
             cap = self._try_open(dev)
             if cap is not None:
