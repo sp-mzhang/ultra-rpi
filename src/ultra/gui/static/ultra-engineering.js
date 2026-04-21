@@ -1152,22 +1152,12 @@
   }
 
   /* ---- CAMERA wiring ---- */
+  // The standalone "Camera Stream" panel was removed once the
+  // user-facing camera tab (ultra-panels.js) became the single
+  // place to view the live MJPEG feed. The engineering camera
+  // pane now hosts the carousel-alignment workflow only, which
+  // captures its own annotated frame on demand.
   function wireEngCamera() {
-    const preview = $('#eng-cam-preview');
-    $('#eng-cam-start').onclick = () => {
-      preview.innerHTML =
-        '<img src="/api/camera/stream" alt="Live">';
-      $('#eng-cam-status-lbl').textContent =
-        'Streaming';
-    };
-    $('#eng-cam-stop').onclick = () => {
-      preview.innerHTML =
-        '<span class="eng-dim">' +
-        'Preview (Start stream to see live)' +
-        '</span>';
-      $('#eng-cam-status-lbl').textContent =
-        'Stopped';
-    };
     wireCarouselAlign();
   }
 
