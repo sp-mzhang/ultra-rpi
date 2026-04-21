@@ -620,153 +620,16 @@ def create_stm32_router(app: 'Application') -> APIRouter:
 
     # ---- Camera MJPEG streaming ----
 
-    def _ensure_centrifuge_ready(stm32):
-        '''Bring the BLDC up to an idle/ready state.
-
-        Mirrors what the firmware does internally for
-        ``centrifuge_lock`` / ``centrifuge_unlock`` /
-        ``centrifuge_goto_*``: those are self-contained
-        sequences that power the driver, clear errors, home
-        the encoder if needed, and only then perform motion.
-
-        The raw ``centrifuge_move_angle`` opcode that
-        ``align_carousel`` uses has none of that baked in, so
-        we replicate it here:
-
-          1. Poll ``centrifuge_status``.
-          2. If the driver is offline, ``centrifuge_power`` on
-             and wait for it to come up.
-          3. If latched in ERROR, ``bldc_reset`` (which issues
-             BLDC_STOP_MOTOR + BLDC_CLEAR_ERROR and verifies
-             READY) and re-check.
-          4. If state still isn't idle-like (IDLE / READY /
-             FREE_STOP) with ``|rpm| <= _RPM_IDLE_MAX``,
-             raise 409 -- the motor truly is busy and we
-             shouldn't interrupt it.
-
-        Returns the final (ready) status dict.
-        '''
-        from ultra.protocol.steps import (
-            bldc_reset, check_bldc_errors, log_bldc_health,
-        )
-        import time as _time
-
-        IDLE_STATES = (
-            stm32.CFUGE_ST_IDLE,
-            stm32.CFUGE_ST_READY,
-            5,  # BLDC_STATE_FREE_STOP
-        )
-
-        def _status():
-            r = stm32.send_command(
-                cmd={'cmd': 'centrifuge_status'},
-                timeout_s=5.0,
-            )
-            if not isinstance(r, dict):
-                raise HTTPException(
-                    status_code=503,
-                    detail='centrifuge_status failed',
-                )
-            return r
-
-        log_bldc_health(stm32, 'pre-align')
-        status = _status()
-
-        if not status.get('driver_online', True):
-            LOG.info(
-                'align_carousel: BLDC driver offline; '
-                'powering on',
-            )
-            stm32.send_command(
-                cmd={'cmd': 'centrifuge_power', 'enable': True},
-                timeout_s=5.0,
-            )
-            _time.sleep(1.0)
-            status = _status()
-
-        if int(status.get('state', -1)) == stm32.CFUGE_ST_ERROR:
-            LOG.warning(
-                'align_carousel: BLDC in ERROR '
-                '(flags=%s); running bldc_reset',
-                status.get('error_flags', '0x0000'),
-            )
-            check_bldc_errors(stm32)
-            bldc_reset(stm32)
-            _time.sleep(0.5)
-            status = _status()
-
-        st = int(status.get('state', -1))
-        rpm_abs = abs(int(status.get('rpm', 0)))
-        if (
-            st not in IDLE_STATES
-            or rpm_abs > stm32._RPM_IDLE_MAX
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f'Centrifuge not ready after init '
-                    f'(state={st}, rpm={rpm_abs}, '
-                    f'flags={status.get("error_flags", "?")})'
-                ),
-            )
-        return status
-
-    def _move_angle_with_retry(
-        stm32, target_001, move_rpm, max_retries: int = 3,
-    ):
-        '''centrifuge_move_angle with BLDC reset between attempts.
-
-        Mirrors ``CentrifugeRotateStep._MAX_RETRIES = 3``: on
-        failure, log the error flags, reset the BLDC driver,
-        wait briefly, and try again. Returns the final RSP
-        dict (success or last failure) so the caller can
-        distinguish timeout vs. driver-reject and surface the
-        error_code to the GUI.
-        '''
-        from ultra.protocol.steps import (
-            bldc_reset, check_bldc_errors,
-        )
-        import time as _time
-        last = None
-        for attempt in range(1, max_retries + 1):
-            last = stm32.send_command(
-                cmd={
-                    'cmd': 'centrifuge_move_angle',
-                    'angle_001deg': target_001,
-                    'move_rpm': move_rpm,
-                },
-                timeout_s=60.0,
-            )
-            if (
-                isinstance(last, dict)
-                and last.get('error_code', 0xFF) == 0
-            ):
-                return last
-            LOG.warning(
-                'align_carousel: centrifuge_move_angle '
-                'failed (attempt %d/%d, rsp=%s)',
-                attempt, max_retries, last,
-            )
-            check_bldc_errors(stm32)
-            if attempt < max_retries:
-                bldc_reset(stm32)
-                _time.sleep(0.5)
-        return last
-
     def _get_camera():
-        cam = _camera_state['instance']
-        if cam is None:
-            from ultra.hw.camera import CameraStream
-            cam_cfg = app.config.get('camera', {}) or {}
-            cam = CameraStream(
-                device=cam_cfg.get('device', '/dev/video0'),
-                width=cam_cfg.get('width'),
-                height=cam_cfg.get('height'),
-                fourcc=cam_cfg.get('fourcc'),
-            )
-            _camera_state['instance'] = cam
-        if not cam.is_running:
-            cam.start()
+        # Singleton; shared with the protocol step
+        # (align_to_carousel) so we don't fight over /dev/video0.
+        from ultra.hw.camera_singleton import get_camera
+        cam = get_camera(app.config)
+        # Mirror the legacy ``_camera_state`` dict so other
+        # closures in this module (and downstream code paths
+        # still reading via ``_eng_state.camera``) see a
+        # populated handle.
+        _camera_state['instance'] = cam
         return cam
 
     @router.get('/camera/stream')
@@ -793,23 +656,15 @@ def create_stm32_router(app: 'Application') -> APIRouter:
     def _load_aligner():
         '''Build a CarouselAligner from the current app config.
 
-        ``angle_open_initial_deg`` is sourced from the
-        ``calibration`` block (where the rest of the per-unit
-        tuning lives), so the vision alignment always tracks the
-        same "open-initial" value the firmware station gotos use.
+        Thin wrapper around
+        :func:`ultra.vision.align_runner.build_aligner_from_config`
+        so both the GUI route and the recipe step see the same
+        derivation of station angles, side configs, etc.
         '''
-        from ultra.vision.carousel_align import CarouselAligner
-        cfg = (app.config.get('carousel_align') or {})
-        cal = (app.config.get('calibration') or {})
-        open_init = float(
-            cal.get('angle_open_initial_deg', 290.0),
+        from ultra.vision.align_runner import (
+            build_aligner_from_config,
         )
-        return (
-            CarouselAligner.from_config(
-                cfg, angle_open_initial_deg=open_init,
-            ),
-            cfg,
-        )
+        return build_aligner_from_config(app.config)
 
     def _cache_annotated_frame(frame_bgr, result, side_markers):
         '''Render alignment overlay on ``frame_bgr`` and cache as
@@ -930,9 +785,15 @@ def create_stm32_router(app: 'Application') -> APIRouter:
         auto-classify side by decoded payload (L/T/R/U -> blister;
         other sets defined in ``carousel_align.sides`` -> that side),
         compute offset vs that side's reference angle, rotate the
-        centrifuge to cancel, LED off. Refuses if any validation
-        fails (no markers, no side match, centrifuge busy).'''
-        import time
+        centrifuge to cancel, LED off. Refuses if a recipe is
+        currently running.
+
+        Body of the work is in
+        :func:`ultra.vision.align_runner.run_alignment`; the recipe
+        step ``align_to_carousel`` calls the same helper so both
+        paths execute identical logic.
+        '''
+        from ultra.vision.align_runner import run_alignment
 
         stm32 = get_eng_stm32()
         if stm32 is None:
@@ -948,177 +809,21 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                 detail='Protocol running -- refusing alignment',
             )
         aligner, cfg = _load_aligner()
-        probe = cfg.get('probe_pose') or {}
-        home_z_first = bool(cfg.get('home_z_first', True))
-        led_settle_ms = int(cfg.get('led_settle_ms', 250))
-        cent_cfg = cfg.get('centrifuge') or {}
-        move_rpm = int(cent_cfg.get('move_rpm', 100))
 
         loop = asyncio.get_running_loop()
-        t0 = time.time()
-        led_on = False
-        try:
-            # --- Pre-flight: BLDC motor initialisation ---
-            # Matches the behaviour of firmware-managed sequences
-            # (centrifuge_lock / centrifuge_unlock / goto_*), which
-            # self-contain the motor setup. See
-            # ``_ensure_centrifuge_ready`` for the full recovery
-            # ladder (power-on, bldc_reset on ERROR, final idle
-            # verification).
-            status = await loop.run_in_executor(
-                None, lambda: _ensure_centrifuge_ready(stm32),
-            )
-            cur_001deg = int(status.get('angle_001deg', 0))
-
-            # --- Home Z, then move gantry to probe pose ---
-            if home_z_first:
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: stm32.send_command_wait_done(
-                        cmd={'cmd': 'home_z_axis'},
-                        timeout_s=30.0,
-                    ),
-                )
-                if r is None:
-                    raise HTTPException(
-                        status_code=500,
-                        detail='home_z_axis failed',
-                    )
-            r = await loop.run_in_executor(
-                None,
-                lambda: stm32.send_command_wait_done(
-                    cmd={
-                        'cmd': 'move_gantry',
-                        'x_mm': float(probe.get('x_mm', 0.0)),
-                        'y_mm': float(probe.get('y_mm', 60.0)),
-                        'z_mm': float(probe.get('z_mm', 0.0)),
-                        'speed': float(
-                            probe.get('xy_speed_mms', 40.0),
-                        ),
-                        'z_speed': float(
-                            probe.get('z_speed_mms', 10.0),
-                        ),
-                    },
-                    timeout_s=30.0,
-                ),
-            )
-            if r is None:
-                raise HTTPException(
-                    status_code=500,
-                    detail='move_gantry failed',
-                )
-
-            # --- LED on + settle + capture + detect ---
-            if not stm32.cam_led_set(on=True):
-                raise HTTPException(
-                    status_code=500,
-                    detail='cam_led_set(on) failed',
-                )
-            led_on = True
-            frame = await loop.run_in_executor(
-                None,
-                lambda: _grab_bgr_frame(
-                    settle_ms=led_settle_ms,
-                ),
-            )
-            if frame is None:
-                raise HTTPException(
-                    status_code=503,
-                    detail='No camera frame available',
-                )
-            result = await loop.run_in_executor(
-                None, lambda: aligner.compute(frame),
-            )
-
-            # Annotate + cache the frame for GUI preview regardless
-            # of whether we end up commanding motion.
-            side_markers = None
-            if result.side and result.side in aligner.sides:
-                side_markers = aligner.sides[result.side].markers
-            await loop.run_in_executor(
-                None,
-                lambda: _cache_annotated_frame(
-                    frame, result, side_markers,
-                ),
-            )
-            if result.delta_motor_deg is None:
-                return _result_to_dict(result, {
-                    'moved': False,
-                    'target_001deg': None,
-                    'current_001deg': cur_001deg,
-                    'station_001deg': None,
-                    'elapsed_s': round(time.time() - t0, 3),
-                    'frame_ts': _last_align_frame.get('ts', 0),
-                })
-
-            # --- Apply centrifuge correction ---
-            # Target anchors to the side's absolute station angle,
-            # NOT to the current motor position:
-            #     target_motor = station_deg + delta_motor_deg
-            # This is idempotent -- running Align twice cannot
-            # accumulate offset; each run lands at the same
-            # absolute target.
-            #
-            # NOTE: centrifuge_move_angle is semi-blocking in firmware
-            # (Centrifuge_Service_MoveAngle holds the FSM task on a
-            # semaphore up to CENT_ANGLE_SEM_TIMEOUT_MS = 45 s, then
-            # sends the RSP with actual_001deg). It does NOT emit
-            # MSG_GANTRY_DONE. Use plain send_command so the RSP is
-            # the completion signal -- mirroring protocol/steps.py.
-            #
-            # The move is wrapped in the same 3-attempt +
-            # bldc_reset retry the CentrifugeRotateStep uses, so
-            # a transient BLDC fault doesn't kill the alignment.
-            station_deg = aligner.station_deg(result.side)
-            station_001 = int(round(station_deg * 100)) % 36000
-            delta_001 = int(round(result.delta_motor_deg * 100))
-            target_001 = (station_001 + delta_001) % 36000
-            r = await loop.run_in_executor(
-                None,
-                lambda: _move_angle_with_retry(
-                    stm32, target_001, move_rpm,
-                ),
-            )
-            moved_ok = (
-                isinstance(r, dict)
-                and r.get('error_code', 0xFF) == 0
-            )
-            if not moved_ok:
-                # Keep the captured frame + computed delta in the
-                # response so the GUI can render the preview and
-                # the user can see WHY the move was attempted.
-                err_code = (
-                    r.get('error_code') if isinstance(r, dict) else None
-                )
-                return _result_to_dict(result, {
-                    'moved': False,
-                    'move_error': (
-                        'centrifuge_move_angle_failed'
-                        f' (err={err_code})'
-                        if err_code is not None
-                        else 'centrifuge_move_angle_timeout'
-                    ),
-                    'target_001deg': target_001,
-                    'current_001deg': cur_001deg,
-                    'station_001deg': station_001,
-                    'elapsed_s': round(time.time() - t0, 3),
-                    'frame_ts': _last_align_frame.get('ts', 0),
-                })
-            return _result_to_dict(result, {
-                'moved': True,
-                'target_001deg': target_001,
-                'current_001deg': cur_001deg,
-                'station_001deg': station_001,
-                'elapsed_s': round(time.time() - t0, 3),
-                'frame_ts': _last_align_frame.get('ts', 0),
-            })
-        finally:
-            if led_on:
-                try:
-                    stm32.cam_led_set(on=False)
-                except Exception as exc:
-                    LOG.warning(
-                        'cam_led_set(off) failed: %s', exc,
-                    )
+        result = await loop.run_in_executor(
+            None,
+            lambda: run_alignment(
+                stm32=stm32,
+                aligner=aligner,
+                align_cfg=cfg,
+                get_frame=_grab_bgr_frame,
+                cache_frame=_cache_annotated_frame,
+            ),
+        )
+        # Always include the cached frame timestamp so the GUI
+        # can bust its <img> cache regardless of success.
+        result.payload['frame_ts'] = _last_align_frame.get('ts', 0)
+        return result.payload
 
     return router

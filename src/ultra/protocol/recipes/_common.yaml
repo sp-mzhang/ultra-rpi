@@ -20,16 +20,22 @@ centrifuge_phase:
       label: Shake carousel
 
     - type: centrifuge_spin
-      label: Spin 500 RPM x 5s
+      label: Spin 500 RPM x 5
       rpm: 500
-      duration_s: 360
+      duration_s: 5
 
-    - type: centrifuge_rotate
-      label: Rotate 290 deg
-      angle_001deg: 29000
+    - type: centrifuge_goto_pipette
+      label: Rotate to pipette position
 
-    - type: centrifuge_goto_blister
-      label: Rotate to blister position
+    # Camera-refine the landing at whichever station the
+    # previous goto reached (here: pipette). The step itself
+    # does NOT command a goto -- it auto-detects the visible
+    # side from the decoded marker payloads, anchors to that
+    # side's absolute station angle, and applies the camera-
+    # measured correction. Idempotent: re-running cannot
+    # accumulate drift.
+    - type: align_to_carousel
+      label: Camera-align carousel
 
     - type: lift_move
       label: Lower lift to 15mm
@@ -39,20 +45,9 @@ centrifuge_phase:
       label: Rotate to pipette position
 
 lock_phase:
-  # centrifuge_lock is a macro: firmware's run_lock() already
-  # executes the full 5-step lock (see centrifuge_service.c):
-  #   1. lift to LOCK_PRE_LIFT_MM (28.0 mm, hard-coded)
-  #   2. rotate to angle_lock_initial_deg
-  #      (auto = angle_open_initial_deg - 210 = 80 deg)
-  #   3. lift to lift_high_01mm / 10  (default 38.0 mm)
-  #   4. rotate to angle_lock_end_deg + angle_extra_deg
-  #      (auto = open_init - 180 + 15 = 125 deg)
-  #   5. lift home
-  # Listing those steps explicitly here caused them to run twice,
-  # so we just fire the macro and finish with home_all.
   steps:
     - type: centrifuge_lock
-      label: Lock sequence (28 -> 80 deg -> 38 -> 125 deg -> home)
+      label: Lock cartridge
 
     - type: home_all
       label: Home all (final)

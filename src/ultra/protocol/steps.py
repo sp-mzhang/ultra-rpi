@@ -569,6 +569,117 @@ class CentrifugeGotoBlisterStep(StepExecutor):
         )
 
 
+@step_type('align_to_carousel')
+class AlignToCarouselStep(StepExecutor):
+    '''Camera-align the carousel before lowering the lift.
+
+    Runs the same vision pipeline as the GUI "Align Carousel"
+    button in the engineering tab:
+
+      1. BLDC preflight (power-on / clear errors / verify idle).
+      2. Optional Z-axis home.
+      3. Move gantry to ``carousel_align.probe_pose`` so the
+         toolhead camera sees the labels on the side of the
+         carousel.
+      4. Toolhead camera LED on; wait the configured settle.
+      5. Capture a fresh frame, decode the DataMatrix markers,
+         classify which side is visible (whichever station the
+         previous step rotated the carousel to), average the
+         orientations, and compute a CW correction.
+      6. Anchor the centrifuge target to the *detected* side's
+         absolute station angle (idempotent: re-running this
+         step cannot accumulate offset) and rotate the BLDC to
+         land there with retry + reset on failure.
+      7. LED off (always).
+
+    The step itself does NOT command a station goto -- it
+    refines whatever station the prior recipe step parked the
+    carousel at (e.g. ``centrifuge_goto_pipette`` or
+    ``centrifuge_goto_blister``). The visible side is auto-
+    detected from the decoded marker payloads, so the same
+    step works for any station that has its marker set defined
+    in ``carousel_align.sides`` in the app config.
+
+    Params (YAML):
+        skip_on_error: If True, log + return success even if the
+            alignment failed (e.g. no markers visible). Useful
+            for soft-rolling the feature out before all stickers
+            are in place. Defaults to False -- step failure
+            stops the recipe.
+    '''
+
+    def execute(self, params, runner) -> bool:
+        from ultra.hw.camera_singleton import get_camera
+        from ultra.vision.align_runner import (
+            build_aligner_from_config, run_alignment,
+        )
+
+        cfg = (runner.config.get('carousel_align') or {})
+        if not cfg:
+            LOG.warning(
+                'align_to_carousel: no "carousel_align" config '
+                'block; skipping',
+            )
+            return bool(params.get('skip_on_error', False))
+
+        try:
+            aligner, _ = build_aligner_from_config(runner.config)
+        except Exception as exc:
+            LOG.error(
+                'align_to_carousel: aligner build failed: %s',
+                exc,
+            )
+            return bool(params.get('skip_on_error', False))
+
+        cam = get_camera(runner.config)
+
+        def _grab(settle_ms: int):
+            # Match the GUI's "fresh frame after LED settle"
+            # contract: snapshot a baseline timestamp before
+            # the settle, then wait for a frame captured
+            # strictly after baseline + settle. 5 s extra
+            # budget covers a USB cam mid-reconnect.
+            baseline_ts = cam.latest_frame_ts()
+            settle_s = max(0.0, settle_ms / 1000.0)
+            if settle_s > 0:
+                time.sleep(settle_s)
+            frame, _ts = cam.latest_frame_bgr(
+                newer_than=baseline_ts, wait_s=5.0,
+            )
+            return frame
+
+        result = run_alignment(
+            stm32=runner.stm32,
+            aligner=aligner,
+            align_cfg=cfg,
+            get_frame=_grab,
+            cache_frame=None,  # no GUI preview during recipes
+        )
+        moved = result.payload.get('moved', False)
+        side = result.payload.get('side')
+        delta = result.payload.get('delta_motor_deg')
+        if result.ok:
+            LOG.info(
+                'align_to_carousel: side=%s delta=%.2f deg '
+                'moved=%s',
+                side,
+                float(delta) if delta is not None else 0.0,
+                moved,
+            )
+            return True
+        LOG.error(
+            'align_to_carousel failed: %s (side=%s, delta=%s)',
+            result.reason, side, delta,
+        )
+        if params.get('skip_on_error', False):
+            LOG.warning(
+                'align_to_carousel: continuing because '
+                'skip_on_error=true',
+            )
+            return True
+        return False
+
+
 @step_type('lift_move')
 class LiftMoveStep(StepExecutor):
     '''Move lift to a target height in mm.
@@ -1778,6 +1889,7 @@ STEP_DESCRIPTIONS: dict[str, str] = {
     'centrifuge_goto_serum':   'Rotate centrifuge to serum-access position',
     'centrifuge_goto_pipette': 'Rotate centrifuge to pipette-access position',
     'centrifuge_goto_blister': 'Rotate centrifuge to blister-access position',
+    'align_to_carousel':       'Camera-align carousel before lift drop',
     'lift_move':               'Move lift to a target height in mm',
     'lid':                     'Open or close the lid',
     'move_to_location':        'Move gantry XY to a well/port location',
@@ -1827,6 +1939,9 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
     'centrifuge_goto_serum': [],
     'centrifuge_goto_pipette': [],
     'centrifuge_goto_blister': [],
+    'align_to_carousel': [
+        _p('skip_on_error', 'boolean', default=False),
+    ],
     'lift_move': [
         _p('target_mm', default=18.0),
     ],
