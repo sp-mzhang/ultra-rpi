@@ -187,7 +187,7 @@ carousel_align:
   home_z_first: true             # home Z before the XY move
   probe_pose:
     x_mm: 0.0
-    y_mm: 60.0
+    y_mm: 70.0
     z_mm: 0.0
     xy_speed_mms: 40.0
     z_speed_mms: 10.0
