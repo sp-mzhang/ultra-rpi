@@ -57,8 +57,34 @@ ensure_uv() {
 # --------------- sync environment ---------------
 setup_env() {
     ensure_uv
-    echo "Syncing environment with uv..."
     cd "$PROJECT_DIR"
+
+    # Clean up any stale cross-version symlinks from earlier
+    # versions of start.sh BEFORE uv sync. Otherwise uv cannot
+    # install dbus-python into the venv because the path is a
+    # symlink into /usr/lib/python3/dist-packages (which the
+    # current user cannot write to) and pip/uv tries to update
+    # an existing dbus package and hits a "Permission denied".
+    if [ -d "$VENV_DIR" ]; then
+        VENV_SP=$("$VENV_DIR/bin/python" -c \
+            "import site; print(site.getsitepackages()[0])" \
+            2>/dev/null || true)
+        if [ -n "$VENV_SP" ] && [ -d "$VENV_SP" ]; then
+            for stale in dbus gi _dbus_bindings* \
+                         _dbus_glib_bindings* \
+                         dbus_python-*.egg-info \
+                         PyGObject-*.dist-info; do
+                for f in "$VENV_SP"/$stale; do
+                    if [ -L "$f" ]; then
+                        echo "Removing stale symlink: $f"
+                        rm -f "$f"
+                    fi
+                done
+            done
+        fi
+    fi
+
+    echo "Syncing environment with uv..."
     if timeout 180 env UV_NO_PROGRESS=1 NO_COLOR=1 \
         uv sync \
         --upgrade-package analysis-tools \
@@ -129,24 +155,10 @@ setup_env() {
         }
     fi
 
-    # Clean up any stale cross-version symlinks left by earlier
-    # versions of start.sh (they point at Python 3.13 .so files
-    # and crash the 3.11 interpreter on `import dbus`).
-    VENV_SP=$("$VENV_DIR/bin/python" -c \
-        "import site; print(site.getsitepackages()[0])")
-    for stale in dbus gi _dbus_bindings* _dbus_glib_bindings* \
-                 dbus_python-*.egg-info PyGObject-*.dist-info; do
-        for f in "$VENV_SP"/$stale; do
-            if [ -L "$f" ]; then
-                echo "Removing stale symlink: $f"
-                rm -f "$f"
-            fi
-        done
-    done
-
-    # Re-sync so uv picks up dbus-python/PyGObject/xmltodict that
-    # we just added to pyproject.toml. If compilation fails, we
-    # surface the error instead of silently leaving BLE broken.
+    # If dbus-python / PyGObject couldn't compile during the
+    # initial uv sync (e.g. dev headers were installed just above
+    # by apt), re-run sync now so the bindings actually land in
+    # the venv. Cheap no-op when they're already installed.
     if ! "$VENV_DIR/bin/python" -c "import dbus; import gi" \
             2>/dev/null; then
         echo "Compiling dbus-python + PyGObject into venv..."
