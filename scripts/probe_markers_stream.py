@@ -333,39 +333,58 @@ def _refine_corners(
         return None
     roi = frame_bgr[y0:y1, x0:x1]
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    # Adaptive threshold handles uneven lighting on the cassette.
-    th = cv2.adaptiveThreshold(
+
+    def _best_contour_rect(mask):
+        """Return the best minAreaRect from a binary mask, or None.
+        Shared by the adaptive-threshold and Otsu paths so both
+        use the exact same selection rules."""
+        # Close small gaps between DataMatrix cells so the marker
+        # appears as one solid blob for contour detection.
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(
+            closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+        )
+        if not contours:
+            return None
+        # Pick the contour whose minAreaRect is closest to the bbox
+        # size -- avoids locking onto small noise specks.
+        target_area = max(1.0, w * hh * 0.25)
+        best = None
+        best_score = -1.0
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area < target_area * 0.25:
+                continue
+            rect = cv2.minAreaRect(c)
+            (_, _), (rw, rh), _ = rect
+            if rw < 5 or rh < 5:
+                continue
+            # Prefer large, roughly-square contours.
+            aspect = min(rw, rh) / max(rw, rh)
+            score = area * aspect
+            if score > best_score:
+                best_score = score
+                best = rect
+        return best
+
+    # Primary path: adaptive threshold handles uneven lighting on
+    # the cassette and usually gives clean DataMatrix edges.
+    th_adapt = cv2.adaptiveThreshold(
         gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
         cv2.THRESH_BINARY_INV, 21, 5,
     )
-    # Close small gaps between DataMatrix cells so the marker
-    # appears as one solid blob for contour detection.
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    closed = cv2.morphologyEx(th, cv2.MORPH_CLOSE, kernel)
-    contours, _ = cv2.findContours(
-        closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
-    )
-    if not contours:
-        return None
-    # Pick the contour whose minAreaRect is closest to the bbox
-    # size -- avoids locking onto small noise specks.
-    target_area = max(1.0, w * hh * 0.25)
-    best = None
-    best_score = -1.0
-    for c in contours:
-        area = cv2.contourArea(c)
-        if area < target_area * 0.25:
-            continue
-        rect = cv2.minAreaRect(c)
-        (_, _), (rw, rh), _ = rect
-        if rw < 5 or rh < 5:
-            continue
-        # Prefer large, roughly-square contours.
-        aspect = min(rw, rh) / max(rw, rh)
-        score = area * aspect
-        if score > best_score:
-            best_score = score
-            best = rect
+    best = _best_contour_rect(th_adapt)
+    # Fallback: under ring-LED illumination the ROI is close to
+    # uniformly lit, and Otsu cleanly splits "white background"
+    # from "black marker body". Only used when adaptive found
+    # nothing usable, so existing-working frames are unaffected.
+    if best is None:
+        _, th_otsu = cv2.threshold(
+            gray, 0, 255,
+            cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU,
+        )
+        best = _best_contour_rect(th_otsu)
     if best is None:
         return None
     (cx, cy), (rw, rh), _angle = best
@@ -534,7 +553,16 @@ def _decode_markers(
             'flow': (raw_w, raw_hh),
             'refined': refined is not None,
         }
-        if w < min_marker_px or hh < min_marker_px:
+        # Size filter: use the refined (true visual) extent when
+        # refinement succeeded, otherwise fall back to the raw
+        # libdmtx rect. libdmtx sometimes reports a much smaller
+        # rect than the marker's actual pixel size (it returns
+        # the finder-pattern span, not the full module grid), so
+        # filtering on the raw value throws away clearly-visible
+        # markers. size_px is already (refined_w, refined_h) when
+        # refined, else (w, hh).
+        filt_w, filt_h = size_px
+        if filt_w < min_marker_px or filt_h < min_marker_px:
             marker['reject_reason'] = f'size<{min_marker_px}px'
             rejected.append(marker)
         elif len(payload.strip()) < min_payload_len:
@@ -625,9 +653,15 @@ def _annotate(
         pts = np.array(
             m['corners_px'], dtype=np.int32,
         ).reshape(-1, 1, 2)
+        # Green = real rotated corners; magenta = axis-aligned
+        # bbox fallback (so 0.0 deg is obviously a fallback).
+        outline_color = (
+            (0, 255, 0) if m.get('refined', True)
+            else (255, 0, 255)
+        )
         cv2.polylines(
             out, [pts], isClosed=True,
-            color=(0, 255, 0), thickness=2,
+            color=outline_color, thickness=2,
         )
         cx, cy = m['center_px']
         cv2.circle(
@@ -817,7 +851,10 @@ class StreamWorker:
                         ', '.join(
                             f"{m['payload'][:8]!r}"
                             f"@{m['size_px'][0]}x{m['size_px'][1]}"
-                            f"[{m.get('reject_reason', 'kept')}]"
+                            f"[{m.get('reject_reason', 'kept')}"
+                            f" refined="
+                            f"{'T' if m.get('refined') else 'F'}"
+                            f" ang={m['orientation_deg']:+.1f}]"
                             for m in (last_markers + last_rejected)
                         ),
                     )
