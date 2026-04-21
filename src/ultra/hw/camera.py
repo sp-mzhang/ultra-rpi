@@ -105,14 +105,31 @@ class CameraStream:
         _running: Whether the capture thread is alive.
     '''
 
-    def __init__(self, device: str = '/dev/video0') -> None:
+    def __init__(
+        self,
+        device: str = '/dev/video0',
+        width: int | None = None,
+        height: int | None = None,
+        fourcc: str | None = None,
+    ) -> None:
         '''Initialise the camera stream.
 
         Args:
             device: V4L2 device path or integer index.
                 Defaults to ``/dev/video0``.
+            width: Requested frame width in pixels. ``None`` leaves
+                the UVC driver default (usually 640 px).
+            height: Requested frame height in pixels.
+            fourcc: Four-character pixel format code (e.g. ``"MJPG"``
+                or ``"YUYV"``). ``None`` leaves the driver default.
+                MJPG is almost always what you want for HD webcams
+                -- YUYV at 1280x720 saturates most USB 2 pipes and
+                falls back to ~5 fps on cheap cams.
         '''
         self._device = device
+        self._width = width
+        self._height = height
+        self._fourcc = fourcc
         self._cap = None
         self._frame: bytes | None = None
         self._frame_bgr = None  # latest raw BGR ndarray (for CV consumers)
@@ -123,20 +140,42 @@ class CameraStream:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
-    @staticmethod
-    def _try_open(device) -> 'cv2.VideoCapture | None':
-        '''Try to open a device, return cap if it reads a frame.'''
+    def _try_open(self, device) -> 'cv2.VideoCapture | None':
+        '''Try to open a device, return cap if it reads a frame.
+
+        FOURCC must be set BEFORE width/height on V4L2 -- some
+        drivers ignore the dimension change when the pixel format
+        is reconfigured afterwards. Order here mirrors what works
+        in ``scripts/probe_markers_stream.py``.
+        '''
         try:
             dev = int(device) if str(device).isdigit() else device
         except (ValueError, TypeError):
             dev = device
-        cap = cv2.VideoCapture(dev)
+        cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
         if not cap.isOpened():
             return None
+        if self._fourcc:
+            code = cv2.VideoWriter_fourcc(
+                *self._fourcc.upper()[:4]
+            )
+            cap.set(cv2.CAP_PROP_FOURCC, code)
+        if self._width:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(self._width))
+        if self._height:
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self._height))
         ret, _ = cap.read()
         if not ret:
             cap.release()
             return None
+        actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        LOG.info(
+            'Camera %s negotiated %dx%d (requested %sx%s, fourcc=%s)',
+            device, actual_w, actual_h,
+            self._width or 'default', self._height or 'default',
+            self._fourcc or 'default',
+        )
         return cap
 
     @staticmethod

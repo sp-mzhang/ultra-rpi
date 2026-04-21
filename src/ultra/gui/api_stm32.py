@@ -624,11 +624,13 @@ def create_stm32_router(app: 'Application') -> APIRouter:
         cam = _camera_state['instance']
         if cam is None:
             from ultra.hw.camera import CameraStream
-            cam_cfg = app.config.get('camera', {})
-            device = cam_cfg.get(
-                'device', '/dev/video0',
+            cam_cfg = app.config.get('camera', {}) or {}
+            cam = CameraStream(
+                device=cam_cfg.get('device', '/dev/video0'),
+                width=cam_cfg.get('width'),
+                height=cam_cfg.get('height'),
+                fourcc=cam_cfg.get('fourcc'),
             )
-            cam = CameraStream(device=device)
             _camera_state['instance'] = cam
         if not cam.is_running:
             cam.start()

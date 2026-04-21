@@ -107,6 +107,15 @@ protocol:
 
 camera:
   device: /dev/video0
+  # Explicit capture format. Default UVC mode on most webcams is
+  # 640x480 YUYV which gives ~2-3 px per DataMatrix module at the
+  # carousel-probe pose -- too little for libdmtx to lock a
+  # region. 1280x720 MJPEG roughly doubles the pixels per module
+  # without slowing the USB pipe down. Set ``fourcc: null`` to
+  # leave whatever the driver negotiates.
+  width: 1280
+  height: 720
+  fourcc: MJPG
 
 gui:
   host: 0.0.0.0
