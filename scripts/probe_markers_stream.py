@@ -26,6 +26,7 @@ Usage:
     ./scripts/probe_markers_stream.sh --width 1280 --height 720
     ./scripts/probe_markers_stream.sh --record /tmp/cam_log
     ./scripts/probe_markers_stream.sh --cam-led on     # hold toolhead LED steady
+    ./scripts/probe_markers_stream.sh --disable-autofocus --focus 720
 
   --record DIR    save one annotated PNG per second to DIR for
                   offline review (capped at 600 frames; rolls over)
@@ -38,6 +39,19 @@ Usage:
                   the centrifuge during the session. On exit
                   (Ctrl-C / crash), an atexit hook releases the
                   override so strobe behavior returns to normal.
+  --disable-autofocus
+                  Turn off continuous autofocus via v4l2-ctl
+                  (focus_automatic_continuous=0) at startup.
+                  Restored on exit unless --no-restore-focus is
+                  given. Requires v4l-utils installed.
+  --focus N       Set focus_absolute to N at startup (implies
+                  --disable-autofocus). Range is camera-specific
+                  (on this UVC cam: 0..1023). Sweep values to
+                  find the sharpest for your working distance.
+  --no-restore-focus
+                  Skip restoring the previous AF/focus values on
+                  exit (useful if you want the manual focus to
+                  persist across runs).
 
 Stop with Ctrl-C.
 
@@ -59,6 +73,7 @@ import logging
 import math
 import os
 import re
+import shutil
 import signal
 import socketserver
 import subprocess
@@ -311,94 +326,115 @@ def _refine_corners(
     pylibdmtx only returns Rect(left, top, width, height) -- an
     axis-aligned bbox. Once the marker rotates, that bbox grows
     around the tilted square and drawing it directly no longer
-    outlines the marker. We re-derive the real shape by running
-    minAreaRect on the thresholded ROI.
+    outlines the marker. We re-derive the real shape from dark
+    pixels inside a small padded ROI:
+
+      1. Otsu threshold on the padded grayscale ROI -> binary
+         mask where "1" is dark (the marker body + border).
+      2. Keep only the largest connected dark component so a
+         nearby cassette edge or scratch doesn't skew the fit.
+      3. cv2.minAreaRect on that component's pixels directly
+         -- no contour reconstruction required, so small gaps
+         inside the DataMatrix modules don't matter.
 
     Returns dict with:
-        corners_px: [(x,y) x4] in CCW order from lower-left
+        corners_px: [lower-left, lower-right, upper-right,
+                     upper-left] in image coordinates (Y-down).
         center_px: (cx, cy)
-        orientation_deg: rotation of the marker's bottom edge,
-                         in (-180, 180]
+        orientation_deg: angle of the top edge (upper-left -->
+                         upper-right), in (-180, 180].
+                         0 = axis-aligned marker; positive = CW
+                         tilt in image coordinates (Y grows
+                         downward, so a CW tilt lifts the right
+                         edge).
         width_px, height_px: side lengths of the rotated square
-    or None if thresholding found nothing."""
+        refined: always True when this function returns a dict;
+                 callers use it to distinguish the bbox fallback.
+    or None if no viable component was found."""
     H, W = frame_bgr.shape[:2]
     left, top, w, hh = bbox
-    # Pad a few px so we don't clip the marker; clamp to frame.
-    pad = 6
+    # Pad relative to marker size so thin borders don't get
+    # clipped but we never pull in half the cassette.
+    pad = max(4, int(0.12 * min(w, hh)))
     x0 = max(0, left - pad)
     y0 = max(0, top - pad)
     x1 = min(W, left + w + pad)
     y1 = min(H, top + hh + pad)
-    if x1 - x0 < 4 or y1 - y0 < 4:
+    if x1 - x0 < 8 or y1 - y0 < 8:
         return None
     roi = frame_bgr[y0:y1, x0:x1]
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    # Adaptive threshold handles uneven lighting on the cassette.
-    th = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-        cv2.THRESH_BINARY_INV, 21, 5,
+    # Otsu picks a global threshold per ROI. Under the ring LED
+    # the ROI is close to uniformly lit and Otsu cleanly splits
+    # "white background" from "black marker".
+    _, th = cv2.threshold(
+        gray, 0, 255,
+        cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU,
     )
-    # Close small gaps between DataMatrix cells so the marker
-    # appears as one solid blob for contour detection.
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    closed = cv2.morphologyEx(th, cv2.MORPH_CLOSE, kernel)
-    contours, _ = cv2.findContours(
-        closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+    # A single dilation (not closing) bridges the 1-2 px gaps
+    # inside DataMatrix modules without eating the outer L
+    # finder pattern on small markers.
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    th = cv2.dilate(th, kernel, iterations=1)
+    # Keep only the largest connected dark component in the ROI
+    # so a nearby scratch/edge doesn't distort minAreaRect.
+    num, labels, stats, _ = cv2.connectedComponentsWithStats(
+        th, connectivity=8,
     )
-    if not contours:
+    if num <= 1:
         return None
-    # Pick the contour whose minAreaRect is closest to the bbox
-    # size -- avoids locking onto small noise specks.
-    target_area = max(1.0, w * hh * 0.25)
-    best = None
-    best_score = -1.0
-    for c in contours:
-        area = cv2.contourArea(c)
-        if area < target_area * 0.25:
-            continue
-        rect = cv2.minAreaRect(c)
-        (_, _), (rw, rh), _ = rect
-        if rw < 5 or rh < 5:
-            continue
-        # Prefer large, roughly-square contours.
-        aspect = min(rw, rh) / max(rw, rh)
-        score = area * aspect
-        if score > best_score:
-            best_score = score
-            best = rect
-    if best is None:
+    # stats[0] is the background; skip it.
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    biggest = 1 + int(np.argmax(areas))
+    biggest_area = int(stats[biggest, cv2.CC_STAT_AREA])
+    # Reject clearly-too-small blobs (noise) AND blobs that
+    # cover nearly the whole ROI (threshold inverted, bg dark).
+    roi_area = (x1 - x0) * (y1 - y0)
+    min_marker_area = max(20.0, 0.08 * w * hh)
+    if biggest_area < min_marker_area:
         return None
-    (cx, cy), (rw, rh), _angle = best
-    box = cv2.boxPoints(best).astype(np.float32)
-    # Translate back to full-frame coordinates.
+    if biggest_area > 0.92 * roi_area:
+        return None
+    component = (labels == biggest).astype(np.uint8)
+    pts = cv2.findNonZero(component)
+    if pts is None or len(pts) < 8:
+        return None
+    rect = cv2.minAreaRect(pts)
+    (cx, cy), (rw, rh), _cv_angle = rect
+    if rw < 5 or rh < 5:
+        return None
+    box = cv2.boxPoints(rect).astype(np.float32)
+    # Translate ROI -> full-frame coordinates.
     box[:, 0] += x0
     box[:, 1] += y0
     cx += x0
     cy += y0
     # cv2 boxPoints returns 4 corners in an arbitrary order. Sort
-    # them into (bl, br, tr, tl) by polar angle around the center.
+    # them by polar angle around the centroid so we can name
+    # them unambiguously. In image coordinates Y grows DOWN, so
+    # smallest atan2(dy, dx) is the upper-left quadrant, then
+    # CW: upper-right, lower-right, lower-left.
     def _sort_key(pt):
-        dx, dy = pt[0] - cx, pt[1] - cy
-        return math.atan2(dy, dx)
+        return math.atan2(pt[1] - cy, pt[0] - cx)
     ordered = sorted(box, key=_sort_key)
-    # After sorting by angle, first point is the one with the
-    # smallest atan2 (~ -pi) which corresponds to the point
-    # "below-left" in image coords (Y grows down). That is BL.
-    bl, br, tr, tl = ordered
-    dx = br[0] - bl[0]
-    dy = br[1] - bl[1]
+    ul, ur, lr, ll = ordered
+    # Orientation = angle of top edge (upper-left -> upper-right).
+    dx = ur[0] - ul[0]
+    dy = ur[1] - ul[1]
     orientation = math.degrees(math.atan2(dy, dx))
     return {
+        # CCW visual order for polylines: LL -> LR -> UR -> UL.
         'corners_px': [
-            (float(bl[0]), float(bl[1])),
-            (float(br[0]), float(br[1])),
-            (float(tr[0]), float(tr[1])),
-            (float(tl[0]), float(tl[1])),
+            (float(ll[0]), float(ll[1])),
+            (float(lr[0]), float(lr[1])),
+            (float(ur[0]), float(ur[1])),
+            (float(ul[0]), float(ul[1])),
         ],
         'center_px': (float(cx), float(cy)),
         'orientation_deg': orientation,
         'width_px': float(rw),
         'height_px': float(rh),
+        'refined': True,
     }
 
 
@@ -625,9 +661,17 @@ def _annotate(
         pts = np.array(
             m['corners_px'], dtype=np.int32,
         ).reshape(-1, 1, 2)
+        # Green outline when corner refinement succeeded (true
+        # rotated rect); magenta when it fell back to the
+        # axis-aligned bbox so the operator can tell the angle
+        # is unreliable at a glance.
+        refined = bool(m.get('refined', False))
+        outline_color = (
+            (0, 255, 0) if refined else (255, 0, 255)
+        )
         cv2.polylines(
             out, [pts], isClosed=True,
-            color=(0, 255, 0), thickness=2,
+            color=outline_color, thickness=2,
         )
         cx, cy = m['center_px']
         cv2.circle(
@@ -641,9 +685,12 @@ def _annotate(
             out, (int(cx), int(cy)), (ax, ay),
             (255, 0, 0), 2, tipLength=0.3,
         )
+        # 'deg' avoids the cv2 putText ??-rendering of the
+        # degree symbol; '[axis]' flags the unreliable fallback.
+        flag = '' if refined else ' [axis]'
         label = (
             f"#{i} {m['payload'][:16]} "
-            f"{m['orientation_deg']:+.1f}\u00b0"
+            f"{m['orientation_deg']:+.1f}deg{flag}"
         )
         cv2.putText(
             out, label,
@@ -817,6 +864,8 @@ class StreamWorker:
                         ', '.join(
                             f"{m['payload'][:8]!r}"
                             f"@{m['size_px'][0]}x{m['size_px'][1]}"
+                            f" ang={m['orientation_deg']:+.1f}"
+                            f" refined={m.get('refined', False)}"
                             f"[{m.get('reject_reason', 'kept')}]"
                             for m in (last_markers + last_rejected)
                         ),
@@ -1001,6 +1050,164 @@ class _ThreadedHTTPServer(
 # --------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------
+
+def _v4l2_device_path(device: str) -> Optional[str]:
+    '''Map whatever --device was (path or integer index) to the
+    actual /dev/videoN path that v4l2-ctl understands. Returns
+    None if we can't make sense of it.'''
+    if not device:
+        return None
+    if device.startswith('/dev/'):
+        return device
+    try:
+        idx = int(device)
+    except (TypeError, ValueError):
+        return None
+    return f'/dev/video{idx}'
+
+
+def _v4l2_read_ctrl(dev: str, name: str) -> Optional[int]:
+    '''Return the current integer value of a v4l2 control, or
+    None on any failure (control missing, v4l2-ctl not
+    installed, inactive flag set, etc.).'''
+    try:
+        out = subprocess.run(
+            ['v4l2-ctl', '-d', dev, f'--get-ctrl={name}'],
+            check=True, capture_output=True, text=True,
+            timeout=2.0,
+        )
+    except (
+        FileNotFoundError, subprocess.SubprocessError,
+    ) as exc:
+        LOG.debug('v4l2-ctl --get-ctrl=%s failed: %s', name, exc)
+        return None
+    # "name: 677"
+    line = out.stdout.strip()
+    if ':' not in line:
+        return None
+    try:
+        return int(line.split(':', 1)[1].strip())
+    except ValueError:
+        return None
+
+
+def _v4l2_write_ctrl(dev: str, name: str, value: int) -> bool:
+    try:
+        subprocess.run(
+            ['v4l2-ctl', '-d', dev, '-c', f'{name}={value}'],
+            check=True, capture_output=True, text=True,
+            timeout=2.0,
+        )
+        return True
+    except (
+        FileNotFoundError, subprocess.SubprocessError,
+    ) as exc:
+        LOG.debug('v4l2-ctl -c %s=%d failed: %s', name, value, exc)
+        return False
+
+
+def _focus_setup(
+    device: str,
+    focus_value: Optional[int],
+    disable_af: bool,
+    restore_on_exit: bool,
+) -> None:
+    '''Dial in manual focus via v4l2-ctl.
+
+    - If ``focus_value`` is given or ``disable_af`` is true,
+      snapshot the current focus_automatic_continuous and
+      focus_absolute values, then set them as requested.
+    - If ``restore_on_exit`` is true, register an atexit hook
+      that puts both controls back to whatever they were before
+      we touched them.
+    - No-ops cleanly if v4l2-ctl is missing or the camera does
+      not expose the focus_* controls (e.g. fixed-focus lens).
+    '''
+    if focus_value is None and not disable_af:
+        return
+    dev = _v4l2_device_path(device)
+    if not dev:
+        LOG.warning(
+            "focus: can't map --device %r to a /dev/videoN path; "
+            "skipping focus setup.",
+            device,
+        )
+        return
+    if not shutil.which('v4l2-ctl'):
+        LOG.warning(
+            'focus: v4l2-ctl not installed (apt install '
+            'v4l-utils); skipping focus setup.',
+        )
+        return
+
+    want_disable_af = disable_af or (focus_value is not None)
+    prev_af = _v4l2_read_ctrl(dev, 'focus_automatic_continuous')
+    prev_focus = _v4l2_read_ctrl(dev, 'focus_absolute')
+
+    if prev_af is None and prev_focus is None:
+        LOG.warning(
+            'focus: %s exposes no focus_* controls -- fixed-focus '
+            'lens? Adjust the lens physically. Skipping.',
+            dev,
+        )
+        return
+
+    if want_disable_af and prev_af is not None:
+        if _v4l2_write_ctrl(
+            dev, 'focus_automatic_continuous', 0,
+        ):
+            LOG.info('focus: disabled continuous autofocus')
+        else:
+            LOG.warning(
+                'focus: failed to disable continuous autofocus',
+            )
+
+    if focus_value is not None:
+        if _v4l2_write_ctrl(dev, 'focus_absolute', focus_value):
+            # Confirm the value stuck (inactive controls silently
+            # swallow writes on some drivers).
+            applied = _v4l2_read_ctrl(dev, 'focus_absolute')
+            if applied == focus_value:
+                LOG.info(
+                    'focus: focus_absolute = %d', focus_value,
+                )
+            else:
+                LOG.warning(
+                    'focus: wrote focus_absolute=%d but it reads '
+                    'back as %r -- autofocus may still be on.',
+                    focus_value, applied,
+                )
+        else:
+            LOG.warning(
+                'focus: failed to set focus_absolute=%d',
+                focus_value,
+            )
+
+    if not restore_on_exit:
+        return
+
+    restored = threading.Event()
+
+    def _restore() -> None:
+        if restored.is_set():
+            return
+        restored.set()
+        # Restore order: focus_absolute first, then re-enable AF,
+        # so AF doesn't fight a wrong manual position for a few
+        # frames during the handover.
+        if prev_focus is not None and focus_value is not None:
+            _v4l2_write_ctrl(dev, 'focus_absolute', prev_focus)
+        if prev_af is not None and want_disable_af:
+            _v4l2_write_ctrl(
+                dev, 'focus_automatic_continuous', prev_af,
+            )
+        LOG.info(
+            'focus: restored (af=%r, focus=%r)',
+            prev_af, prev_focus,
+        )
+
+    atexit.register(_restore)
+
 
 def _cam_led_setup(port: str) -> Optional[object]:
     '''Open an STM32Interface and hold the toolhead camera LED on.
@@ -1187,6 +1394,28 @@ def main() -> int:
              'service first).',
     )
     ap.add_argument(
+        '--disable-autofocus', action='store_true',
+        help='turn off continuous autofocus at startup via '
+             'v4l2-ctl (focus_automatic_continuous=0). Useful '
+             'when AF hunts and blurs the markers. Implied by '
+             '--focus.',
+    )
+    ap.add_argument(
+        '--focus', type=int, default=None,
+        help='set focus_absolute to this integer at startup '
+             '(implies --disable-autofocus). Range is '
+             'camera-specific; typical UVC: 0..1023 step 1. '
+             'Sweep to find the sharpest value for your '
+             'working distance.',
+    )
+    ap.add_argument(
+        '--no-restore-focus', dest='restore_focus',
+        action='store_false',
+        help='do NOT restore the previous autofocus/focus '
+             'settings on exit (default is to restore).',
+    )
+    ap.set_defaults(restore_focus=True)
+    ap.add_argument(
         '-v', '--verbose', action='store_true',
         help='debug logging',
     )
@@ -1202,6 +1431,13 @@ def main() -> int:
     record_dir = (
         Path(os.path.expanduser(args.record))
         if args.record else None
+    )
+
+    _focus_setup(
+        device=args.device,
+        focus_value=args.focus,
+        disable_af=args.disable_autofocus,
+        restore_on_exit=args.restore_focus,
     )
 
     stm32 = None
