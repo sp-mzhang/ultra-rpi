@@ -290,6 +290,106 @@ def _open_camera(
     return None
 
 
+def _refine_corners(
+    frame_bgr: np.ndarray, bbox: tuple[int, int, int, int],
+) -> dict | None:
+    """Recover the actual rotated corners of a DataMatrix marker
+    from its axis-aligned bbox.
+
+    pylibdmtx only returns Rect(left, top, width, height) -- an
+    axis-aligned bbox. Once the marker rotates, that bbox grows
+    around the tilted square and drawing it directly no longer
+    outlines the marker. We re-derive the real shape by running
+    minAreaRect on the thresholded ROI.
+
+    Returns dict with:
+        corners_px: [(x,y) x4] in CCW order from lower-left
+        center_px: (cx, cy)
+        orientation_deg: rotation of the marker's bottom edge,
+                         in (-180, 180]
+        width_px, height_px: side lengths of the rotated square
+    or None if thresholding found nothing."""
+    H, W = frame_bgr.shape[:2]
+    left, top, w, hh = bbox
+    # Pad a few px so we don't clip the marker; clamp to frame.
+    pad = 6
+    x0 = max(0, left - pad)
+    y0 = max(0, top - pad)
+    x1 = min(W, left + w + pad)
+    y1 = min(H, top + hh + pad)
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        return None
+    roi = frame_bgr[y0:y1, x0:x1]
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    # Adaptive threshold handles uneven lighting on the cassette.
+    th = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY_INV, 21, 5,
+    )
+    # Close small gaps between DataMatrix cells so the marker
+    # appears as one solid blob for contour detection.
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    closed = cv2.morphologyEx(th, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(
+        closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+    )
+    if not contours:
+        return None
+    # Pick the contour whose minAreaRect is closest to the bbox
+    # size -- avoids locking onto small noise specks.
+    target_area = max(1.0, w * hh * 0.25)
+    best = None
+    best_score = -1.0
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < target_area * 0.25:
+            continue
+        rect = cv2.minAreaRect(c)
+        (_, _), (rw, rh), _ = rect
+        if rw < 5 or rh < 5:
+            continue
+        # Prefer large, roughly-square contours.
+        aspect = min(rw, rh) / max(rw, rh)
+        score = area * aspect
+        if score > best_score:
+            best_score = score
+            best = rect
+    if best is None:
+        return None
+    (cx, cy), (rw, rh), _angle = best
+    box = cv2.boxPoints(best).astype(np.float32)
+    # Translate back to full-frame coordinates.
+    box[:, 0] += x0
+    box[:, 1] += y0
+    cx += x0
+    cy += y0
+    # cv2 boxPoints returns 4 corners in an arbitrary order. Sort
+    # them into (bl, br, tr, tl) by polar angle around the center.
+    def _sort_key(pt):
+        dx, dy = pt[0] - cx, pt[1] - cy
+        return math.atan2(dy, dx)
+    ordered = sorted(box, key=_sort_key)
+    # After sorting by angle, first point is the one with the
+    # smallest atan2 (~ -pi) which corresponds to the point
+    # "below-left" in image coords (Y grows down). That is BL.
+    bl, br, tr, tl = ordered
+    dx = br[0] - bl[0]
+    dy = br[1] - bl[1]
+    orientation = math.degrees(math.atan2(dy, dx))
+    return {
+        'corners_px': [
+            (float(bl[0]), float(bl[1])),
+            (float(br[0]), float(br[1])),
+            (float(tr[0]), float(tr[1])),
+            (float(tl[0]), float(tl[1])),
+        ],
+        'center_px': (float(cx), float(cy)),
+        'orientation_deg': orientation,
+        'width_px': float(rw),
+        'height_px': float(rh),
+    }
+
+
 def _enhance_for_decode(frame_bgr: np.ndarray) -> np.ndarray:
     """CLAHE on the L channel of LAB. Boosts local contrast on
     small features (DataMatrix cells) without over-amplifying
@@ -370,10 +470,9 @@ def _decode_markers(
     rejected: list[dict] = []
     for det in raw:
         r = det.rect
-        # pylibdmtx may return signed width/height that encode the
-        # marker's flow direction (rotation in libdmtx's pixel
-        # walker). Normalise to a positive box for filtering and
-        # corner construction; keep the sign in `flow` for debug.
+        # pylibdmtx's Rect can come back with signed width/height
+        # encoding libdmtx's flow direction. Normalise to a
+        # positive axis-aligned bbox for the refinement step.
         raw_left, raw_bottom_from_bot = r.left, r.top
         raw_w, raw_hh = r.width, r.height
         w = abs(raw_w)
@@ -385,22 +484,43 @@ def _decode_markers(
         )
 
         payload = det.data.decode('utf-8', errors='replace')
+        # libdmtx Y origin is bottom-left; convert to image coords.
         top = h - bottom_from_bot - hh
-        bl = (left, top + hh)
-        br = (left + w, top + hh)
-        tr = (left + w, top)
-        tl = (left, top)
-        cx = (bl[0] + br[0] + tr[0] + tl[0]) / 4.0
-        cy = (bl[1] + br[1] + tr[1] + tl[1]) / 4.0
-        dx, dy = br[0] - bl[0], br[1] - bl[1]
-        ori = math.degrees(math.atan2(dy, dx))
+        bbox = (left, top, w, hh)
+
+        # Recover the actual rotated corners of the marker inside
+        # this axis-aligned bbox. Falls back to the bbox itself if
+        # refinement fails so we never lose a valid decode.
+        refined = _refine_corners(frame_bgr, bbox)
+        if refined is not None:
+            corners_px = refined['corners_px']
+            center_px = refined['center_px']
+            orientation_deg = refined['orientation_deg']
+            size_px = (
+                int(round(refined['width_px'])),
+                int(round(refined['height_px'])),
+            )
+        else:
+            bl = (float(left), float(top + hh))
+            br = (float(left + w), float(top + hh))
+            tr = (float(left + w), float(top))
+            tl = (float(left), float(top))
+            corners_px = [bl, br, tr, tl]
+            center_px = (
+                (bl[0] + br[0] + tr[0] + tl[0]) / 4.0,
+                (bl[1] + br[1] + tr[1] + tl[1]) / 4.0,
+            )
+            orientation_deg = 0.0
+            size_px = (w, hh)
+
         marker = {
             'payload': payload,
-            'corners_px': [bl, br, tr, tl],
-            'center_px': (cx, cy),
-            'orientation_deg': ori,
-            'size_px': (w, hh),
+            'corners_px': corners_px,
+            'center_px': center_px,
+            'orientation_deg': orientation_deg,
+            'size_px': size_px,
             'flow': (raw_w, raw_hh),
+            'refined': refined is not None,
         }
         if w < min_marker_px or hh < min_marker_px:
             marker['reject_reason'] = f'size<{min_marker_px}px'
