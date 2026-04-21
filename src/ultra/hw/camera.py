@@ -12,8 +12,9 @@ No frames are saved to disk.
 '''
 from __future__ import annotations
 
+import glob
 import logging
-import os
+import re
 import threading
 import time
 from typing import Generator
@@ -79,21 +80,39 @@ class CameraStream:
             return None
         return cap
 
-    def _auto_detect(self) -> 'cv2.VideoCapture | None':
-        '''Scan /dev/video0 .. /dev/video23 in **numeric order**.
+    @staticmethod
+    def _list_video_devices() -> list[str]:
+        '''All /dev/videoN present, in **numeric** order.
 
-        Lexicographic ``glob`` ordering visits video10-19 before
-        video2, which on a Pi hits the bcm2835 ISP pipeline devices
-        (video20-24) first -- each of which takes ~10 s to time out
-        on ``select()``. Numeric iteration finds a USB webcam on a
-        low index immediately, and only degrades to the slow ISP
-        devices at the very end.
+        Default lexicographic glob ordering visits video10-19
+        before video2, which on a Pi hits the bcm2835 ISP pipeline
+        devices (video20+) first -- each of which takes ~10 s to
+        time out on ``select()``. Sorting by the trailing integer
+        reaches a USB webcam on a low index first.
         '''
-        for idx in range(24):
-            dev = f'/dev/video{idx}'
-            if not os.path.exists(dev):
-                continue
-            LOG.debug('Probing camera: %s', dev)
+        paths = glob.glob('/dev/video*')
+        ordered: list[tuple[int, str]] = []
+        for p in paths:
+            m = re.match(r'/dev/video(\d+)$', p)
+            if m:
+                ordered.append((int(m.group(1)), p))
+        return [p for _, p in sorted(ordered)]
+
+    def _auto_detect(self) -> 'cv2.VideoCapture | None':
+        '''Scan every /dev/videoN device in numeric order.
+
+        Each probe is logged at INFO so it is visible in the
+        service journal -- silent failures (e.g. non-capture
+        ISP nodes) previously made the scan look like it had
+        skipped devices.
+        '''
+        devices = self._list_video_devices()
+        LOG.info(
+            'Camera scan: %d devices found: %s',
+            len(devices), ', '.join(devices) or '(none)',
+        )
+        for dev in devices:
+            LOG.info('Probing camera: %s', dev)
             cap = self._try_open(dev)
             if cap is not None:
                 self._device = dev
@@ -101,6 +120,7 @@ class CameraStream:
                     'Auto-detected camera: %s', dev,
                 )
                 return cap
+            LOG.info('  -> %s: open or read failed', dev)
         return None
 
     def start(self) -> bool:
