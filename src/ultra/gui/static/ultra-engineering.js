@@ -1168,6 +1168,96 @@
       $('#eng-cam-status-lbl').textContent =
         'Stopped';
     };
+    wireCarouselAlign();
+  }
+
+  /* ---- Carousel alignment sub-panel ---- */
+  function _fmtDeg(v) {
+    if (v === null || v === undefined) return '--';
+    const sign = v >= 0 ? '+' : '';
+    return sign + v.toFixed(2) + ' deg';
+  }
+
+  function _renderCarouselResult(res) {
+    const block = $('#eng-carousel-align-result');
+    block.hidden = false;
+    $('#eng-cal-side').textContent = res.side || '--';
+    $('#eng-cal-avg').textContent = _fmtDeg(res.avg_deg);
+    $('#eng-cal-ref').textContent = _fmtDeg(res.reference_deg);
+    $('#eng-cal-ccw').textContent = _fmtDeg(res.c_cw_deg);
+    $('#eng-cal-delta').textContent =
+      _fmtDeg(res.delta_motor_deg) +
+      (res.polarity ? ' (pol=' + res.polarity + ')' : '');
+    $('#eng-cal-target').textContent =
+      res.target_001deg === null || res.target_001deg === undefined
+        ? '--'
+        : (res.target_001deg / 100.0).toFixed(2) + ' deg';
+    $('#eng-cal-moved').textContent =
+      res.moved === true ? 'yes'
+        : res.moved === false ? 'no'
+        : '--';
+    $('#eng-cal-elapsed').textContent =
+      res.elapsed_s === undefined ? '--'
+        : res.elapsed_s.toFixed(2) + ' s';
+    const mdiv = $('#eng-cal-markers');
+    mdiv.textContent = (res.markers || [])
+      .map((m) =>
+        m.payload + ' : ' + m.angle_deg.toFixed(2) +
+        ' deg  (' + m.size_px[0].toFixed(0) + 'x' +
+        m.size_px[1].toFixed(0) + ')',
+      )
+      .join('\n') || '(none)';
+    const err = $('#eng-cal-reason');
+    if (res.reason) {
+      err.hidden = false;
+      err.textContent = 'Reason: ' + res.reason;
+    } else {
+      err.hidden = true;
+      err.textContent = '';
+    }
+  }
+
+  function wireCarouselAlign() {
+    const goBtn = $('#eng-carousel-align-go');
+    const status = $('#eng-carousel-align-status');
+    goBtn.onclick = async () => {
+      goBtn.disabled = true;
+      status.textContent = 'aligning...';
+      try {
+        const resp = await fetch(
+          '/api/camera/align-carousel', { method: 'POST' },
+        );
+        const txt = await resp.text();
+        let body;
+        try {
+          body = txt ? JSON.parse(txt) : {};
+        } catch (e) {
+          body = { detail: txt };
+        }
+        if (!resp.ok) {
+          status.textContent = 'error';
+          engLog(
+            'align-carousel failed (' + resp.status + '): ' +
+            (body.detail || txt),
+          );
+          return;
+        }
+        _renderCarouselResult(body);
+        status.textContent = 'align ok';
+        engLog('align-carousel ok: ' + JSON.stringify({
+          side: body.side,
+          avg: body.avg_deg,
+          c_cw: body.c_cw_deg,
+          delta: body.delta_motor_deg,
+          moved: body.moved,
+        }));
+      } catch (e) {
+        status.textContent = 'error';
+        engLog('align-carousel network error: ' + e);
+      } finally {
+        goBtn.disabled = false;
+      }
+    };
   }
 
   /* ---- LOCATIONS wiring ---- */

@@ -57,6 +57,7 @@ class CameraStream:
         self._device = device
         self._cap = None
         self._frame: bytes | None = None
+        self._frame_bgr = None  # latest raw BGR ndarray (for CV consumers)
         self._lock = threading.Lock()
         self._running = False
         self._stop = threading.Event()
@@ -163,6 +164,7 @@ class CameraStream:
             if ok:
                 with self._lock:
                     self._frame = bytes(buf)
+                    self._frame_bgr = frame
             time.sleep(_CAPTURE_INTERVAL)
 
     def generate_mjpeg(
@@ -198,3 +200,16 @@ class CameraStream:
     def is_running(self) -> bool:
         '''Whether the capture thread is active.'''
         return self._running
+
+    def latest_frame_bgr(self):
+        '''Return the most recent raw BGR frame as an ndarray, or None.
+
+        A copy is returned so callers can safely mutate / process without
+        racing with the capture thread. Returns None if the camera has
+        not yet produced its first frame.
+        '''
+        with self._lock:
+            frame = self._frame_bgr
+        if frame is None:
+            return None
+        return frame.copy()

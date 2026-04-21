@@ -1334,6 +1334,25 @@ textarea {
   object-fit: contain;
 }
 
+/* --- Carousel alignment result block --- */
+.eng-carousel-result {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border, #555);
+  border-radius: 4px;
+}
+.eng-carousel-markers {
+  font-family: monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  margin-top: 2px;
+}
+.eng-err {
+  color: #ff6a6a;
+  margin-top: 6px;
+  font-weight: 600;
+}
+
 /* --- Form-grid utilities for engineering panels --- */
 .eng-form-grid {
   display: grid;

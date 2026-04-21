@@ -1044,6 +1044,47 @@
         Preview (Start stream to see live)
       </span>
     </div>
+    <fieldset class="eng-inner-fs">
+      <legend>Carousel Alignment</legend>
+      <div class="eng-dim" style="margin-bottom:6px">
+        Probe pose: X=0, Y=60mm, Z=0 (homes Z first).
+        Side auto-detected from marker payload:
+        L/T/R/U -> blister, else -> pipette.
+      </div>
+      <div class="eng-btn-row">
+        <button id="eng-carousel-align-go"
+          class="eng-cmd-btn">Align Carousel</button>
+        <span id="eng-carousel-align-status"
+          class="eng-dim">idle</span>
+      </div>
+      <div id="eng-carousel-align-result"
+        class="eng-carousel-result" hidden>
+        <div class="eng-form-grid">
+          <label>Side:</label>
+          <span id="eng-cal-side">--</span>
+          <label>Avg angle:</label>
+          <span id="eng-cal-avg">--</span>
+          <label>Reference:</label>
+          <span id="eng-cal-ref">--</span>
+          <label>Carousel CW offset:</label>
+          <span id="eng-cal-ccw">--</span>
+          <label>Motor delta:</label>
+          <span id="eng-cal-delta">--</span>
+          <label>Target (001deg):</label>
+          <span id="eng-cal-target">--</span>
+          <label>Moved:</label>
+          <span id="eng-cal-moved">--</span>
+          <label>Elapsed:</label>
+          <span id="eng-cal-elapsed">--</span>
+        </div>
+        <div style="margin-top:6px">
+          <div class="eng-dim">Per-marker angles:</div>
+          <div id="eng-cal-markers"
+            class="eng-carousel-markers"></div>
+        </div>
+        <div id="eng-cal-reason" class="eng-err" hidden></div>
+      </div>
+    </fieldset>
   </div>
 
   <!-- ===== LOCATIONS ===== -->

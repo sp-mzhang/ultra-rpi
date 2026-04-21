@@ -161,3 +161,39 @@ quick_run:
   operator: ultra_rpi
   protocol: ultra
   chip_id: L007W01R01C01
+
+# ---------------------------------------------------------------
+# Carousel alignment via the toolhead camera.
+# Used by the "Align Carousel to Blister" button in the Engineering
+# Camera tab (POST /api/camera/align-carousel-to-blister).
+#
+# Calibration basis (user-measured):
+#   carousel at blister pose       -> markers avg = -90 deg
+#   carousel +49 deg CW  of blister -> markers avg = -41 deg
+#   carousel -30 deg CCW of blister -> markers avg = -128 deg
+# Slope is +1 (marker angle tracks carousel CW rotation 1:1), so
+# the reference for the blister side is -90 deg.
+# ---------------------------------------------------------------
+carousel_align:
+  home_z_first: true             # home Z before the XY move
+  probe_pose:
+    x_mm: 0.0
+    y_mm: 60.0
+    z_mm: 0.0
+    xy_speed_mms: 40.0
+    z_speed_mms: 10.0
+  led_settle_ms: 250             # wait after LED on before capture
+  min_markers: 2                 # refuse alignment below this count
+  decode_timeout_ms: 500
+  use_clahe_fallback: true
+  sides:
+    blister:
+      markers: ['L', 'T', 'R', 'U']
+      reference_deg: -90.0
+    pipette:
+      markers: []                # TODO: fill in when defined
+      reference_deg: 0.0
+  centrifuge:
+    move_rpm: 100
+    polarity: 1                  # flip to -1 if motor rotates the
+                                 # wrong way on first on-device test

@@ -646,4 +646,225 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             ),
         )
 
+    # ---- Carousel alignment (blister / pipette via markers) ----
+
+    def _load_aligner():
+        '''Build a CarouselAligner from the current app config.'''
+        from ultra.vision.carousel_align import CarouselAligner
+        cfg = (app.config.get('carousel_align') or {})
+        return CarouselAligner.from_config(cfg), cfg
+
+    def _grab_bgr_frame(settle_ms: int = 0):
+        '''Start the camera if needed, wait briefly, return BGR.'''
+        import time
+        cam = _get_camera()
+        if settle_ms > 0:
+            time.sleep(settle_ms / 1000.0)
+        # Retry up to ~1s in case the capture thread hasn't
+        # produced its first frame yet.
+        for _ in range(20):
+            frame = cam.latest_frame_bgr()
+            if frame is not None:
+                return frame
+            time.sleep(0.05)
+        return None
+
+    def _reading_to_dict(m) -> dict:
+        return {
+            'payload': m.payload,
+            'angle_deg': round(m.angle_deg, 3),
+            'center_px': [
+                round(m.center_px[0], 1),
+                round(m.center_px[1], 1),
+            ],
+            'size_px': [
+                round(m.size_px[0], 1),
+                round(m.size_px[1], 1),
+            ],
+        }
+
+    def _result_to_dict(r, extras: dict | None = None) -> dict:
+        out: dict = {
+            'side': r.side,
+            'avg_deg': (
+                round(r.avg_deg, 3)
+                if r.avg_deg is not None else None
+            ),
+            'reference_deg': r.reference_deg,
+            'c_cw_deg': (
+                round(r.c_cw_deg, 3)
+                if r.c_cw_deg is not None else None
+            ),
+            'delta_motor_deg': (
+                round(r.delta_motor_deg, 3)
+                if r.delta_motor_deg is not None else None
+            ),
+            'polarity': r.polarity,
+            'markers': [_reading_to_dict(m) for m in r.markers],
+            'reason': r.reason,
+        }
+        if extras:
+            out.update(extras)
+        return out
+
+    @router.post('/camera/align-carousel')
+    async def align_carousel():
+        '''One-shot carousel alignment via toolhead camera markers.
+
+        Home Z, move gantry to probe pose, LED on, detect markers,
+        auto-classify side by decoded payload (L/T/R/U -> blister;
+        other sets defined in ``carousel_align.sides`` -> that side),
+        compute offset vs that side's reference angle, rotate the
+        centrifuge to cancel, LED off. Refuses if any validation
+        fails (no markers, no side match, centrifuge busy).'''
+        import time
+
+        stm32 = get_eng_stm32()
+        if stm32 is None:
+            raise HTTPException(
+                status_code=503,
+                detail='STM32 not connected -- click '
+                       'Connect first',
+            )
+        runner = app.get_runner()
+        if runner.is_running:
+            raise HTTPException(
+                status_code=409,
+                detail='Protocol running -- refusing alignment',
+            )
+        aligner, cfg = _load_aligner()
+        probe = cfg.get('probe_pose') or {}
+        home_z_first = bool(cfg.get('home_z_first', True))
+        led_settle_ms = int(cfg.get('led_settle_ms', 250))
+        cent_cfg = cfg.get('centrifuge') or {}
+        move_rpm = int(cent_cfg.get('move_rpm', 100))
+
+        loop = asyncio.get_running_loop()
+        t0 = time.time()
+        led_on = False
+        try:
+            # --- Pre-flight: centrifuge must be idle ---
+            status = await loop.run_in_executor(
+                None,
+                lambda: stm32.send_command(
+                    cmd={'cmd': 'centrifuge_status'},
+                    timeout_s=5.0,
+                ),
+            )
+            if not isinstance(status, dict):
+                raise HTTPException(
+                    status_code=503,
+                    detail='centrifuge_status failed',
+                )
+            if int(status.get('state', 0)) != 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f'Centrifuge not idle '
+                        f'(state={status.get("state")})'
+                    ),
+                )
+            cur_001deg = int(status.get('angle_001deg', 0))
+
+            # --- Home Z, then move gantry to probe pose ---
+            if home_z_first:
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: stm32.send_command_wait_done(
+                        cmd={'cmd': 'home_z_axis'},
+                        timeout_s=30.0,
+                    ),
+                )
+                if r is None:
+                    raise HTTPException(
+                        status_code=500,
+                        detail='home_z_axis failed',
+                    )
+            r = await loop.run_in_executor(
+                None,
+                lambda: stm32.send_command_wait_done(
+                    cmd={
+                        'cmd': 'move_gantry',
+                        'x_mm': float(probe.get('x_mm', 0.0)),
+                        'y_mm': float(probe.get('y_mm', 60.0)),
+                        'z_mm': float(probe.get('z_mm', 0.0)),
+                        'speed': float(
+                            probe.get('xy_speed_mms', 40.0),
+                        ),
+                        'z_speed': float(
+                            probe.get('z_speed_mms', 10.0),
+                        ),
+                    },
+                    timeout_s=30.0,
+                ),
+            )
+            if r is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail='move_gantry failed',
+                )
+
+            # --- LED on + settle + capture + detect ---
+            if not stm32.cam_led_set(on=True):
+                raise HTTPException(
+                    status_code=500,
+                    detail='cam_led_set(on) failed',
+                )
+            led_on = True
+            frame = await loop.run_in_executor(
+                None,
+                lambda: _grab_bgr_frame(
+                    settle_ms=led_settle_ms,
+                ),
+            )
+            if frame is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail='No camera frame available',
+                )
+            result = await loop.run_in_executor(
+                None, lambda: aligner.compute(frame),
+            )
+            if result.delta_motor_deg is None:
+                return _result_to_dict(result, {
+                    'moved': False,
+                    'target_001deg': None,
+                    'current_001deg': cur_001deg,
+                    'elapsed_s': round(time.time() - t0, 3),
+                })
+
+            # --- Apply centrifuge correction ---
+            delta_001 = int(round(result.delta_motor_deg * 100))
+            target_001 = (cur_001deg + delta_001) % 36000
+            r = await loop.run_in_executor(
+                None,
+                lambda: stm32.send_command_wait_done(
+                    cmd={
+                        'cmd': 'centrifuge_move_angle',
+                        'angle_001deg': target_001,
+                        'move_rpm': move_rpm,
+                    },
+                    timeout_s=30.0,
+                ),
+            )
+            if r is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail='centrifuge_move_angle failed',
+                )
+            return _result_to_dict(result, {
+                'moved': True,
+                'target_001deg': target_001,
+                'current_001deg': cur_001deg,
+                'elapsed_s': round(time.time() - t0, 3),
+            })
+        finally:
+            if led_on:
+                try:
+                    stm32.cam_led_set(on=False)
+                except Exception as exc:
+                    LOG.warning(
+                        'cam_led_set(off) failed: %s', exc,
+                    )
+
     return router
