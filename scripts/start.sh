@@ -84,6 +84,64 @@ setup_env() {
                 opencv-python-headless 2>&1
         fi
     fi
+
+    # bluezero BLE provisioning needs python3-dbus + python3-gi,
+    # which are apt-only C-extension packages. `uv sync` will
+    # install the pure-python bluezero wheel, but importing it
+    # fails inside the venv because the dbus/gi bindings live in
+    # the system site-packages. Install the apt deps (idempotent)
+    # and symlink them into the venv, matching the cv2 approach.
+    need_apt=""
+    for pkg in python3-dbus python3-gi bluez; do
+        if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+            need_apt+=" $pkg"
+        fi
+    done
+    if [ -n "$need_apt" ]; then
+        echo "Installing missing apt packages for BLE:$need_apt"
+        sudo apt-get update -qq
+        # shellcheck disable=SC2086
+        sudo apt-get install -y $need_apt
+    fi
+
+    VENV_SP=$("$VENV_DIR/bin/python" -c \
+        "import site; print(site.getsitepackages()[0])")
+    link_system_module() {
+        local modname="$1"
+        if "$VENV_DIR/bin/python" -c "import $modname" 2>/dev/null; then
+            return
+        fi
+        local src
+        src=$(python3 -c \
+            "import $modname, os; p=$modname.__file__; print(os.path.dirname(p) if os.path.basename(p)=='__init__.py' else p)" \
+            2>/dev/null || true)
+        if [ -n "$src" ] && [ -e "$src" ]; then
+            ln -sfn "$src" "$VENV_SP/$(basename "$src")"
+            echo "Linked system $modname -> $VENV_SP/$(basename "$src")"
+        else
+            echo "WARNING: $modname not found in system python; BLE may be unavailable."
+        fi
+    }
+    link_system_module dbus
+    # gi is PyGObject; also pull _dbus_bindings / _dbus_glib_bindings
+    link_system_module gi
+    for mod in _dbus_bindings _dbus_glib_bindings dbus_python-*.dist-info; do
+        for f in /usr/lib/python3/dist-packages/$mod*; do
+            [ -e "$f" ] || continue
+            ln -sfn "$f" "$VENV_SP/$(basename "$f")"
+        done
+    done
+
+    # Final sanity check -- surface any remaining problem loudly.
+    if ! "$VENV_DIR/bin/python" -c \
+        "from bluezero import adapter, peripheral" 2>/dev/null; then
+        echo "WARNING: bluezero still not importable from venv."
+        echo "  Reproduce with:"
+        echo "    $VENV_DIR/bin/python -c 'from bluezero import adapter, peripheral'"
+    else
+        echo "BLE stack imports OK (bluezero + dbus)."
+    fi
+
     echo "Environment ready."
 }
 
