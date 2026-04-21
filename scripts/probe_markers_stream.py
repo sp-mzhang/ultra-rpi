@@ -3,15 +3,30 @@
 
 Live carousel-angle bring-up viewer.
 
-Opens the on-board USB camera, runs pylibdmtx on every frame,
-fuses the per-marker orientations into a single carousel angle,
-and serves the annotated stream as MJPEG on
-``http://<host>:<port>/`` so you can watch it from any browser
-(no GUI / X11 required on the Pi).
+Opens the on-board USB camera, runs libdmtx (via
+:mod:`ultra.vision.dmtx_detect`) on every Nth frame, fuses the
+per-marker orientations into a single carousel angle, and serves
+the annotated stream as MJPEG on ``http://<host>:<port>/`` so you
+can watch it from any browser (no GUI / X11 required on the Pi).
+
+Marker corners and orientation come directly from libdmtx's
+``fit2raw`` transform -- we read the four rotated corners
+anchored on the L finder pattern, so rotation is unambiguous
+across all 360 degrees (no 90-degree flips, no
+threshold/contour tricks). See the module docstring of
+``ultra.vision.dmtx_detect`` for the math.
+
+Physical tip: for the most reliable detection, prefer **matte**
+marker stickers on a **matte** backing. Glossy labels or glossy
+cassette tops can produce specular reflections under the
+toolhead ring LED that the L finder can't find through.
 
 The HUD overlay shows:
 
   - One green outline + payload label per detected marker
+    (magenta would mean "refinement failed"; with the libdmtx
+    path that's no longer expected, so a magenta box indicates
+    a regression)
   - A red dot at each marker's center, with a blue arrow showing
     its in-plane orientation
   - The fused carousel angle (mean of per-marker orientations,
@@ -87,11 +102,29 @@ except ImportError as err:
     sys.exit(2)
 
 try:
-    from pylibdmtx import pylibdmtx
+    from pylibdmtx import pylibdmtx  # noqa: F401 -- probe-setup check
 except ImportError as err:
     print(
         "ERROR: pylibdmtx not installed -- run "
         f"./scripts/probe_markers_setup.sh first ({err})",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+# Make `from ultra.vision...` importable when this script is run
+# directly from `scripts/` without the package being on PYTHONPATH.
+_SRC = os.path.join(os.path.dirname(__file__), '..', 'src')
+if os.path.isdir(_SRC) and _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
+try:
+    from ultra.vision.dmtx_detect import (
+        decode_with_corners, DmtxDetection,
+    )
+except ImportError as err:  # pragma: no cover -- packaging issue
+    print(
+        "ERROR: could not import ultra.vision.dmtx_detect -- "
+        f"the src/ layout may have moved ({err})",
         file=sys.stderr,
     )
     sys.exit(2)
@@ -302,122 +335,24 @@ def _open_camera(
     return None
 
 
-def _refine_corners(
-    frame_bgr: np.ndarray, bbox: tuple[int, int, int, int],
-) -> dict | None:
-    """Recover the actual rotated corners of a DataMatrix marker
-    from its axis-aligned bbox.
-
-    pylibdmtx only returns Rect(left, top, width, height) -- an
-    axis-aligned bbox. Once the marker rotates, that bbox grows
-    around the tilted square and drawing it directly no longer
-    outlines the marker. We re-derive the real shape by running
-    minAreaRect on the thresholded ROI.
-
-    Returns dict with:
-        corners_px: [(x,y) x4] in CCW order from lower-left
-        center_px: (cx, cy)
-        orientation_deg: rotation of the marker's bottom edge,
-                         in (-180, 180]
-        width_px, height_px: side lengths of the rotated square
-    or None if thresholding found nothing."""
-    H, W = frame_bgr.shape[:2]
-    left, top, w, hh = bbox
-    # Pad a few px so we don't clip the marker; clamp to frame.
-    pad = 6
-    x0 = max(0, left - pad)
-    y0 = max(0, top - pad)
-    x1 = min(W, left + w + pad)
-    y1 = min(H, top + hh + pad)
-    if x1 - x0 < 4 or y1 - y0 < 4:
-        return None
-    roi = frame_bgr[y0:y1, x0:x1]
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-
-    def _best_contour_rect(mask):
-        """Return the best minAreaRect from a binary mask, or None.
-        Shared by the adaptive-threshold and Otsu paths so both
-        use the exact same selection rules."""
-        # Close small gaps between DataMatrix cells so the marker
-        # appears as one solid blob for contour detection.
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        contours, _ = cv2.findContours(
-            closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
-        )
-        if not contours:
-            return None
-        # Pick the contour whose minAreaRect is closest to the bbox
-        # size -- avoids locking onto small noise specks.
-        target_area = max(1.0, w * hh * 0.25)
-        best = None
-        best_score = -1.0
-        for c in contours:
-            area = cv2.contourArea(c)
-            if area < target_area * 0.25:
-                continue
-            rect = cv2.minAreaRect(c)
-            (_, _), (rw, rh), _ = rect
-            if rw < 5 or rh < 5:
-                continue
-            # Prefer large, roughly-square contours.
-            aspect = min(rw, rh) / max(rw, rh)
-            score = area * aspect
-            if score > best_score:
-                best_score = score
-                best = rect
-        return best
-
-    # Primary path: adaptive threshold handles uneven lighting on
-    # the cassette and usually gives clean DataMatrix edges.
-    th_adapt = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-        cv2.THRESH_BINARY_INV, 21, 5,
-    )
-    best = _best_contour_rect(th_adapt)
-    # Fallback: under ring-LED illumination the ROI is close to
-    # uniformly lit, and Otsu cleanly splits "white background"
-    # from "black marker body". Only used when adaptive found
-    # nothing usable, so existing-working frames are unaffected.
-    if best is None:
-        _, th_otsu = cv2.threshold(
-            gray, 0, 255,
-            cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU,
-        )
-        best = _best_contour_rect(th_otsu)
-    if best is None:
-        return None
-    (cx, cy), (rw, rh), _angle = best
-    box = cv2.boxPoints(best).astype(np.float32)
-    # Translate back to full-frame coordinates.
-    box[:, 0] += x0
-    box[:, 1] += y0
-    cx += x0
-    cy += y0
-    # cv2 boxPoints returns 4 corners in an arbitrary order. Sort
-    # them into (bl, br, tr, tl) by polar angle around the center.
-    def _sort_key(pt):
-        dx, dy = pt[0] - cx, pt[1] - cy
-        return math.atan2(dy, dx)
-    ordered = sorted(box, key=_sort_key)
-    # After sorting by angle, first point is the one with the
-    # smallest atan2 (~ -pi) which corresponds to the point
-    # "below-left" in image coords (Y grows down). That is BL.
-    bl, br, tr, tl = ordered
-    dx = br[0] - bl[0]
-    dy = br[1] - bl[1]
-    orientation = math.degrees(math.atan2(dy, dx))
+def _detection_to_marker(det: DmtxDetection) -> dict:
+    """Convert a DmtxDetection (libdmtx native corners) into the
+    dict shape the rest of this script consumes. Orientation and
+    corners come from libdmtx's ``fit2raw`` transform, which is
+    anchored on the L finder pattern and therefore unambiguous
+    under all four 90-degree rotations."""
     return {
-        'corners_px': [
-            (float(bl[0]), float(bl[1])),
-            (float(br[0]), float(br[1])),
-            (float(tr[0]), float(tr[1])),
-            (float(tl[0]), float(tl[1])),
-        ],
-        'center_px': (float(cx), float(cy)),
-        'orientation_deg': orientation,
-        'width_px': float(rw),
-        'height_px': float(rh),
+        'payload': det.payload,
+        'corners_px': [det.bl, det.br, det.tr, det.tl],
+        'center_px': det.center,
+        'orientation_deg': det.orientation_deg,
+        'size_px': (
+            int(round(det.width_px)),
+            int(round(det.height_px)),
+        ),
+        # True by construction -- libdmtx gave us the corners,
+        # we didn't have to recover them from thresholding.
+        'refined': True,
     }
 
 
@@ -437,26 +372,21 @@ def _enhance_for_decode(frame_bgr: np.ndarray) -> np.ndarray:
 
 
 def _best_of(
-    decodes: list,
-) -> list:
-    """Given multiple `pylibdmtx.decode(...)` outputs (one per
+    decodes: list[list[DmtxDetection]],
+) -> list[DmtxDetection]:
+    """Given multiple ``decode_with_corners`` outputs (one per
     preprocessing variant), keep the longest payload per spatial
     location. Two detections are considered the same marker if
-    their bbox centers are within 25 px."""
-    out: list = []
+    their centers are within 25 px."""
+    out: list[DmtxDetection] = []
     for batch in decodes:
         for det in batch:
-            r = det.rect
-            cx = r.left + abs(r.width) / 2.0
-            cy = r.top + abs(r.height) / 2.0
-            payload = det.data
+            cx, cy = det.center
             replaced = False
             for i, kept in enumerate(out):
-                kr = kept.rect
-                kcx = kr.left + abs(kr.width) / 2.0
-                kcy = kr.top + abs(kr.height) / 2.0
+                kcx, kcy = kept.center
                 if abs(cx - kcx) < 25 and abs(cy - kcy) < 25:
-                    if len(payload) > len(kept.data):
+                    if len(det.data) > len(kept.data):
                         out[i] = det
                     replaced = True
                     break
@@ -472,97 +402,46 @@ def _decode_markers(
     min_payload_len: int = DEFAULT_MIN_PAYLOAD_LEN,
     enhance: bool = False,
 ) -> tuple[list[dict], list[dict]]:
-    """Run pylibdmtx and return (kept, rejected) marker dicts.
+    """Run libdmtx and return ``(kept, rejected)`` marker dicts.
 
-    `rejected` contains everything libdmtx returned that we filtered
-    out (too small or payload too short). The streamer can draw
-    these in a different colour so we can tell whether libdmtx is
-    finding nothing vs finding noise we're throwing away.
+    Uses :func:`ultra.vision.dmtx_detect.decode_with_corners`,
+    which asks libdmtx for the full ``fit2raw`` transform of every
+    decoded region and returns all four rotated corners directly.
+    Orientation comes from the L finder edge (BL -> BR), so there
+    is no 90-degree ambiguity and no fallback path is needed.
 
-    When `enhance=True`, also runs a CLAHE-boosted variant of the
-    frame and merges results, keeping the longest payload per
+    ``rejected`` contains everything libdmtx returned that we
+    filtered out (too small or payload too short). The streamer
+    draws these in a different colour so we can tell whether
+    libdmtx is finding nothing vs finding noise we're throwing
+    away.
+
+    When ``enhance=True``, also runs a CLAHE-boosted variant of
+    the frame and merges results, keeping the longest payload per
     spatial location -- gives noticeably better full-payload
     recovery on soft/blurry input."""
-    h = frame_bgr.shape[0]
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    decodes = [
-        pylibdmtx.decode(rgb, max_count=8, timeout=timeout_ms),
+    decodes: list[list[DmtxDetection]] = [
+        decode_with_corners(
+            rgb, timeout_ms=timeout_ms, max_count=8,
+        ),
     ]
     if enhance:
         enhanced = _enhance_for_decode(frame_bgr)
         rgb_eq = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
         decodes.append(
-            pylibdmtx.decode(
-                rgb_eq, max_count=8, timeout=timeout_ms,
+            decode_with_corners(
+                rgb_eq, timeout_ms=timeout_ms, max_count=8,
             ),
         )
-    raw = _best_of(decodes)
+    merged = _best_of(decodes)
     kept: list[dict] = []
     rejected: list[dict] = []
-    for det in raw:
-        r = det.rect
-        # pylibdmtx's Rect can come back with signed width/height
-        # encoding libdmtx's flow direction. Normalise to a
-        # positive axis-aligned bbox for the refinement step.
-        raw_left, raw_bottom_from_bot = r.left, r.top
-        raw_w, raw_hh = r.width, r.height
-        w = abs(raw_w)
-        hh = abs(raw_hh)
-        left = raw_left if raw_w >= 0 else raw_left + raw_w
-        bottom_from_bot = (
-            raw_bottom_from_bot if raw_hh >= 0
-            else raw_bottom_from_bot + raw_hh
-        )
-
-        payload = det.data.decode('utf-8', errors='replace')
-        # libdmtx Y origin is bottom-left; convert to image coords.
-        top = h - bottom_from_bot - hh
-        bbox = (left, top, w, hh)
-
-        # Recover the actual rotated corners of the marker inside
-        # this axis-aligned bbox. Falls back to the bbox itself if
-        # refinement fails so we never lose a valid decode.
-        refined = _refine_corners(frame_bgr, bbox)
-        if refined is not None:
-            corners_px = refined['corners_px']
-            center_px = refined['center_px']
-            orientation_deg = refined['orientation_deg']
-            size_px = (
-                int(round(refined['width_px'])),
-                int(round(refined['height_px'])),
-            )
-        else:
-            bl = (float(left), float(top + hh))
-            br = (float(left + w), float(top + hh))
-            tr = (float(left + w), float(top))
-            tl = (float(left), float(top))
-            corners_px = [bl, br, tr, tl]
-            center_px = (
-                (bl[0] + br[0] + tr[0] + tl[0]) / 4.0,
-                (bl[1] + br[1] + tr[1] + tl[1]) / 4.0,
-            )
-            orientation_deg = 0.0
-            size_px = (w, hh)
-
-        marker = {
-            'payload': payload,
-            'corners_px': corners_px,
-            'center_px': center_px,
-            'orientation_deg': orientation_deg,
-            'size_px': size_px,
-            'flow': (raw_w, raw_hh),
-            'refined': refined is not None,
-        }
-        # Size filter: use the refined (true visual) extent when
-        # refinement succeeded, otherwise fall back to the raw
-        # libdmtx rect. libdmtx sometimes reports a much smaller
-        # rect than the marker's actual pixel size (it returns
-        # the finder-pattern span, not the full module grid), so
-        # filtering on the raw value throws away clearly-visible
-        # markers. size_px is already (refined_w, refined_h) when
-        # refined, else (w, hh).
-        filt_w, filt_h = size_px
-        if filt_w < min_marker_px or filt_h < min_marker_px:
+    for det in merged:
+        marker = _detection_to_marker(det)
+        w, hh = marker['size_px']
+        payload = marker['payload']
+        if w < min_marker_px or hh < min_marker_px:
             marker['reject_reason'] = f'size<{min_marker_px}px'
             rejected.append(marker)
         elif len(payload.strip()) < min_payload_len:
