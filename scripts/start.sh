@@ -85,61 +85,85 @@ setup_env() {
         fi
     fi
 
-    # bluezero BLE provisioning needs python3-dbus + python3-gi,
-    # which are apt-only C-extension packages. `uv sync` will
-    # install the pure-python bluezero wheel, but importing it
-    # fails inside the venv because the dbus/gi bindings live in
-    # the system site-packages. Install the apt deps (idempotent)
-    # and symlink them into the venv, matching the cv2 approach.
+    # bluezero BLE provisioning needs dbus-python + PyGObject,
+    # both of which are C extensions. Because the venv runs
+    # Python 3.11 but RPi OS Trixie ships system Python 3.13, the
+    # apt-installed python3-dbus / python3-gi binaries are ABI-
+    # incompatible with the venv and cannot be symlinked in.
+    # Instead we declare dbus-python / PyGObject / xmltodict as
+    # pip deps in pyproject.toml and let `uv sync` compile them
+    # against the venv's own 3.11 headers. This requires the
+    # usual C build toolchain + dev headers.
     need_apt=""
-    for pkg in python3-dbus python3-gi bluez; do
+    for pkg in \
+        bluez \
+        build-essential pkg-config meson ninja-build \
+        libdbus-1-dev libglib2.0-dev libcairo2-dev \
+        libgirepository1.0-dev libgirepository-2.0-dev; do
+        # libgirepository-2.0-dev only exists on Trixie+, 1.0 on
+        # Bookworm; we try both, one will fail to find -- harmless.
         if ! dpkg -s "$pkg" >/dev/null 2>&1; then
             need_apt+=" $pkg"
         fi
     done
     if [ -n "$need_apt" ]; then
-        echo "Installing missing apt packages for BLE:$need_apt"
+        echo "Installing missing apt packages for BLE build:$need_apt"
         sudo apt-get update -qq
+        # Run twice because libgirepository-2.0-dev vs 1.0-dev is
+        # distro-dependent; one will fail, the other will succeed,
+        # and the other packages must still get installed.
         # shellcheck disable=SC2086
-        sudo apt-get install -y $need_apt
+        sudo apt-get install -y $need_apt 2>/dev/null || {
+            # Retry without the girepository dev packages -- the
+            # uv sync step below will tell us which one is missing
+            # if compilation actually fails.
+            filtered=$(echo "$need_apt" | tr ' ' '\n' \
+                | grep -v 'libgirepository-' | tr '\n' ' ')
+            # shellcheck disable=SC2086
+            sudo apt-get install -y $filtered || true
+            # Then try each girepository dev package independently.
+            for gi_pkg in libgirepository1.0-dev libgirepository-2.0-dev; do
+                sudo apt-get install -y "$gi_pkg" 2>/dev/null \
+                    && break
+            done
+        }
     fi
 
+    # Clean up any stale cross-version symlinks left by earlier
+    # versions of start.sh (they point at Python 3.13 .so files
+    # and crash the 3.11 interpreter on `import dbus`).
     VENV_SP=$("$VENV_DIR/bin/python" -c \
         "import site; print(site.getsitepackages()[0])")
-    link_system_module() {
-        local modname="$1"
-        if "$VENV_DIR/bin/python" -c "import $modname" 2>/dev/null; then
-            return
-        fi
-        local src
-        src=$(python3 -c \
-            "import $modname, os; p=$modname.__file__; print(os.path.dirname(p) if os.path.basename(p)=='__init__.py' else p)" \
-            2>/dev/null || true)
-        if [ -n "$src" ] && [ -e "$src" ]; then
-            ln -sfn "$src" "$VENV_SP/$(basename "$src")"
-            echo "Linked system $modname -> $VENV_SP/$(basename "$src")"
-        else
-            echo "WARNING: $modname not found in system python; BLE may be unavailable."
-        fi
-    }
-    link_system_module dbus
-    # gi is PyGObject; also pull _dbus_bindings / _dbus_glib_bindings
-    link_system_module gi
-    for mod in _dbus_bindings _dbus_glib_bindings dbus_python-*.dist-info; do
-        for f in /usr/lib/python3/dist-packages/$mod*; do
-            [ -e "$f" ] || continue
-            ln -sfn "$f" "$VENV_SP/$(basename "$f")"
+    for stale in dbus gi _dbus_bindings* _dbus_glib_bindings* \
+                 dbus_python-*.egg-info PyGObject-*.dist-info; do
+        for f in "$VENV_SP"/$stale; do
+            if [ -L "$f" ]; then
+                echo "Removing stale symlink: $f"
+                rm -f "$f"
+            fi
         done
     done
 
+    # Re-sync so uv picks up dbus-python/PyGObject/xmltodict that
+    # we just added to pyproject.toml. If compilation fails, we
+    # surface the error instead of silently leaving BLE broken.
+    if ! "$VENV_DIR/bin/python" -c "import dbus; import gi" \
+            2>/dev/null; then
+        echo "Compiling dbus-python + PyGObject into venv..."
+        if ! timeout 300 env UV_NO_PROGRESS=1 NO_COLOR=1 \
+                uv sync 2>&1; then
+            echo "WARNING: uv sync failed -- BLE stack may not be usable."
+        fi
+    fi
+
     # Final sanity check -- surface any remaining problem loudly.
     if ! "$VENV_DIR/bin/python" -c \
-        "from bluezero import adapter, peripheral" 2>/dev/null; then
+            "from bluezero import adapter, peripheral" 2>/dev/null; then
         echo "WARNING: bluezero still not importable from venv."
         echo "  Reproduce with:"
         echo "    $VENV_DIR/bin/python -c 'from bluezero import adapter, peripheral'"
     else
-        echo "BLE stack imports OK (bluezero + dbus)."
+        echo "BLE stack imports OK (bluezero + dbus + gi)."
     fi
 
     echo "Environment ready."

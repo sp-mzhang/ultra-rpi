@@ -23,6 +23,14 @@ dependencies = [
     "paho-mqtt>=2.0",
     "awsiotsdk>=1.0",
     "bluezero>=0.8",
+    # bluezero's C-extension deps. We install them into the venv
+    # via pip (compiled against uv's 3.11 headers) rather than
+    # symlinking apt packages from the system python, because the
+    # system python on Trixie is 3.13 and C extensions are not
+    # ABI-compatible across minor versions.
+    "dbus-python>=1.3.2",
+    "PyGObject>=3.50,<3.51",
+    "xmltodict>=0.13",
     "smbus2>=0.4",
 ]
 
