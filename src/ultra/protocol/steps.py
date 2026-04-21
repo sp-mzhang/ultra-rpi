@@ -470,6 +470,14 @@ def _log_bldc_health(stm32: Any, label: str = '') -> None:
     )
 
 
+# Public aliases so cross-module callers (e.g. gui.api_stm32)
+# can reuse the same BLDC recovery helpers the recipe step
+# executors use, without reaching for underscore-prefixed names.
+bldc_reset = _bldc_reset
+check_bldc_errors = _check_bldc_errors
+log_bldc_health = _log_bldc_health
+
+
 def _centrifuge_goto_with_retry(
         cmd_name: str,
         runner: Any,

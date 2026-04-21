@@ -620,6 +620,139 @@ def create_stm32_router(app: 'Application') -> APIRouter:
 
     # ---- Camera MJPEG streaming ----
 
+    def _ensure_centrifuge_ready(stm32):
+        '''Bring the BLDC up to an idle/ready state.
+
+        Mirrors what the firmware does internally for
+        ``centrifuge_lock`` / ``centrifuge_unlock`` /
+        ``centrifuge_goto_*``: those are self-contained
+        sequences that power the driver, clear errors, home
+        the encoder if needed, and only then perform motion.
+
+        The raw ``centrifuge_move_angle`` opcode that
+        ``align_carousel`` uses has none of that baked in, so
+        we replicate it here:
+
+          1. Poll ``centrifuge_status``.
+          2. If the driver is offline, ``centrifuge_power`` on
+             and wait for it to come up.
+          3. If latched in ERROR, ``bldc_reset`` (which issues
+             BLDC_STOP_MOTOR + BLDC_CLEAR_ERROR and verifies
+             READY) and re-check.
+          4. If state still isn't idle-like (IDLE / READY /
+             FREE_STOP) with ``|rpm| <= _RPM_IDLE_MAX``,
+             raise 409 -- the motor truly is busy and we
+             shouldn't interrupt it.
+
+        Returns the final (ready) status dict.
+        '''
+        from ultra.protocol.steps import (
+            bldc_reset, check_bldc_errors, log_bldc_health,
+        )
+        import time as _time
+
+        IDLE_STATES = (
+            stm32.CFUGE_ST_IDLE,
+            stm32.CFUGE_ST_READY,
+            5,  # BLDC_STATE_FREE_STOP
+        )
+
+        def _status():
+            r = stm32.send_command(
+                cmd={'cmd': 'centrifuge_status'},
+                timeout_s=5.0,
+            )
+            if not isinstance(r, dict):
+                raise HTTPException(
+                    status_code=503,
+                    detail='centrifuge_status failed',
+                )
+            return r
+
+        log_bldc_health(stm32, 'pre-align')
+        status = _status()
+
+        if not status.get('driver_online', True):
+            LOG.info(
+                'align_carousel: BLDC driver offline; '
+                'powering on',
+            )
+            stm32.send_command(
+                cmd={'cmd': 'centrifuge_power', 'enable': True},
+                timeout_s=5.0,
+            )
+            _time.sleep(1.0)
+            status = _status()
+
+        if int(status.get('state', -1)) == stm32.CFUGE_ST_ERROR:
+            LOG.warning(
+                'align_carousel: BLDC in ERROR '
+                '(flags=%s); running bldc_reset',
+                status.get('error_flags', '0x0000'),
+            )
+            check_bldc_errors(stm32)
+            bldc_reset(stm32)
+            _time.sleep(0.5)
+            status = _status()
+
+        st = int(status.get('state', -1))
+        rpm_abs = abs(int(status.get('rpm', 0)))
+        if (
+            st not in IDLE_STATES
+            or rpm_abs > stm32._RPM_IDLE_MAX
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f'Centrifuge not ready after init '
+                    f'(state={st}, rpm={rpm_abs}, '
+                    f'flags={status.get("error_flags", "?")})'
+                ),
+            )
+        return status
+
+    def _move_angle_with_retry(
+        stm32, target_001, move_rpm, max_retries: int = 3,
+    ):
+        '''centrifuge_move_angle with BLDC reset between attempts.
+
+        Mirrors ``CentrifugeRotateStep._MAX_RETRIES = 3``: on
+        failure, log the error flags, reset the BLDC driver,
+        wait briefly, and try again. Returns the final RSP
+        dict (success or last failure) so the caller can
+        distinguish timeout vs. driver-reject and surface the
+        error_code to the GUI.
+        '''
+        from ultra.protocol.steps import (
+            bldc_reset, check_bldc_errors,
+        )
+        import time as _time
+        last = None
+        for attempt in range(1, max_retries + 1):
+            last = stm32.send_command(
+                cmd={
+                    'cmd': 'centrifuge_move_angle',
+                    'angle_001deg': target_001,
+                    'move_rpm': move_rpm,
+                },
+                timeout_s=60.0,
+            )
+            if (
+                isinstance(last, dict)
+                and last.get('error_code', 0xFF) == 0
+            ):
+                return last
+            LOG.warning(
+                'align_carousel: centrifuge_move_angle '
+                'failed (attempt %d/%d, rsp=%s)',
+                attempt, max_retries, last,
+            )
+            check_bldc_errors(stm32)
+            if attempt < max_retries:
+                bldc_reset(stm32)
+                _time.sleep(0.5)
+        return last
+
     def _get_camera():
         cam = _camera_state['instance']
         if cam is None:
@@ -825,38 +958,16 @@ def create_stm32_router(app: 'Application') -> APIRouter:
         t0 = time.time()
         led_on = False
         try:
-            # --- Pre-flight: centrifuge must be idle ---
+            # --- Pre-flight: BLDC motor initialisation ---
+            # Matches the behaviour of firmware-managed sequences
+            # (centrifuge_lock / centrifuge_unlock / goto_*), which
+            # self-contain the motor setup. See
+            # ``_ensure_centrifuge_ready`` for the full recovery
+            # ladder (power-on, bldc_reset on ERROR, final idle
+            # verification).
             status = await loop.run_in_executor(
-                None,
-                lambda: stm32.send_command(
-                    cmd={'cmd': 'centrifuge_status'},
-                    timeout_s=5.0,
-                ),
+                None, lambda: _ensure_centrifuge_ready(stm32),
             )
-            if not isinstance(status, dict):
-                raise HTTPException(
-                    status_code=503,
-                    detail='centrifuge_status failed',
-                )
-            # Acceptable "idle-like" states match
-            # wait_centrifuge_idle: BLDC_STATE_INIT (0),
-            # BLDC_STATE_READY (1), BLDC_STATE_FREE_STOP (5).
-            # Anything else (ALIGNING, STARTING, RUNNING, ERROR)
-            # means the motor is busy or faulted.
-            st = int(status.get('state', -1))
-            rpm_abs = abs(int(status.get('rpm', 0)))
-            if st not in (
-                stm32.CFUGE_ST_IDLE,
-                stm32.CFUGE_ST_READY,
-                5,  # BLDC_STATE_FREE_STOP
-            ) or rpm_abs > stm32._RPM_IDLE_MAX:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f'Centrifuge not idle '
-                        f'(state={st}, rpm={rpm_abs})'
-                    ),
-                )
             cur_001deg = int(status.get('angle_001deg', 0))
 
             # --- Home Z, then move gantry to probe pose ---
@@ -954,19 +1065,18 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             # sends the RSP with actual_001deg). It does NOT emit
             # MSG_GANTRY_DONE. Use plain send_command so the RSP is
             # the completion signal -- mirroring protocol/steps.py.
+            #
+            # The move is wrapped in the same 3-attempt +
+            # bldc_reset retry the CentrifugeRotateStep uses, so
+            # a transient BLDC fault doesn't kill the alignment.
             station_deg = aligner.station_deg(result.side)
             station_001 = int(round(station_deg * 100)) % 36000
             delta_001 = int(round(result.delta_motor_deg * 100))
             target_001 = (station_001 + delta_001) % 36000
             r = await loop.run_in_executor(
                 None,
-                lambda: stm32.send_command(
-                    cmd={
-                        'cmd': 'centrifuge_move_angle',
-                        'angle_001deg': target_001,
-                        'move_rpm': move_rpm,
-                    },
-                    timeout_s=60.0,
+                lambda: _move_angle_with_retry(
+                    stm32, target_001, move_rpm,
                 ),
             )
             moved_ok = (
