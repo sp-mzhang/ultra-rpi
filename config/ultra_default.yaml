@@ -194,6 +194,6 @@ carousel_align:
       markers: []                # TODO: fill in when defined
       reference_deg: 0.0
   centrifuge:
-    move_rpm: 100
+    move_rpm: 1
     polarity: 1                  # flip to -1 if motor rotates the
                                  # wrong way on first on-device test
