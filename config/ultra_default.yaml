@@ -183,7 +183,7 @@ carousel_align:
     xy_speed_mms: 40.0
     z_speed_mms: 10.0
   led_settle_ms: 250             # wait after LED on before capture
-  min_markers: 2                 # refuse alignment below this count
+  min_markers: 1               # refuse alignment below this count
   decode_timeout_ms: 500
   use_clahe_fallback: true
   sides:
