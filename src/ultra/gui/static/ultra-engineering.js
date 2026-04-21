@@ -1215,9 +1215,14 @@
       )
       .join('\n') || '(none)';
     const err = $('#eng-cal-reason');
-    if (res.reason) {
+    const parts = [];
+    if (res.reason) { parts.push('Reason: ' + res.reason); }
+    if (res.move_error) {
+      parts.push('Move error: ' + res.move_error);
+    }
+    if (parts.length) {
       err.hidden = false;
-      err.textContent = 'Reason: ' + res.reason;
+      err.textContent = parts.join(' | ');
     } else {
       err.hidden = true;
       err.textContent = '';
@@ -1259,13 +1264,20 @@
           return;
         }
         _renderCarouselResult(body);
-        status.textContent = 'align ok';
+        if (body.move_error) {
+          status.textContent = 'move error: ' + body.move_error;
+        } else if (body.moved === false) {
+          status.textContent = 'no move (delta undefined)';
+        } else {
+          status.textContent = 'align ok';
+        }
         engLog('align-carousel ok: ' + JSON.stringify({
           side: body.side,
           avg: body.avg_deg,
           c_cw: body.c_cw_deg,
           delta: body.delta_motor_deg,
           moved: body.moved,
+          move_error: body.move_error || null,
         }));
       } catch (e) {
         status.textContent = 'error';

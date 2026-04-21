@@ -906,24 +906,49 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                 })
 
             # --- Apply centrifuge correction ---
+            # NOTE: centrifuge_move_angle is semi-blocking in firmware
+            # (Centrifuge_Service_MoveAngle holds the FSM task on a
+            # semaphore up to CENT_ANGLE_SEM_TIMEOUT_MS = 45 s, then
+            # sends the RSP with actual_001deg). It does NOT emit
+            # MSG_GANTRY_DONE. Use plain send_command so the RSP is
+            # the completion signal -- mirroring protocol/steps.py.
             delta_001 = int(round(result.delta_motor_deg * 100))
             target_001 = (cur_001deg + delta_001) % 36000
             r = await loop.run_in_executor(
                 None,
-                lambda: stm32.send_command_wait_done(
+                lambda: stm32.send_command(
                     cmd={
                         'cmd': 'centrifuge_move_angle',
                         'angle_001deg': target_001,
                         'move_rpm': move_rpm,
                     },
-                    timeout_s=30.0,
+                    timeout_s=60.0,
                 ),
             )
-            if r is None:
-                raise HTTPException(
-                    status_code=500,
-                    detail='centrifuge_move_angle failed',
+            moved_ok = (
+                isinstance(r, dict)
+                and r.get('error_code', 0xFF) == 0
+            )
+            if not moved_ok:
+                # Keep the captured frame + computed delta in the
+                # response so the GUI can render the preview and
+                # the user can see WHY the move was attempted.
+                err_code = (
+                    r.get('error_code') if isinstance(r, dict) else None
                 )
+                return _result_to_dict(result, {
+                    'moved': False,
+                    'move_error': (
+                        'centrifuge_move_angle_failed'
+                        f' (err={err_code})'
+                        if err_code is not None
+                        else 'centrifuge_move_angle_timeout'
+                    ),
+                    'target_001deg': target_001,
+                    'current_001deg': cur_001deg,
+                    'elapsed_s': round(time.time() - t0, 3),
+                    'frame_ts': _last_align_frame.get('ts', 0),
+                })
             return _result_to_dict(result, {
                 'moved': True,
                 'target_001deg': target_001,
