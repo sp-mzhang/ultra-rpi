@@ -12,12 +12,64 @@ No frames are saved to disk.
 '''
 from __future__ import annotations
 
+import fcntl
 import glob
 import logging
+import os
 import re
+import struct
 import threading
 import time
 from typing import Generator
+
+# V4L2 VIDIOC_QUERYCAP ioctl: _IOR('V', 0, struct v4l2_capability)
+# struct size is 104 bytes; encodes as (2<<30)|(104<<16)|('V'<<8)|0.
+_VIDIOC_QUERYCAP = 0x80685600
+_V4L2_CAP_VIDEO_CAPTURE = 0x00000001
+_V4L2_CAP_VIDEO_CAPTURE_MPLANE = 0x00001000
+_V4L2_CAP_DEVICE_CAPS = 0x80000000
+
+
+def _supports_video_capture(dev_path: str) -> bool:
+    '''Return True iff ``dev_path`` advertises VIDEO_CAPTURE via V4L2.
+
+    Probes the device with ``VIDIOC_QUERYCAP`` -- completes in
+    microseconds on both capture-capable and non-capture nodes,
+    so we can skip the Pi's bcm2835 ISP / codec / rpivid pipeline
+    devices without paying their ~10 s select() timeout when
+    ``cv2.VideoCapture`` tries to grab a frame.
+    '''
+    try:
+        fd = os.open(dev_path, os.O_RDWR | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        buf = bytearray(104)
+        fcntl.ioctl(fd, _VIDIOC_QUERYCAP, buf)
+    except OSError:
+        return False
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    # Layout (linux/videodev2.h):
+    #   u8 driver[16]; u8 card[32]; u8 bus_info[32];
+    #   u32 version; u32 capabilities; u32 device_caps;
+    #   u32 reserved[3];
+    _drv, _card, _bus, _ver, caps, device_caps, *_r = struct.unpack(
+        '<16s32s32sIII3I', bytes(buf),
+    )
+    # device_caps is only valid when the DEVICE_CAPS bit is set in
+    # ``caps`` (newer kernels set it; older may not). Fall back to
+    # the full driver caps otherwise.
+    effective = (
+        device_caps if caps & _V4L2_CAP_DEVICE_CAPS else caps
+    )
+    return bool(effective & (
+        _V4L2_CAP_VIDEO_CAPTURE
+        | _V4L2_CAP_VIDEO_CAPTURE_MPLANE
+    ))
 
 LOG = logging.getLogger(__name__)
 
@@ -60,6 +112,7 @@ class CameraStream:
         self._frame: bytes | None = None
         self._frame_bgr = None  # latest raw BGR ndarray (for CV consumers)
         self._lock = threading.Lock()
+        self._start_lock = threading.Lock()
         self._running = False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -81,14 +134,16 @@ class CameraStream:
         return cap
 
     @staticmethod
-    def _list_video_devices() -> list[str]:
-        '''All /dev/videoN present, in **numeric** order.
+    def _list_video_devices() -> list[tuple[str, bool]]:
+        '''All /dev/videoN present, with a ``supports_capture`` flag.
 
-        Default lexicographic glob ordering visits video10-19
-        before video2, which on a Pi hits the bcm2835 ISP pipeline
-        devices (video20+) first -- each of which takes ~10 s to
-        time out on ``select()``. Sorting by the trailing integer
-        reaches a USB webcam on a low index first.
+        Returns a list of ``(path, capture_capable)`` tuples sorted
+        numerically by the trailing device index. ``capture_capable``
+        comes from V4L2 ``VIDIOC_QUERYCAP`` and is ``False`` for the
+        Pi's internal pipeline nodes (bcm2835 ISP, codec, rpivid
+        output, etc.), so those can be skipped without paying the
+        ~10 s ``select()`` timeout that ``cv2.VideoCapture.read()``
+        otherwise incurs on them.
         '''
         paths = glob.glob('/dev/video*')
         ordered: list[tuple[int, str]] = []
@@ -96,22 +151,37 @@ class CameraStream:
             m = re.match(r'/dev/video(\d+)$', p)
             if m:
                 ordered.append((int(m.group(1)), p))
-        return [p for _, p in sorted(ordered)]
+        return [
+            (p, _supports_video_capture(p))
+            for _, p in sorted(ordered)
+        ]
 
     def _auto_detect(self) -> 'cv2.VideoCapture | None':
         '''Scan every /dev/videoN device in numeric order.
 
-        Each probe is logged at INFO so it is visible in the
-        service journal -- silent failures (e.g. non-capture
-        ISP nodes) previously made the scan look like it had
-        skipped devices.
+        Non-capture nodes are filtered out via V4L2 QUERYCAP so
+        we never spend the ~10 s ``select()`` timeout on the Pi's
+        internal ISP/codec pipeline devices.
         '''
         devices = self._list_video_devices()
+        capture_devs = [p for p, ok in devices if ok]
+        skipped = [p for p, ok in devices if not ok]
         LOG.info(
-            'Camera scan: %d devices found: %s',
-            len(devices), ', '.join(devices) or '(none)',
+            'Camera scan: %d nodes found, %d capture-capable '
+            '(skipping non-capture: %s)',
+            len(devices), len(capture_devs),
+            ', '.join(skipped) or '(none)',
         )
-        for dev in devices:
+        if not capture_devs:
+            LOG.warning(
+                'No USB/UVC video-capture device present. '
+                'All %d /dev/video* nodes belong to the SoC '
+                'ISP/codec pipeline. Plug a USB camera in and '
+                'confirm with `lsusb` + `ls /dev/video*`.',
+                len(devices),
+            )
+            return None
+        for dev in capture_devs:
             LOG.info('Probing camera: %s', dev)
             cap = self._try_open(dev)
             if cap is not None:
@@ -126,6 +196,11 @@ class CameraStream:
     def start(self) -> bool:
         '''Open the camera and start the capture thread.
 
+        Idempotent and serialised: concurrent callers won't race
+        each other into multiple parallel ``_auto_detect`` scans
+        (each scan can take tens of seconds on a Pi with many
+        pipeline nodes, so stacking them would block the UI).
+
         Returns:
             True if the camera opened successfully.
         '''
@@ -137,31 +212,32 @@ class CameraStream:
             )
             return False
 
-        if self._running:
-            return True
+        with self._start_lock:
+            if self._running:
+                return True
 
-        cap = self._try_open(self._device)
-        if cap is None:
-            LOG.warning(
-                'Failed to open camera: %s — scanning…',
-                self._device,
+            cap = self._try_open(self._device)
+            if cap is None:
+                LOG.warning(
+                    'Failed to open camera: %s -- scanning...',
+                    self._device,
+                )
+                cap = self._auto_detect()
+            if cap is None:
+                LOG.warning('No working camera found.')
+                return False
+
+            self._cap = cap
+            self._stop.clear()
+            self._running = True
+            self._thread = threading.Thread(
+                target=self._capture_loop,
+                name='camera-capture',
+                daemon=True,
             )
-            cap = self._auto_detect()
-        if cap is None:
-            LOG.warning('No working camera found.')
-            return False
-
-        self._cap = cap
-        self._stop.clear()
-        self._running = True
-        self._thread = threading.Thread(
-            target=self._capture_loop,
-            name='camera-capture',
-            daemon=True,
-        )
-        self._thread.start()
-        LOG.info('Camera started: %s', self._device)
-        return True
+            self._thread.start()
+            LOG.info('Camera started: %s', self._device)
+            return True
 
     def stop(self) -> None:
         '''Stop the capture thread and release the device.'''
