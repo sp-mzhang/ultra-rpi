@@ -84,6 +84,87 @@ def _best_of(
     return out
 
 
+def annotate(
+    frame_bgr: np.ndarray,
+    result: 'AlignmentResult',
+    side_markers: set[str] | None = None,
+) -> np.ndarray:
+    """Overlay marker outlines, orientation line, and a HUD.
+
+    Green = marker was used in the average (payload in the chosen
+    side's marker set). Magenta = decoded but not part of the
+    average (wrong side or unrecognised payload). Caller passes
+    ``side_markers`` = the set we want highlighted; if omitted and
+    ``result.side`` is set, all decoded markers are drawn green.
+
+    Returns a new BGR image; the input is not mutated. Colours are
+    BGR to match OpenCV convention.
+    """
+    out = frame_bgr.copy()
+    matched = {
+        p.strip().upper() for p in (side_markers or set())
+    }
+    if not matched and result.side is not None:
+        matched = {
+            m.payload.strip().upper()
+            for m in (result.markers or [])
+        }
+
+    ok = (0, 255, 0)
+    ignored = (255, 0, 255)
+
+    for m in (result.markers or []):
+        if not m.corners or len(m.corners) < 4:
+            continue
+        pts = np.array(
+            [[int(round(x)), int(round(y))] for (x, y) in m.corners],
+            dtype=np.int32,
+        )
+        col = ok if m.payload.strip().upper() in matched else ignored
+        cv2.polylines(
+            out, [pts], isClosed=True, color=col, thickness=2,
+        )
+        # Emphasise the BL->BR (L-finder bottom) edge so the
+        # orientation is visually unambiguous.
+        cv2.line(
+            out, tuple(pts[0]), tuple(pts[1]), col, 3,
+        )
+        cx = int(round(m.center_px[0]))
+        cy = int(round(m.center_px[1]))
+        label = f'{m.payload} {m.angle_deg:+.1f}deg'
+        cv2.putText(
+            out, label, (cx - 30, cy - 8),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 2,
+        )
+
+    hud: list[str] = []
+    if result.side is not None:
+        hud.append(f'side: {result.side}')
+    if result.avg_deg is not None:
+        hud.append(f'avg:  {result.avg_deg:+.2f} deg')
+    if result.reference_deg is not None:
+        hud.append(f'ref:  {result.reference_deg:+.2f} deg')
+    if result.c_cw_deg is not None:
+        hud.append(f'c_cw: {result.c_cw_deg:+.2f} deg')
+    if result.delta_motor_deg is not None:
+        hud.append(f'move: {result.delta_motor_deg:+.2f} deg')
+    if result.reason:
+        hud.append(f'REASON: {result.reason}')
+
+    y = 24
+    for line in hud:
+        cv2.putText(
+            out, line, (12, y),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3,
+        )
+        cv2.putText(
+            out, line, (12, y),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1,
+        )
+        y += 22
+    return out
+
+
 @dataclass
 class SideConfig:
     name: str
@@ -97,6 +178,7 @@ class MarkerReading:
     angle_deg: float
     center_px: tuple[float, float]
     size_px: tuple[float, float]
+    corners: list[tuple[float, float]] | None = None
 
 
 @dataclass
@@ -196,6 +278,7 @@ class CarouselAligner:
                 angle_deg=det.orientation_deg,
                 center_px=det.center,
                 size_px=(det.width_px, det.height_px),
+                corners=list(det.corners),
             ))
         return out
 

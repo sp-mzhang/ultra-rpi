@@ -1060,18 +1060,18 @@
       <div id="eng-carousel-align-result"
         class="eng-carousel-result" hidden>
         <div class="eng-form-grid">
-          <label>Side:</label>
+          <label>Side detected:</label>
           <span id="eng-cal-side">--</span>
-          <label>Avg angle:</label>
+          <label>Detected marker angle:</label>
           <span id="eng-cal-avg">--</span>
-          <label>Reference:</label>
+          <label>Reference angle:</label>
           <span id="eng-cal-ref">--</span>
-          <label>Carousel CW offset:</label>
+          <label>Carousel offset (CW):</label>
           <span id="eng-cal-ccw">--</span>
-          <label>Motor delta:</label>
-          <span id="eng-cal-delta">--</span>
-          <label>Target (001deg):</label>
-          <span id="eng-cal-target">--</span>
+          <label>Centrifuge move:</label>
+          <span id="eng-cal-move">--</span>
+          <label>Centrifuge from -> to:</label>
+          <span id="eng-cal-fromto">--</span>
           <label>Moved:</label>
           <span id="eng-cal-moved">--</span>
           <label>Elapsed:</label>
@@ -1083,6 +1083,14 @@
             class="eng-carousel-markers"></div>
         </div>
         <div id="eng-cal-reason" class="eng-err" hidden></div>
+        <div class="eng-cal-frame-wrap" style="margin-top:6px">
+          <div class="eng-dim">
+            Frame used for alignment
+            (green = in-average, magenta = ignored):
+          </div>
+          <img id="eng-cal-frame" class="eng-cal-frame"
+            alt="alignment preview" hidden>
+        </div>
       </div>
     </fieldset>
   </div>

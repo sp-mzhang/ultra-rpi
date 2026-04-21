@@ -1185,13 +1185,20 @@
     $('#eng-cal-avg').textContent = _fmtDeg(res.avg_deg);
     $('#eng-cal-ref').textContent = _fmtDeg(res.reference_deg);
     $('#eng-cal-ccw').textContent = _fmtDeg(res.c_cw_deg);
-    $('#eng-cal-delta').textContent =
-      _fmtDeg(res.delta_motor_deg) +
-      (res.polarity ? ' (pol=' + res.polarity + ')' : '');
-    $('#eng-cal-target').textContent =
-      res.target_001deg === null || res.target_001deg === undefined
-        ? '--'
-        : (res.target_001deg / 100.0).toFixed(2) + ' deg';
+    const polTxt = res.polarity
+      ? ' (pol=' + res.polarity + ')' : '';
+    $('#eng-cal-move').textContent =
+      _fmtDeg(res.delta_motor_deg) + polTxt;
+    const cur = (res.current_001deg === null
+      || res.current_001deg === undefined)
+      ? null : res.current_001deg / 100.0;
+    const tgt = (res.target_001deg === null
+      || res.target_001deg === undefined)
+      ? null : res.target_001deg / 100.0;
+    $('#eng-cal-fromto').textContent =
+      (cur === null ? '--' : cur.toFixed(2) + ' deg') +
+      ' -> ' +
+      (tgt === null ? '--' : tgt.toFixed(2) + ' deg');
     $('#eng-cal-moved').textContent =
       res.moved === true ? 'yes'
         : res.moved === false ? 'no'
@@ -1214,6 +1221,15 @@
     } else {
       err.hidden = true;
       err.textContent = '';
+    }
+    const img = $('#eng-cal-frame');
+    if (res.frame_ts) {
+      img.src = '/api/camera/last-alignment-frame?ts=' +
+        encodeURIComponent(res.frame_ts);
+      img.hidden = false;
+    } else {
+      img.removeAttribute('src');
+      img.hidden = true;
     }
   }
 

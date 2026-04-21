@@ -648,11 +648,40 @@ def create_stm32_router(app: 'Application') -> APIRouter:
 
     # ---- Carousel alignment (blister / pipette via markers) ----
 
+    # Cache the most recent annotated alignment frame so the GUI
+    # can display it after the POST returns. Kept in module-local
+    # state (no persistence) -- survives only until the process
+    # restarts. Includes a monotonic timestamp so the GUI can bust
+    # its image cache with a query-string param.
+    _last_align_frame: dict = {'jpeg': None, 'ts': 0.0}
+
     def _load_aligner():
         '''Build a CarouselAligner from the current app config.'''
         from ultra.vision.carousel_align import CarouselAligner
         cfg = (app.config.get('carousel_align') or {})
         return CarouselAligner.from_config(cfg), cfg
+
+    def _cache_annotated_frame(frame_bgr, result, side_markers):
+        '''Render alignment overlay on ``frame_bgr`` and cache as
+        JPEG. Failures are logged, not raised -- the alignment
+        response is still useful without the preview image.'''
+        try:
+            import time as _time
+            import cv2
+            from ultra.vision.carousel_align import annotate
+            overlay = annotate(
+                frame_bgr, result, side_markers=side_markers,
+            )
+            ok, buf = cv2.imencode(
+                '.jpg', overlay, [cv2.IMWRITE_JPEG_QUALITY, 80],
+            )
+            if ok:
+                _last_align_frame['jpeg'] = bytes(buf)
+                _last_align_frame['ts'] = _time.time()
+        except Exception as exc:
+            LOG.warning(
+                'annotate/encode failed: %s', exc,
+            )
 
     def _grab_bgr_frame(settle_ms: int = 0):
         '''Start the camera if needed, wait briefly, return BGR.'''
@@ -707,6 +736,26 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             out.update(extras)
         return out
 
+    @router.get('/camera/last-alignment-frame')
+    async def camera_last_alignment_frame():
+        '''Return the most recent annotated alignment JPEG.
+
+        Populated by POST /camera/align-carousel each time it
+        runs. 404 until the first alignment has been attempted.
+        '''
+        from fastapi.responses import Response
+        jpeg = _last_align_frame.get('jpeg')
+        if not jpeg:
+            raise HTTPException(
+                status_code=404,
+                detail='No alignment frame yet',
+            )
+        return Response(
+            content=jpeg,
+            media_type='image/jpeg',
+            headers={'Cache-Control': 'no-store'},
+        )
+
     @router.post('/camera/align-carousel')
     async def align_carousel():
         '''One-shot carousel alignment via toolhead camera markers.
@@ -756,12 +805,23 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                     status_code=503,
                     detail='centrifuge_status failed',
                 )
-            if int(status.get('state', 0)) != 0:
+            # Acceptable "idle-like" states match
+            # wait_centrifuge_idle: BLDC_STATE_INIT (0),
+            # BLDC_STATE_READY (1), BLDC_STATE_FREE_STOP (5).
+            # Anything else (ALIGNING, STARTING, RUNNING, ERROR)
+            # means the motor is busy or faulted.
+            st = int(status.get('state', -1))
+            rpm_abs = abs(int(status.get('rpm', 0)))
+            if st not in (
+                stm32.CFUGE_ST_IDLE,
+                stm32.CFUGE_ST_READY,
+                5,  # BLDC_STATE_FREE_STOP
+            ) or rpm_abs > stm32._RPM_IDLE_MAX:
                 raise HTTPException(
                     status_code=409,
                     detail=(
                         f'Centrifuge not idle '
-                        f'(state={status.get("state")})'
+                        f'(state={st}, rpm={rpm_abs})'
                     ),
                 )
             cur_001deg = int(status.get('angle_001deg', 0))
@@ -825,12 +885,24 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             result = await loop.run_in_executor(
                 None, lambda: aligner.compute(frame),
             )
+            # Annotate + cache the frame for GUI preview regardless
+            # of whether we end up commanding motion.
+            side_markers = None
+            if result.side and result.side in aligner.sides:
+                side_markers = aligner.sides[result.side].markers
+            await loop.run_in_executor(
+                None,
+                lambda: _cache_annotated_frame(
+                    frame, result, side_markers,
+                ),
+            )
             if result.delta_motor_deg is None:
                 return _result_to_dict(result, {
                     'moved': False,
                     'target_001deg': None,
                     'current_001deg': cur_001deg,
                     'elapsed_s': round(time.time() - t0, 3),
+                    'frame_ts': _last_align_frame.get('ts', 0),
                 })
 
             # --- Apply centrifuge correction ---
@@ -857,6 +929,7 @@ def create_stm32_router(app: 'Application') -> APIRouter:
                 'target_001deg': target_001,
                 'current_001deg': cur_001deg,
                 'elapsed_s': round(time.time() - t0, 3),
+                'frame_ts': _last_align_frame.get('ts', 0),
             })
         finally:
             if led_on:

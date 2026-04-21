@@ -1347,6 +1347,13 @@ textarea {
   white-space: pre-wrap;
   margin-top: 2px;
 }
+.eng-cal-frame {
+  display: block;
+  max-width: 100%;
+  margin-top: 4px;
+  border: 1px solid var(--border, #555);
+  border-radius: 3px;
+}
 .eng-err {
   color: #ff6a6a;
   margin-top: 6px;
