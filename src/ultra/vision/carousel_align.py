@@ -36,6 +36,25 @@ def _wrap180(deg: float) -> float:
     return 180.0 if x <= -180.0 else x
 
 
+def _payload_key(payload: str) -> str:
+    """Normalise a decoded payload to its marker-identity key.
+
+    Stickers are printed as a single identifying letter
+    (``L`` / ``T`` / ``R`` / ``U`` on the blister side) and may
+    carry an arbitrary numeric suffix for batch / revision
+    tracking -- e.g. ``U31``, ``T02``. The carousel-side marker
+    sets in ``config/ultra_default.yaml`` only store the letter,
+    so matching is first-letter based: ``U31`` -> ``U``.
+
+    Returns the upper-cased first character of the stripped
+    payload, or the empty string for empty input. All payload
+    comparisons (side classification, angle-average filtering,
+    overlay colouring) route through here so they stay in sync.
+    """
+    s = (payload or '').strip().upper()
+    return s[:1]
+
+
 def _avg_angle(angles_deg: Iterable[float]) -> float | None:
     """Complex-exp mean of angles in degrees; None if empty."""
     xs = 0.0
@@ -101,12 +120,12 @@ def annotate(
     BGR to match OpenCV convention.
     """
     out = frame_bgr.copy()
-    matched = {
-        p.strip().upper() for p in (side_markers or set())
-    }
+    # Match on the first letter only (see _payload_key docstring
+    # for why: stickers can carry a numeric suffix such as "U31").
+    matched = {_payload_key(p) for p in (side_markers or set())}
     if not matched and result.side is not None:
         matched = {
-            m.payload.strip().upper()
+            _payload_key(m.payload)
             for m in (result.markers or [])
         }
 
@@ -120,7 +139,7 @@ def annotate(
             [[int(round(x)), int(round(y))] for (x, y) in m.corners],
             dtype=np.int32,
         )
-        col = ok if m.payload.strip().upper() in matched else ignored
+        col = ok if _payload_key(m.payload) in matched else ignored
         cv2.polylines(
             out, [pts], isClosed=True, color=col, thickness=2,
         )
@@ -342,13 +361,16 @@ class CarouselAligner:
         """
         if not markers:
             return None
-        payloads = {m.payload.strip().upper() for m in markers}
+        # Compare on the first letter only so stickers with
+        # numeric suffixes (e.g. "U31") still resolve to "U".
+        payloads = {_payload_key(m.payload) for m in markers}
         best_name = None
         best_score = 0
         for name, side in self.sides.items():
             if not side.markers:
                 continue
-            score = len(payloads & side.markers)
+            side_keys = {_payload_key(s) for s in side.markers}
+            score = len(payloads & side_keys)
             if score > best_score:
                 best_score = score
                 best_name = name
@@ -393,9 +415,12 @@ class CarouselAligner:
         side = self.sides[side_name]
         # Average only the markers that belong to this side so a
         # stray decode from the other side doesn't bias the result.
+        # First-letter matching (see _payload_key) means a sticker
+        # decoded as e.g. "U31" still counts toward the "U" slot.
+        side_keys = {_payload_key(s) for s in side.markers}
         angles = [
             m.angle_deg for m in markers
-            if m.payload.strip().upper() in side.markers
+            if _payload_key(m.payload) in side_keys
         ]
         avg = _avg_angle(angles)
         if avg is None:
