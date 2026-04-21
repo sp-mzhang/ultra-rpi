@@ -1397,6 +1397,11 @@ class STM32Interface:
                 pattern=cmd.get('pattern', 0),
                 stage=cmd.get('stage', 0),
             )
+        if cmd_name == 'cam_led_set':
+            return fp.pack_cam_led_set(
+                seq=seq,
+                on=bool(cmd.get('on', False)),
+            )
         if cmd_name == 'air_heater_set_duty':
             return fp.pack_air_heater_set_duty(
                 seq=seq,
@@ -1749,6 +1754,34 @@ class STM32Interface:
         )
         LOG.info(f'Ping: {ok=}')
         return ok
+
+    def cam_led_set(
+            self,
+            on: bool,
+            timeout_s: float = 0.5,
+    ) -> bool:
+        '''Hold the toolhead camera illumination LED steadily on/off.
+
+        The camera LED is wired to PC12 on the STM32, which is shared
+        with the centrifuge revolution strobe. While on=True, the
+        firmware suppresses the per-revolution strobe so the LED stays
+        lit continuously. Do not call this with on=True during a
+        centrifuge spin.
+
+        Args:
+            on: True = LED steady on. False = release override; LED
+                goes off immediately, and the centrifuge strobe
+                resumes on the next revolution.
+            timeout_s: Wait timeout for the firmware ACK.
+
+        Returns:
+            True on ACK, False on timeout / error.
+        '''
+        resp = self.send_command(
+            cmd={'cmd': 'cam_led_set', 'on': bool(on)},
+            timeout_s=timeout_s,
+        )
+        return resp is not None
 
     def perform_lld(
             self,

@@ -202,6 +202,7 @@ CMD_LED_SET_BUTTON  = 0x8C02
 CMD_LED_SET_PIXEL_OFF = 0x8C04
 CMD_LED_SET_ALL_OFF = 0x8C05
 CMD_LED_SET_PATTERN = 0x8C06
+CMD_LED_CAM_SET     = 0x8C07
 CMD_GET_PRESS_DATA  = 0x8A05
 
 # Air heater (0x8Dxx)
@@ -366,6 +367,7 @@ CMD_NAME_TO_ID = {
     'led_set_pixel_off':    CMD_LED_SET_PIXEL_OFF,
     'led_set_all_off':      CMD_LED_SET_ALL_OFF,
     'led_set_pattern':      CMD_LED_SET_PATTERN,
+    'cam_led_set':          CMD_LED_CAM_SET,
     'air_heater_set_duty':  CMD_AIR_HEATER_SET_DUTY,
     'air_heater_set_en':    CMD_AIR_HEATER_SET_EN,
     'air_heater_set_fan':   CMD_AIR_HEATER_SET_FAN,
@@ -1000,6 +1002,21 @@ def pack_led_set_pattern(
                  other than progress (4). Pass 0 otherwise.
     '''
     return struct.pack('<IBB', seq, pattern, stage)
+
+
+def pack_cam_led_set(seq: int, on: bool) -> bytes:
+    '''Pack CMD_LED_CAM_SET payload (0x8C07).
+
+    Holds the toolhead camera illumination LED (PC12) steadily
+    on (on=True) or off (on=False). While on, the centrifuge
+    revolution strobe is suppressed in firmware -- do not send
+    on=True during a centrifuge spin.
+
+    Args:
+        seq: Sequence number (uint32).
+        on:  True = steady on, False = release override (off).
+    '''
+    return struct.pack('<IB', seq, 1 if on else 0)
 
 
 # =====================================================================

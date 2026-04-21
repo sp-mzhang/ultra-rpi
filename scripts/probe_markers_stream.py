@@ -25,9 +25,19 @@ Usage:
     ./scripts/probe_markers_stream.sh --port 8765
     ./scripts/probe_markers_stream.sh --width 1280 --height 720
     ./scripts/probe_markers_stream.sh --record /tmp/cam_log
+    ./scripts/probe_markers_stream.sh --cam-led on     # hold toolhead LED steady
 
   --record DIR    save one annotated PNG per second to DIR for
                   offline review (capped at 600 frames; rolls over)
+  --cam-led MODE  ``on`` = hold the toolhead camera LED steady for
+                  the whole session, ``off`` (default) = leave it
+                  alone. Requires the main ``ultra-rpi`` service to
+                  be stopped (it owns ``/dev/ttyAMA3``). While
+                  ``on`` is in effect, the centrifuge revolution
+                  strobe is suppressed in firmware -- do not spin
+                  the centrifuge during the session. On exit
+                  (Ctrl-C / crash), an atexit hook releases the
+                  override so strobe behavior returns to normal.
 
 Stop with Ctrl-C.
 
@@ -42,6 +52,7 @@ Or fetch a single still:
 from __future__ import annotations
 
 import argparse
+import atexit
 import http.server
 import io
 import logging
@@ -56,6 +67,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
+from typing import Optional
 
 try:
     import numpy as np
@@ -990,6 +1002,89 @@ class _ThreadedHTTPServer(
 # CLI
 # --------------------------------------------------------------
 
+def _cam_led_setup(port: str) -> Optional[object]:
+    '''Open an STM32Interface and hold the toolhead camera LED on.
+
+    Returns the live interface so the caller can keep a reference
+    (cleanup is registered via atexit + signal handlers internally);
+    returns None on any error so the stream can still run without
+    illumination.
+    '''
+    try:
+        from ultra.hw.stm32_interface import STM32Interface
+    except ImportError as exc:  # pragma: no cover
+        LOG.warning(
+            '--cam-led requested but ultra.hw.stm32_interface '
+            'is not importable (%s); continuing without LED.',
+            exc,
+        )
+        return None
+
+    stm32 = STM32Interface(port=port)
+    if not stm32.connect():
+        LOG.warning(
+            '--cam-led requested but STM32 serial connect to %s '
+            'failed. Is the ultra-rpi service still running and '
+            'holding the port? Continuing without LED.',
+            port,
+        )
+        try:
+            stm32.disconnect()
+        except Exception:  # pragma: no cover -- best-effort
+            pass
+        return None
+
+    if not stm32.cam_led_set(True):
+        LOG.warning(
+            '--cam-led on: STM32 connected but cam_led_set(True) '
+            'timed out or errored. Firmware may be too old to '
+            'support CMD_LED_CAM_SET (0x8C07). Continuing '
+            'without LED.',
+        )
+        try:
+            stm32.disconnect()
+        except Exception:  # pragma: no cover
+            pass
+        return None
+
+    LOG.info('Camera LED held ON via STM32 (%s)', port)
+
+    released = threading.Event()
+
+    def _release() -> None:
+        if released.is_set():
+            return
+        released.set()
+        try:
+            stm32.cam_led_set(False)
+        except Exception as exc:  # pragma: no cover -- best-effort
+            LOG.warning('cam_led_set(False) on exit failed: %s', exc)
+        try:
+            stm32.disconnect()
+        except Exception as exc:  # pragma: no cover
+            LOG.warning('STM32 disconnect on exit failed: %s', exc)
+        LOG.info('Camera LED released')
+
+    atexit.register(_release)
+
+    def _sig_handler(signum, _frame) -> None:
+        LOG.info('Signal %s -> releasing cam LED', signum)
+        _release()
+        # Restore default so a second Ctrl-C actually exits even if
+        # the HTTP server is wedged.
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _sig_handler)
+        except (ValueError, OSError):  # pragma: no cover
+            # Not main thread or unsupported on this platform.
+            pass
+
+    return stm32
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description='Live MJPEG viewer that overlays the '
@@ -1075,6 +1170,23 @@ def main() -> int:
              '(rolls over after 600 frames)',
     )
     ap.add_argument(
+        '--cam-led', choices=('on', 'off'), default='off',
+        help='if ``on``, open the STM32 serial link at startup '
+             'and hold the toolhead camera illumination LED '
+             '(PC12) steady ON for the whole session. Released '
+             'automatically on exit. Requires the ultra-rpi '
+             'service to be stopped, and must not run during a '
+             'centrifuge spin (firmware suppresses the rev '
+             'strobe while the override is engaged). Default '
+             '``off`` = leave the LED alone.',
+    )
+    ap.add_argument(
+        '--stm32-port', default='/dev/ttyAMA3',
+        help='serial port used for --cam-led (default '
+             '/dev/ttyAMA3; must be idle -- stop ultra-rpi '
+             'service first).',
+    )
+    ap.add_argument(
         '-v', '--verbose', action='store_true',
         help='debug logging',
     )
@@ -1092,6 +1204,10 @@ def main() -> int:
         if args.record else None
     )
 
+    stm32 = None
+    if args.cam_led == 'on':
+        stm32 = _cam_led_setup(args.stm32_port)
+
     worker = StreamWorker(
         device=args.device,
         width=args.width,
@@ -1108,6 +1224,7 @@ def main() -> int:
     )
     if not worker.start():
         return 2
+    _ = stm32  # keep-alive: atexit hook releases the LED on exit
 
     server = _ThreadedHTTPServer(
         (args.bind, args.port), _build_handler(worker),
