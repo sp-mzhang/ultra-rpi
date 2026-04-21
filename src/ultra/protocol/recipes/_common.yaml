@@ -27,6 +27,12 @@ centrifuge_phase:
     - type: centrifuge_goto_pipette
       label: Rotate to pipette position
 
+    # Open the lid before the camera fires so the toolhead
+    # camera has an unobstructed view of the carousel labels.
+    - type: lid
+      label: Open lid
+      open: true
+
     # Camera-refine the landing at whichever station the
     # previous goto reached (here: pipette). The step itself
     # does NOT command a goto -- it auto-detects the visible

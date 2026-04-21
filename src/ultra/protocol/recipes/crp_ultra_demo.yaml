@@ -48,13 +48,6 @@ phases:
   - name: B
     label: Serum Pickup and Cart Dispense
     steps:
-      - type: set_loc_offset
-        label: Apply gantry offset
-
-      - type: lid
-        label: Open lid
-        open: true
-
       - type: tip_pick
         label: Pick Tip 1
         tip_id: 1

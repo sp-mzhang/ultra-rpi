@@ -73,11 +73,6 @@ phases:
   - name: B
     label: Chip Dispenses
     steps:
-
-      - type: lid
-        label: Open lid
-        open: true
-
       - type: tip_pick
         label: Pick Tip 1
         tip_id: 1
