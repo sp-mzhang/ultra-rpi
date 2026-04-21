@@ -7,7 +7,10 @@ Ported from ultra-companion-linux (working implementation).
 '''
 import json
 import logging
+import shutil
+import subprocess
 import threading
+import time
 from typing import (
     Any,
     Callable,
@@ -173,6 +176,111 @@ def _get_adapter_address() -> Optional[str]:
     except Exception as err:
         LOG.error(f'Failed to get adapter address: {err}')
         return None
+
+
+def _run(cmd: list[str], timeout: float = 3.0) -> tuple[int, str]:
+    '''Run a shell command and capture stdout+stderr. Returns
+    (exit_code, combined_output). Safe across environments where
+    the binary might be missing.'''
+    if not shutil.which(cmd[0]):
+        return (127, f'{cmd[0]}: not found on PATH')
+    try:
+        res = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout,
+        )
+        return (
+            res.returncode, (res.stdout or '') + (res.stderr or ''),
+        )
+    except Exception as err:
+        return (-1, f'{cmd[0]} failed: {err}')
+
+
+def preflight_bluetooth(
+    try_fix: bool = True,
+) -> tuple[bool, list[str]]:
+    '''Check that the local Bluetooth stack is ready to advertise.
+
+    Returns (ok, messages). When try_fix is True and we detect a
+    fixable problem (rfkill soft block, adapter powered off), we
+    attempt to remediate and re-check once.
+
+    Checks performed:
+      - bluetoothd systemd unit running (via `systemctl is-active`)
+      - `rfkill list bluetooth` shows no soft/hard blocks
+      - at least one adapter reported by `bluetoothctl list`
+      - default adapter reports Powered: yes
+
+    Each failure adds a one-line human-friendly message that the
+    caller should relay to the user.
+    '''
+    msgs: list[str] = []
+    ok = True
+
+    # 1) bluetoothd running?
+    rc, out = _run(['systemctl', 'is-active', 'bluetooth'])
+    state = out.strip().splitlines()[0] if out.strip() else '?'
+    if rc != 0 or state != 'active':
+        ok = False
+        msgs.append(
+            f'bluetoothd is not running (systemctl is-active: '
+            f'{state!r}). Fix: `sudo systemctl start bluetooth`',
+        )
+
+    # 2) rfkill block?
+    rc, out = _run(['rfkill', 'list', 'bluetooth'])
+    soft = 'Soft blocked: yes' in out
+    hard = 'Hard blocked: yes' in out
+    if soft or hard:
+        ok = False
+        msgs.append(
+            f'Bluetooth rfkill: soft={soft} hard={hard}. '
+            f'Fix: `sudo rfkill unblock bluetooth`',
+        )
+        if try_fix and soft and not hard:
+            LOG.warning('rfkill soft-blocked; unblocking...')
+            _run(['rfkill', 'unblock', 'bluetooth'])
+
+    # 3) adapter present?
+    rc, out = _run(['bluetoothctl', 'list'])
+    adapters_seen = [
+        line for line in out.splitlines()
+        if line.startswith('Controller ')
+    ]
+    if not adapters_seen:
+        ok = False
+        msgs.append(
+            'No Bluetooth controller listed by `bluetoothctl '
+            'list`. Is the adapter wired up / kernel module '
+            'loaded?',
+        )
+    else:
+        LOG.info(
+            'Bluetooth controllers: %s',
+            '; '.join(a.strip() for a in adapters_seen),
+        )
+
+    # 4) adapter powered on?
+    rc, out = _run(['bluetoothctl', 'show'])
+    powered_on = 'Powered: yes' in out
+    if not powered_on:
+        if try_fix:
+            LOG.warning(
+                'Default adapter Powered: no -- attempting to '
+                'power on via bluetoothctl',
+            )
+            _run(['bluetoothctl', 'power', 'on'])
+            time.sleep(0.5)
+            rc, out = _run(['bluetoothctl', 'show'])
+            powered_on = 'Powered: yes' in out
+        if not powered_on:
+            ok = False
+            msgs.append(
+                'Default Bluetooth adapter is not powered on. '
+                'Fix: `bluetoothctl power on` (or reset the '
+                'adapter via `sudo hciconfig hci0 up`)',
+            )
+
+    return ok, msgs
 
 
 # BLE UUIDs for WiFi Provisioning Service
@@ -357,14 +465,35 @@ class BLEWiFiProvisioningService:
             LOG.warning('BLE service already running')
             return
 
-        LOG.info(f'Starting BLE advertising: {self.device_name}')
+        LOG.info(
+            'BLE start requested: local_name=%r',
+            self.device_name,
+        )
+
+        # Pre-flight the Bluetooth stack. If anything is wrong we
+        # want a clear human-readable message in the log instead of
+        # a confusing bluezero / dbus exception minutes later.
+        ok, msgs = preflight_bluetooth(try_fix=True)
+        for m in msgs:
+            LOG.warning('BLE preflight: %s', m)
+        if not ok:
+            raise RuntimeError(
+                'Bluetooth stack not ready: '
+                + ' | '.join(msgs),
+            )
+        LOG.info('BLE preflight OK')
 
         try:
+            LOG.debug('Registering BLE auto-accept agent...')
             self._agent = _register_auto_accept_agent()
 
             adapter_addr = _get_adapter_address()
             if not adapter_addr:
-                raise RuntimeError('No Bluetooth adapter found')
+                raise RuntimeError(
+                    'No Bluetooth adapter found by bluezero '
+                    '(adapter.list_adapters() returned empty). '
+                    'Check `bluetoothctl list` and dbus access.',
+                )
             LOG.info(f'Using Bluetooth adapter: {adapter_addr}')
 
             self._peripheral = peripheral.Peripheral(
@@ -420,13 +549,26 @@ class BLEWiFiProvisioningService:
             raise
 
     def start_async(self) -> None:
-        '''Start BLE service in a background thread.'''
+        '''Start BLE service in a background thread. The thread
+        wrapper logs exceptions (otherwise a failure inside
+        `start()` would silently kill the thread and the caller
+        would never know BLE never came up).'''
         if self._run_thread and self._run_thread.is_alive():
             LOG.warning('BLE service thread already running')
             return
 
+        def _runner() -> None:
+            try:
+                self.start()
+            except Exception as err:
+                LOG.error(
+                    'BLE thread exiting with error: %s',
+                    err, exc_info=True,
+                )
+                self._is_running = False
+
         self._run_thread = threading.Thread(
-            target=self.start,
+            target=_runner,
             name='BLEProvisioningThread',
             daemon=True,
         )

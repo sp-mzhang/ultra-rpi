@@ -208,8 +208,32 @@ class WiFiProvisioner:
             LOG.info(f'BLE advertising as: {self.device_name}')
             self.ble_service.start_async()
 
+            # Give the BLE thread a moment to run preflight + spin
+            # up the GATT server so we can detect early failure
+            # instead of silently looping.
+            time.sleep(2.0)
+            ble_thread = self.ble_service._run_thread
+            if not self.ble_service.is_running and (
+                ble_thread is None or not ble_thread.is_alive()
+            ):
+                LOG.error(
+                    'BLE thread died during start-up; '
+                    'aborting provisioning (see earlier '
+                    'BLE error log for the root cause).',
+                )
+                return False
+
             while self._running and not self._provisioned:
                 time.sleep(1)
+                # Detect mid-run BLE thread death (e.g. bluetoothd
+                # crashed or the adapter was unplugged); otherwise
+                # run() would spin forever advertising nothing.
+                if not self.ble_service.is_running:
+                    LOG.error(
+                        'BLE thread stopped unexpectedly; '
+                        'exiting provisioning loop.',
+                    )
+                    return False
                 if (
                         not self.test_mode and
                         not self.advertise_while_connected and
