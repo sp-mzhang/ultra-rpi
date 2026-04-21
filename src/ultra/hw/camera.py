@@ -84,6 +84,11 @@ _JPEG_QUALITY = 80
 _CAPTURE_INTERVAL = 0.05  # ~20 fps
 _MJPEG_BOUNDARY = b'frame'
 
+# If cap.read() returns ret=False for this long, assume the
+# underlying V4L2 handle is dead (USB bump, power glitch,
+# driver hiccup) and force a re-detect on the next start().
+_READ_STALL_TIMEOUT_S = 2.0
+
 
 class CameraStream:
     '''Thread-safe USB camera capture with MJPEG output.
@@ -111,6 +116,7 @@ class CameraStream:
         self._cap = None
         self._frame: bytes | None = None
         self._frame_bgr = None  # latest raw BGR ndarray (for CV consumers)
+        self._frame_ts: float = 0.0  # monotonic ts of last successful read
         self._lock = threading.Lock()
         self._start_lock = threading.Lock()
         self._running = False
@@ -255,14 +261,48 @@ class CameraStream:
         LOG.info('Camera stopped')
 
     def _capture_loop(self) -> None:
-        '''Background thread: read and JPEG-encode frames.'''
+        '''Background thread: read and JPEG-encode frames.
+
+        If reads start failing for longer than ``_READ_STALL_TIMEOUT_S``
+        we tear the capture down so the next ``start()`` re-runs
+        ``_auto_detect``. Without this, a physically disturbed or
+        re-enumerated USB cam leaves us holding a dead handle and
+        serving whatever frame happened to be cached last.
+        '''
+        last_ok_ts = time.monotonic()
         while not self._stop.is_set():
             if self._cap is None:
                 break
             ret, frame = self._cap.read()
+            now = time.monotonic()
             if not ret:
+                stalled_for = now - last_ok_ts
+                if stalled_for >= _READ_STALL_TIMEOUT_S:
+                    LOG.warning(
+                        'Camera read stalled for %.1fs on %s; '
+                        'releasing handle and stopping capture '
+                        '(next request will re-detect).',
+                        stalled_for, self._device,
+                    )
+                    # Drop the dead capture; mark not running so
+                    # the next start() will reopen (and re-scan if
+                    # the device was re-enumerated).
+                    try:
+                        self._cap.release()
+                    except Exception:
+                        pass
+                    self._cap = None
+                    self._running = False
+                    with self._lock:
+                        # Invalidate the cached frame so stale
+                        # images don't keep getting served.
+                        self._frame = None
+                        self._frame_bgr = None
+                        self._frame_ts = 0.0
+                    return
                 time.sleep(_CAPTURE_INTERVAL)
                 continue
+            last_ok_ts = now
             ok, buf = cv2.imencode(
                 '.jpg', frame,
                 [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY],
@@ -271,6 +311,7 @@ class CameraStream:
                 with self._lock:
                     self._frame = bytes(buf)
                     self._frame_bgr = frame
+                    self._frame_ts = now
             time.sleep(_CAPTURE_INTERVAL)
 
     def generate_mjpeg(
@@ -307,15 +348,40 @@ class CameraStream:
         '''Whether the capture thread is active.'''
         return self._running
 
-    def latest_frame_bgr(self):
-        '''Return the most recent raw BGR frame as an ndarray, or None.
+    def latest_frame_bgr(
+            self,
+            newer_than: float = 0.0,
+            wait_s: float = 0.0,
+    ) -> 'tuple':
+        '''Return ``(frame_copy, monotonic_ts)`` or ``(None, 0.0)``.
 
-        A copy is returned so callers can safely mutate / process without
-        racing with the capture thread. Returns None if the camera has
-        not yet produced its first frame.
+        Args:
+            newer_than: Only accept a frame whose capture timestamp
+                is strictly greater than this monotonic value. Used
+                by callers that must see a frame captured **after**
+                some event (e.g. LED turning on).
+            wait_s: Maximum time to block waiting for a fresher
+                frame. Defaults to 0 (non-blocking snapshot).
+
+        Notes:
+            A copy is returned so callers can mutate / process
+            without racing the capture thread.
+        '''
+        deadline = time.monotonic() + max(0.0, wait_s)
+        while True:
+            with self._lock:
+                frame = self._frame_bgr
+                ts = self._frame_ts
+            if frame is not None and ts > newer_than:
+                return frame.copy(), ts
+            if time.monotonic() >= deadline:
+                return None, 0.0
+            time.sleep(0.02)
+
+    def latest_frame_ts(self) -> float:
+        '''Monotonic timestamp of the most recent successful capture.
+
+        Returns 0.0 if no frame has been produced yet.
         '''
         with self._lock:
-            frame = self._frame_bgr
-        if frame is None:
-            return None
-        return frame.copy()
+            return self._frame_ts

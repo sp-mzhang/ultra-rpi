@@ -684,19 +684,35 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             )
 
     def _grab_bgr_frame(settle_ms: int = 0):
-        '''Start the camera if needed, wait briefly, return BGR.'''
+        '''Start the camera if needed, return a *fresh* BGR frame.
+
+        We capture a baseline timestamp BEFORE the settle, then
+        wait for a frame captured strictly after ``baseline +
+        settle_ms``. This guarantees the returned image reflects
+        the world *after* LED turn-on and whatever else the caller
+        did immediately before -- any frame that happened to be
+        cached from a previous call is rejected.
+
+        Returns None if the camera never produced a fresh frame
+        within a ~5 s budget (covers the case where the USB cam
+        got bumped and is mid-reconnect).
+        '''
         import time
         cam = _get_camera()
-        if settle_ms > 0:
-            time.sleep(settle_ms / 1000.0)
-        # Retry up to ~1s in case the capture thread hasn't
-        # produced its first frame yet.
-        for _ in range(20):
-            frame = cam.latest_frame_bgr()
-            if frame is not None:
-                return frame
-            time.sleep(0.05)
-        return None
+        baseline_ts = cam.latest_frame_ts()
+        settle_s = max(0.0, settle_ms / 1000.0)
+        if settle_s > 0:
+            time.sleep(settle_s)
+        # At this point we want a frame captured *after* the LED
+        # settle completed. If the capture thread stalled during
+        # the settle we may have to wait a further few seconds
+        # while start()/auto-detect recovers the device.
+        # Total budget = settle + 5 s.
+        frame, _ts = cam.latest_frame_bgr(
+            newer_than=baseline_ts,
+            wait_s=5.0,
+        )
+        return frame
 
     def _reading_to_dict(m) -> dict:
         return {
