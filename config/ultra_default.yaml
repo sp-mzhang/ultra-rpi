@@ -215,12 +215,17 @@ carousel_align:
     #   serum:   open_initial - 180  (e.g. 290 -> 110)
     #   pipette: open_initial -  90  (e.g. 290 -> 200)
     blister:
-      markers: ['L', 'T', 'R', 'U']
-      reference_deg: -90.0
-      station_offset_from_open_deg: -270
+      markers: ['L', 'T', 'R', 'U']   # ACTIVE: decoded markers
+                                      # feed the angle average.
+      reference_deg: -90.0            # ACTIVE anchor.
+      station_offset_from_open_deg: -270  # ACTIVE station.
     pipette:
-      markers: []                # TODO: fill in when defined
-      reference_deg: 0.0
+      # The aligner is blister-anchored: every alignment snaps the
+      # carousel to the blister pose. The fields below are kept for
+      # schema compatibility and operator documentation only; they
+      # are not read by CarouselAligner.
+      markers: ['S', 'I', 'O', 'X']
+      reference_deg: 90.0
       station_offset_from_open_deg: -90
   centrifuge:
     move_rpm: 1

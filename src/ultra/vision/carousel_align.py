@@ -1,9 +1,19 @@
 """Carousel alignment via DataMatrix markers.
 
-Runs libdmtx on a camera frame, classifies which side of the
-carousel is visible by the set of decoded payload letters, averages
-the per-marker orientation via complex-exponential (wrap-safe),
-and computes the CW offset from a known per-side reference angle.
+Runs libdmtx on a camera frame, averages every decoded marker's
+orientation via complex-exponential (wrap-safe), and computes the
+CW offset from the blister-side reference angle. The carousel is
+expected to be parked at the blister station before the aligner
+runs (see ``align_to_carousel`` recipe step); the aligner then
+applies a small camera-measured correction so the cartridge lands
+precisely at the blister pose.
+
+All visible DataMatrix markers on the carousel share the same
+stamp orientation, so their decoded angles are statistically
+equivalent samples of the same quantity. Averaging every decoded
+marker -- regardless of which side of the carousel it belongs to
+-- therefore only tightens the mean; no per-side classification
+is needed.
 
 The motor delta is signed by a configurable ``polarity`` knob so
 operators can flip direction without rebuilding.
@@ -34,25 +44,6 @@ def _wrap180(deg: float) -> float:
     x = (deg + 180.0) % 360.0 - 180.0
     # ``-180`` is equivalent to ``180``; prefer the positive rep.
     return 180.0 if x <= -180.0 else x
-
-
-def _payload_key(payload: str) -> str:
-    """Normalise a decoded payload to its marker-identity key.
-
-    Stickers are printed as a single identifying letter
-    (``L`` / ``T`` / ``R`` / ``U`` on the blister side) and may
-    carry an arbitrary numeric suffix for batch / revision
-    tracking -- e.g. ``U31``, ``T02``. The carousel-side marker
-    sets in ``config/ultra_default.yaml`` only store the letter,
-    so matching is first-letter based: ``U31`` -> ``U``.
-
-    Returns the upper-cased first character of the stripped
-    payload, or the empty string for empty input. All payload
-    comparisons (side classification, angle-average filtering,
-    overlay colouring) route through here so they stay in sync.
-    """
-    s = (payload or '').strip().upper()
-    return s[:1]
 
 
 def _avg_angle(angles_deg: Iterable[float]) -> float | None:
@@ -106,31 +97,17 @@ def _best_of(
 def annotate(
     frame_bgr: np.ndarray,
     result: 'AlignmentResult',
-    side_markers: set[str] | None = None,
 ) -> np.ndarray:
     """Overlay marker outlines, orientation line, and a HUD.
 
-    Green = marker was used in the average (payload in the chosen
-    side's marker set). Magenta = decoded but not part of the
-    average (wrong side or unrecognised payload). Caller passes
-    ``side_markers`` = the set we want highlighted; if omitted and
-    ``result.side`` is set, all decoded markers are drawn green.
+    Every decoded marker contributes to the average, so every
+    rectangle is drawn in green.
 
     Returns a new BGR image; the input is not mutated. Colours are
     BGR to match OpenCV convention.
     """
     out = frame_bgr.copy()
-    # Match on the first letter only (see _payload_key docstring
-    # for why: stickers can carry a numeric suffix such as "U31").
-    matched = {_payload_key(p) for p in (side_markers or set())}
-    if not matched and result.side is not None:
-        matched = {
-            _payload_key(m.payload)
-            for m in (result.markers or [])
-        }
-
     ok = (0, 255, 0)
-    ignored = (255, 0, 255)
 
     for m in (result.markers or []):
         if not m.corners or len(m.corners) < 4:
@@ -139,21 +116,20 @@ def annotate(
             [[int(round(x)), int(round(y))] for (x, y) in m.corners],
             dtype=np.int32,
         )
-        col = ok if _payload_key(m.payload) in matched else ignored
         cv2.polylines(
-            out, [pts], isClosed=True, color=col, thickness=2,
+            out, [pts], isClosed=True, color=ok, thickness=2,
         )
         # Emphasise the BL->BR (L-finder bottom) edge so the
         # orientation is visually unambiguous.
         cv2.line(
-            out, tuple(pts[0]), tuple(pts[1]), col, 3,
+            out, tuple(pts[0]), tuple(pts[1]), ok, 3,
         )
         cx = int(round(m.center_px[0]))
         cy = int(round(m.center_px[1]))
         label = f'{m.payload} {m.angle_deg:+.1f}deg'
         cv2.putText(
             out, label, (cx - 30, cy - 8),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 2,
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, ok, 2,
         )
 
     hud: list[str] = []
@@ -228,7 +204,13 @@ class AlignmentResult:
 
 
 class CarouselAligner:
-    """Stateless helper: detect markers, classify side, compute delta.
+    """Stateless helper: detect markers, average, compute delta.
+
+    Always anchors to the blister-side reference and station angle
+    -- every alignment snaps the carousel to the blister pose.
+    Callers are expected to have parked the carousel near blister
+    (e.g. via ``centrifuge_goto_blister``) before invoking the
+    aligner; the correction is then small and safe.
 
     All per-deployment tuning (marker sets, reference angles,
     polarity, min-markers, decode timeout) comes from the config
@@ -250,6 +232,20 @@ class CarouselAligner:
         self.decode_timeout_ms = int(decode_timeout_ms)
         self.use_clahe_fallback = bool(use_clahe_fallback)
         self.angle_open_initial_deg = float(angle_open_initial_deg)
+
+        # Cache the one-and-only reference + station. Missing
+        # blister config is a hard build error -- the aligner has
+        # no fallback without it.
+        blister = self.sides.get('blister')
+        if blister is None:
+            raise ValueError(
+                "carousel_align.sides.blister is required "
+                "(used as the single reference + target station)",
+            )
+        self._reference_deg: float = blister.reference_deg
+        self._station_deg: float = blister.station_deg(
+            self.angle_open_initial_deg,
+        )
 
     def station_deg(self, side_name: str) -> float:
         '''Absolute station angle for ``side_name`` (0..360).
@@ -347,44 +343,21 @@ class CarouselAligner:
             ))
         return out
 
-    # --- classification / math ------------------------------------
-
-    def classify_side(
-        self, markers: list[MarkerReading],
-    ) -> str | None:
-        """Pick the side whose expected marker set best matches.
-
-        Score = number of decoded payloads (stripped, upper-cased)
-        that fall in the side's marker set. The side with the
-        highest non-zero score wins. Returns None if no side has
-        any match.
-        """
-        if not markers:
-            return None
-        # Compare on the first letter only so stickers with
-        # numeric suffixes (e.g. "U31") still resolve to "U".
-        payloads = {_payload_key(m.payload) for m in markers}
-        best_name = None
-        best_score = 0
-        for name, side in self.sides.items():
-            if not side.markers:
-                continue
-            side_keys = {_payload_key(s) for s in side.markers}
-            score = len(payloads & side_keys)
-            if score > best_score:
-                best_score = score
-                best_name = name
-        return best_name if best_score > 0 else None
+    # --- math -----------------------------------------------------
 
     def compute(
         self, frame_bgr: np.ndarray,
     ) -> AlignmentResult:
-        """Full pipeline: detect -> classify -> average -> delta.
+        """Full pipeline: detect -> average -> delta.
 
-        Returns an :class:`AlignmentResult`. If any validation fails
-        (no frame, too few markers, no matching side), ``reason``
-        is populated and ``delta_motor_deg`` is None -- callers must
-        NOT command any motion when that's the case.
+        Averages every decoded marker's orientation (no payload
+        filter) and returns the CW offset relative to the blister
+        reference plus the signed motor delta to command.
+
+        Returns an :class:`AlignmentResult`. If any validation
+        fails (no frame, too few markers), ``reason`` is populated
+        and ``delta_motor_deg`` is None -- callers must NOT
+        command any motion when that's the case.
         """
         if frame_bgr is None:
             return AlignmentResult(
@@ -404,36 +377,15 @@ class CarouselAligner:
                     f'need {self.min_markers}'
                 ),
             )
-        side_name = self.classify_side(markers)
-        if side_name is None:
-            return AlignmentResult(
-                side=None, markers=markers, avg_deg=None,
-                reference_deg=None, c_cw_deg=None,
-                delta_motor_deg=None, polarity=self.polarity,
-                reason='no_side_match',
-            )
-        side = self.sides[side_name]
-        # Average only the markers that belong to this side so a
-        # stray decode from the other side doesn't bias the result.
-        # First-letter matching (see _payload_key) means a sticker
-        # decoded as e.g. "U31" still counts toward the "U" slot.
-        side_keys = {_payload_key(s) for s in side.markers}
-        angles = [
-            m.angle_deg for m in markers
-            if _payload_key(m.payload) in side_keys
-        ]
+        # Every DataMatrix on the carousel shares the same stamp
+        # orientation, so every decoded marker is an equally valid
+        # angle sample. Average unconditionally.
+        angles = [m.angle_deg for m in markers]
         avg = _avg_angle(angles)
-        if avg is None:
-            return AlignmentResult(
-                side=side_name, markers=markers, avg_deg=None,
-                reference_deg=side.reference_deg, c_cw_deg=None,
-                delta_motor_deg=None, polarity=self.polarity,
-                reason='no_matching_markers_for_side',
-            )
-        c_cw = _wrap180(avg - side.reference_deg)
+        c_cw = _wrap180(avg - self._reference_deg)
         delta = _wrap180(self.polarity * c_cw)
         return AlignmentResult(
-            side=side_name, markers=markers, avg_deg=avg,
-            reference_deg=side.reference_deg, c_cw_deg=c_cw,
+            side='blister', markers=markers, avg_deg=avg,
+            reference_deg=self._reference_deg, c_cw_deg=c_cw,
             delta_motor_deg=delta, polarity=self.polarity,
         )

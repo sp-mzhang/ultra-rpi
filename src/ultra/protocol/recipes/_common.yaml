@@ -24,8 +24,8 @@ centrifuge_phase:
       rpm: 500
       duration_s: 5
 
-    - type: centrifuge_goto_pipette
-      label: Rotate to pipette position
+    - type: centrifuge_goto_blister
+      label: Rotate to blister position
 
     # Open the lid before the camera fires so the toolhead
     # camera has an unobstructed view of the carousel labels.
@@ -33,15 +33,14 @@ centrifuge_phase:
       label: Open lid
       open: true
 
-    # Camera-refine the landing at whichever station the
-    # previous goto reached (here: pipette). The step itself
-    # does NOT command a goto -- it auto-detects the visible
-    # side from the decoded marker payloads, anchors to that
-    # side's absolute station angle, and applies the camera-
-    # measured correction. Idempotent: re-running cannot
-    # accumulate drift.
+    # Camera-refine the landing at the blister station. The
+    # aligner always uses blister as the single reference and
+    # target, so the pre-align goto parks the carousel near
+    # blister and this step applies the small camera-measured
+    # correction. Idempotent: re-running cannot accumulate
+    # drift.
     - type: align_to_carousel
-      label: Camera-align carousel
+      label: Camera-align carousel (at blister)
 
     - type: lift_move
       label: Lower lift to 15mm

@@ -666,7 +666,7 @@ def create_stm32_router(app: 'Application') -> APIRouter:
         )
         return build_aligner_from_config(app.config)
 
-    def _cache_annotated_frame(frame_bgr, result, side_markers):
+    def _cache_annotated_frame(frame_bgr, result):
         '''Render alignment overlay on ``frame_bgr`` and cache as
         JPEG. Failures are logged, not raised -- the alignment
         response is still useful without the preview image.'''
@@ -674,9 +674,7 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             import time as _time
             import cv2
             from ultra.vision.carousel_align import annotate
-            overlay = annotate(
-                frame_bgr, result, side_markers=side_markers,
-            )
+            overlay = annotate(frame_bgr, result)
             ok, buf = cv2.imencode(
                 '.jpg', overlay, [cv2.IMWRITE_JPEG_QUALITY, 80],
             )

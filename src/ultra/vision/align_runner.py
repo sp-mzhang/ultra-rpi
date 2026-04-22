@@ -13,13 +13,12 @@ Performs the full sequence end-to-end so both the GUI button
   4. Toolhead camera LED on; wait the configured settle time.
   5. Grab a fresh BGR frame (one that was captured *after* the
      LED turned on).
-  6. Detect markers, classify which side of the carousel is
-     visible, average the per-marker orientations, compute the
-     CW correction.
-  7. Anchor the centrifuge target to the absolute station angle
-     (``aligner.station_deg(side) + delta``) so repeated runs
-     are idempotent, and command ``centrifuge_move_angle`` with
-     a 3-attempt + ``bldc_reset`` retry.
+  6. Detect markers, average every decoded marker's orientation,
+     compute the CW correction against the blister reference.
+  7. Anchor the centrifuge target to the blister station angle
+     (``aligner.station_deg('blister') + delta``) so repeated
+     runs are idempotent, and command ``centrifuge_move_angle``
+     with a 3-attempt + ``bldc_reset`` retry.
   8. LED off (always, in a finally clause).
 
 The function is sync because the protocol thread already blocks
@@ -222,7 +221,7 @@ def run_alignment(
     align_cfg: dict,
     get_frame: Callable[[int], 'np.ndarray | None'],
     cache_frame: Callable[
-        ['np.ndarray', Any, set | None], None,
+        ['np.ndarray', Any], None,
     ] | None = None,
     home_z_first: bool | None = None,
 ) -> AlignmentRunResult:
@@ -242,10 +241,9 @@ def run_alignment(
             handle (the GUI uses a long-lived
             :class:`CameraStream`; tests may inject a stub).
         cache_frame: Optional callable
-            ``(frame, result, side_markers) -> None`` invoked
-            once a frame has been captured and a result
-            computed. Used by the GUI to render the annotated
-            preview.
+            ``(frame, result) -> None`` invoked once a frame
+            has been captured and a result computed. Used by
+            the GUI to render the annotated preview.
         home_z_first: Override for ``align_cfg.home_z_first``.
 
     Returns:
@@ -327,21 +325,18 @@ def run_alignment(
 
         result = aligner.compute(frame)
 
-        side_markers = None
-        if result.side and result.side in aligner.sides:
-            side_markers = aligner.sides[result.side].markers
         if cache_frame is not None:
             try:
-                cache_frame(frame, result, side_markers)
+                cache_frame(frame, result)
             except Exception as exc:
                 LOG.warning(
                     'align: cache_frame raised: %s', exc,
                 )
 
         if result.delta_motor_deg is None:
-            # Detection-side validation failed (no side match,
-            # too few markers, etc). Surface the reason but
-            # don't try to move.
+            # Detection-side validation failed (too few markers,
+            # missing frame, etc). Surface the reason but don't
+            # try to move.
             return AlignmentRunResult(
                 ok=False,
                 reason=result.reason or 'no_alignment_delta',
@@ -354,9 +349,9 @@ def run_alignment(
                 }),
             )
 
-        # Anchor target to the side's absolute station angle
-        # (idempotent: re-running Align cannot accumulate offset).
-        station_deg = aligner.station_deg(result.side)
+        # Anchor target to the blister station (single-reference
+        # aligner; idempotent across re-runs).
+        station_deg = aligner.station_deg('blister')
         station_001 = int(round(station_deg * 100)) % 36000
         delta_001 = int(round(result.delta_motor_deg * 100))
         target_001 = (station_001 + delta_001) % 36000
