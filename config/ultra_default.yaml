@@ -193,7 +193,12 @@ carousel_align:
     z_speed_mms: 10.0
   led_settle_ms: 250             # wait after LED on before capture
   min_markers: 1               # refuse alignment below this count
-  decode_timeout_ms: 500
+  # libdmtx scans every candidate edge exhaustively, so smaller
+  # markers (which have more false edge candidates around them)
+  # need a bigger time budget. 500 ms was too tight for the
+  # S/I/O/X side; 1500 ms matches the probe_markers_stream.sh
+  # value that reliably finds them on-device.
+  decode_timeout_ms: 1500
   use_clahe_fallback: true
   sides:
     # ``station_offset_from_open_deg`` is the side-specific offset
@@ -224,7 +229,8 @@ carousel_align:
       # carousel to the blister pose. The fields below are kept for
       # schema compatibility and operator documentation only; they
       # are not read by CarouselAligner.
-      markers: ['S', 'I', 'O', 'X']
+      # Payloads are stamped lowercase on the physical carousel.
+      markers: ['s', 'i', 'o', 'x']
       reference_deg: 90.0
       station_offset_from_open_deg: -90
   centrifuge:

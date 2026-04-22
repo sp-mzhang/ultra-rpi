@@ -341,6 +341,23 @@ class CarouselAligner:
                 size_px=(det.width_px, det.height_px),
                 corners=list(det.corners),
             ))
+        # Always log what libdmtx actually returned so small-marker
+        # regressions are visible even when we end up below
+        # min_markers and compute() short-circuits with no HUD.
+        if LOG.isEnabledFor(logging.INFO):
+            if out:
+                summary = ', '.join(
+                    f"'{m.payload}'@{int(round(m.size_px[0]))}x"
+                    f"{int(round(m.size_px[1]))}"
+                    f"[ang={m.angle_deg:+.1f}]"
+                    for m in out
+                )
+                LOG.info(
+                    'carousel_align.detect: %d marker(s): %s',
+                    len(out), summary,
+                )
+            else:
+                LOG.info('carousel_align.detect: 0 markers')
         return out
 
     # --- math -----------------------------------------------------
