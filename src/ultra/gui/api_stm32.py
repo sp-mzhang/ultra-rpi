@@ -992,4 +992,94 @@ def create_stm32_router(app: 'Application') -> APIRouter:
         }
         return payload
 
+    # ---- Tube ROI calibration (GUI picker) ----
+    #
+    # Workflow: operator clicks "Check Serum Tube" to capture a
+    # preview with the current ROI drawn on it, drags a tighter
+    # rectangle on the overlay, then clicks Save -- which POSTs
+    # here. We update app.config in-memory (takes effect on the
+    # next check) and echo the values back so the operator can
+    # paste them into config/ultra_default.yaml for restart
+    # durability. We deliberately do not rewrite the YAML file
+    # here: it carries extensive comments that yaml.safe_dump
+    # would drop, and the machine-settings editor already offers
+    # a comment-preserving path for persistent changes.
+
+    class TubeRoiBody(BaseModel):
+        '''Body for ``POST /camera/tube-roi``.'''
+        x: int
+        y: int
+        w: int
+        h: int
+
+    @router.get('/camera/tube-roi')
+    async def camera_tube_roi_get():
+        '''Return the current tube ROI from ``app.config``.
+
+        Also reports the last cached tube frame's pixel dims so
+        the GUI can scale the overlay correctly.
+        '''
+        tube_cfg = (
+            (app.config.get('checks', {}) or {}).get('tube', {}) or {}
+        )
+        roi = tube_cfg.get('roi', {}) or {}
+        frame_w = 0
+        frame_h = 0
+        jpeg = _last_tube_frame.get('jpeg')
+        if jpeg:
+            try:
+                import cv2
+                import numpy as np
+                arr = np.frombuffer(jpeg, dtype=np.uint8)
+                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                if img is not None:
+                    frame_h, frame_w = img.shape[:2]
+            except Exception as exc:
+                LOG.debug('tube-roi: cannot probe frame dims: %s', exc)
+        return {
+            'roi': {
+                'x': int(roi.get('x', 0) or 0),
+                'y': int(roi.get('y', 0) or 0),
+                'w': int(roi.get('w', 0) or 0),
+                'h': int(roi.get('h', 0) or 0),
+            },
+            'frame_w': int(frame_w),
+            'frame_h': int(frame_h),
+            'frame_ts': _last_tube_frame.get('ts', 0),
+        }
+
+    @router.post('/camera/tube-roi')
+    async def camera_tube_roi_set(body: TubeRoiBody):
+        '''Persist a new tube ROI into ``app.config`` (in-memory).
+
+        Returns the echoed ROI plus a ``persist_hint`` string so
+        the UI can display the values for pasting into
+        ``config/ultra_default.yaml`` (keys ``checks.tube.roi``).
+        '''
+        checks = app.config.setdefault('checks', {})
+        tube = checks.setdefault('tube', {})
+        roi = tube.setdefault('roi', {})
+        x = max(0, int(body.x))
+        y = max(0, int(body.y))
+        w = max(0, int(body.w))
+        h = max(0, int(body.h))
+        roi['x'] = x
+        roi['y'] = y
+        roi['w'] = w
+        roi['h'] = h
+        LOG.info(
+            'tube ROI updated in-memory: x=%d y=%d w=%d h=%d',
+            x, y, w, h,
+        )
+        return {
+            'ok': True,
+            'roi': {'x': x, 'y': y, 'w': w, 'h': h},
+            'persist_hint': (
+                'In-memory only. For restart-durable save, paste '
+                f'x: {x} / y: {y} / w: {w} / h: {h} into '
+                'config/ultra_default.yaml under checks.tube.roi, '
+                'or use the Machine Settings editor.'
+            ),
+        }
+
     return router

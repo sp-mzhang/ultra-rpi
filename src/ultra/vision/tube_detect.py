@@ -3,32 +3,44 @@
 The cartridge is drawer-locked with the serum slot already in
 the toolhead-camera FOV. :func:`detect_tube` looks straight
 down at a configurable ROI with the ring LED on and combines
-two independent signals:
+two independent signals, both computed on the ROI only:
 
-1. **Stage 1 -- intensity statistics.** CLAHE + mean intensity +
-   dark-pixel ratio. An empty slot is a dark hole (low mean,
-   high dark ratio). A seated cap fills the ROI and reflects
-   the LED (higher mean, lower dark ratio). Fast (~1 ms),
-   always on.
+1. **Stage 1 -- intensity statistics.** CLAHE-equalised
+   grayscale mean + dark-pixel ratio. An empty slot is
+   dominated by the near-white plastic insert (high mean, low
+   dark ratio). A seated tube changes the overall brightness
+   profile (added shadows around the cap, coloured surface
+   instead of white plastic).
 
-2. **Stage 2 -- Hough circle.** ``cv2.HoughCircles`` with a
-   calibrated radius band. Rejects Stage-1 false-passes such
-   as a stray label covering the slot or a glare patch filling
-   the ROI. Gated by the ``use_hough`` config flag.
+2. **Stage 2 -- HSV saturation.** Mean saturation of the ROI.
+   This is the robust colour-agnostic gate:
 
-The final verdict is ``stage1_pass AND stage2_pass`` (or just
-Stage 1 when Hough is disabled). Thresholds are calibration
-values, not learned weights -- update the YAML when optics
-change.
+     * empty slot  -> white plastic, near-zero saturation
+     * blue cap    -> high saturation
+     * red cap     -> high saturation
+     * any coloured cap -> high saturation
+
+   Because a *tube cap of any colour* dumps chroma into the
+   ROI but an empty slot does not, saturation separates
+   populations far more reliably than grayscale shape
+   detection (which is cap-colour-dependent and would miss red
+   caps against a red tube body).
+
+The final verdict is ``stage1_pass AND stage2_pass``.
+Thresholds are calibration values, not learned weights --
+update the YAML when optics change.
 
 When ``roi`` is the all-zero sentinel ``(0, 0, 0, 0)`` the
 detector falls back to the full frame so an uncalibrated config
-still runs (safe-fail-open during bring-up).
+still runs (safe-fail-open during bring-up). In that fallback
+mode Stage 2 tends to under-report saturation because the
+frame-average dilutes the slot's chroma; calibrate the ROI as
+soon as possible (see ``docs/cartridge_tube_validation.md``).
 '''
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -48,12 +60,9 @@ class TubeDetection:
     present: bool
     mean_intensity: float
     dark_ratio: float
+    mean_saturation: float
     stage1_pass: bool
     stage2_pass: bool
-    circle_count: int
-    circles: list[tuple[float, float, float]] = field(
-        default_factory=list,
-    )
     # Pass-through so the GUI can place the frame under the ROI
     # overlay without re-reading the config.
     roi: tuple[int, int, int, int] = (0, 0, 0, 0)
@@ -97,8 +106,7 @@ def detect_tube(
     dark_threshold: int = 60,
     mean_intensity_min: float = 90.0,
     dark_ratio_max: float = 0.35,
-    use_hough: bool = True,
-    hough_radius_px: tuple[int, int] | dict = (22, 34),
+    mean_saturation_min: float = 40.0,
 ) -> TubeDetection:
     '''Run both detection stages on one frame.
 
@@ -110,11 +118,13 @@ def detect_tube(
         dark_threshold: Pixel-value cutoff for the dark-ratio
             statistic.
         mean_intensity_min: Minimum ROI mean intensity for a
-            pass.
-        dark_ratio_max: Maximum dark-pixel fraction for a pass.
-        use_hough: Enable Stage 2.
-        hough_radius_px: ``(min, max)`` radius band or dict with
-            ``min``/``max`` keys.
+            Stage-1 pass.
+        dark_ratio_max: Maximum dark-pixel fraction for a
+            Stage-1 pass.
+        mean_saturation_min: Minimum HSV mean saturation for a
+            Stage-2 pass (0..255 scale). An empty slot of white
+            plastic usually reads 5-20; a seated cap of any
+            colour reads 60+ under the ring LED.
 
     Returns:
         A :class:`TubeDetection` with every sub-signal + an
@@ -131,58 +141,30 @@ def detect_tube(
             present=False,
             mean_intensity=0.0,
             dark_ratio=1.0,
+            mean_saturation=0.0,
             stage1_pass=False,
             stage2_pass=False,
-            circle_count=0,
             roi=(rx, ry, rw, rh),
             reason='empty_roi',
             annotated=frame_bgr.copy(),
         )
 
+    # Stage 1: intensity on CLAHE-equalised grayscale.
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     gray = _clahe_gray(gray)
-
     mean_intensity = float(gray.mean())
     dark_ratio = float((gray < int(dark_threshold)).mean())
-
     stage1_pass = (
         mean_intensity >= float(mean_intensity_min)
         and dark_ratio <= float(dark_ratio_max)
     )
 
-    circles_list: list[tuple[float, float, float]] = []
-    stage2_pass = True
-    if use_hough:
-        if isinstance(hough_radius_px, dict):
-            r_min = int(hough_radius_px.get('min', 22) or 22)
-            r_max = int(hough_radius_px.get('max', 34) or 34)
-        else:
-            r_min = int(hough_radius_px[0])
-            r_max = int(hough_radius_px[1])
-
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        hough = cv2.HoughCircles(
-            blurred,
-            cv2.HOUGH_GRADIENT,
-            dp=1.2,
-            minDist=max(10, int(r_min * 0.8)),
-            param1=100,
-            param2=25,
-            minRadius=r_min,
-            maxRadius=r_max,
-        )
-        if hough is not None:
-            for c in np.round(hough[0]).astype(int):
-                # Offset back to full-frame coordinates so the
-                # annotated preview uses a single coordinate
-                # system.
-                cx = float(c[0] + rx)
-                cy = float(c[1] + ry)
-                rr = float(c[2])
-                circles_list.append((cx, cy, rr))
-        stage2_pass = len(circles_list) > 0
-    else:
-        stage2_pass = True
+    # Stage 2: HSV saturation on the raw crop (no CLAHE --
+    # CLAHE on luminance alone doesn't distort S, but running it
+    # on all three channels would pump saturation artificially).
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    mean_saturation = float(hsv[:, :, 1].mean())
+    stage2_pass = mean_saturation >= float(mean_saturation_min)
 
     present = stage1_pass and stage2_pass
     reason: str | None = None
@@ -193,17 +175,19 @@ def detect_tube(
                 f'(mean={mean_intensity:.1f}, '
                 f'dark_ratio={dark_ratio:.3f})'
             )
-        elif not stage2_pass:
-            reason = 'stage2_fail (no_circle_in_band)'
+        else:
+            reason = (
+                f'stage2_fail '
+                f'(mean_saturation={mean_saturation:.1f})'
+            )
 
     det = TubeDetection(
         present=present,
         mean_intensity=mean_intensity,
         dark_ratio=dark_ratio,
+        mean_saturation=mean_saturation,
         stage1_pass=stage1_pass,
         stage2_pass=stage2_pass,
-        circle_count=len(circles_list),
-        circles=circles_list,
         roi=(rx, ry, rw, rh),
         reason=reason,
     )
@@ -215,7 +199,7 @@ def annotate(
     frame_bgr: np.ndarray,
     det: TubeDetection,
 ) -> np.ndarray:
-    '''Overlay ROI + circles + metrics on ``frame_bgr``.
+    '''Overlay ROI + per-stage metrics on ``frame_bgr``.
 
     Returns a new BGR image; the input is not mutated. Colour
     follows the verdict: green for present, red for absent.
@@ -230,22 +214,14 @@ def annotate(
         cv2.rectangle(
             out, (rx, ry), (rx + rw, ry + rh), colour, 2,
         )
-    for (cx, cy, rr) in det.circles:
-        cv2.circle(
-            out, (int(round(cx)), int(round(cy))), int(round(rr)),
-            colour, 2,
-        )
-        cv2.circle(
-            out, (int(round(cx)), int(round(cy))), 2, colour, 3,
-        )
 
     hud = [
         f'tube: {"PRESENT" if det.present else "ABSENT"}',
         f'mean: {det.mean_intensity:.1f}',
         f'dark_ratio: {det.dark_ratio:.3f}',
+        f'saturation: {det.mean_saturation:.1f}',
         f'stage1: {"ok" if det.stage1_pass else "FAIL"}',
-        f'stage2: {"ok" if det.stage2_pass else "FAIL"} '
-        f'(circles={det.circle_count})',
+        f'stage2: {"ok" if det.stage2_pass else "FAIL"}',
     ]
     if det.reason:
         hud.append(f'reason: {det.reason}')

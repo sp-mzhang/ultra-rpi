@@ -295,9 +295,9 @@ checks:
     dark_threshold: 60           # pixel value cutoff for "dark"
     mean_intensity_min: 90       # ROI mean must exceed this when present
     dark_ratio_max: 0.35         # dark-pixel fraction must stay below
-    # Stage 2 (Hough circle confirm). Measure the cap's pixel
-    # radius during verify and write +/-20% tolerance bounds.
-    use_hough: true
-    hough_radius_px:
-      min: 22
-      max: 34
+    # Stage 2 (HSV saturation). A seated tube cap of ANY colour
+    # dumps chroma into the ROI; an empty slot of white plastic
+    # stays achromatic. Calibrate: record mean saturation with
+    # 5 empty closes + 5 with-tube closes, pick a threshold in
+    # the gap (typical values: empty ~5-20, seated ~60-120).
+    mean_saturation_min: 40.0

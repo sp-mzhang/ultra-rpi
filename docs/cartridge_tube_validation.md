@@ -93,27 +93,21 @@ Detector: **`cv2.QRCodeDetector` only** (already bundled in `opencv-python-headl
 
 ### `src/ultra/vision/tube_detect.py` (new)
 
-The serum tube sits in a slot on the carousel at the `SERUM` station. We rotate the carousel to `SERUM` via `centrifuge_goto_serum`, drive the toolhead camera above the slot, and look straight down with the ring LED on. **No machine learning and no training** -- this is a classical-CV presence check with two complementary signals (calibration values, not learned weights).
+The serum tube sits in a slot on the carousel at the `SERUM` station. The cartridge is drawer-locked with the slot already in the toolhead camera's FOV -- **no carousel rotation is issued**. We drive the toolhead to the configured probe pose and look straight down with the ring LED on. **No machine learning and no training** -- this is a classical-CV presence check with two complementary signals, both computed inside a calibrated ROI (calibration values, not learned weights).
 
-- Public API: `detect_tube(frame_bgr, roi, params) -> TubeDetection(present: bool, mean_intensity: float, dark_ratio: float, circle_count: int, annotated: np.ndarray)`.
-- **Stage 1 (always on) -- intensity statistics**:
+- Public API: `detect_tube(frame_bgr, *, roi, dark_threshold, mean_intensity_min, dark_ratio_max, mean_saturation_min) -> TubeDetection(present, mean_intensity, dark_ratio, mean_saturation, stage1_pass, stage2_pass, roi, reason, annotated)`.
+- **Stage 1 -- intensity statistics (ROI only)**:
   - Crop to the configured `roi` (pixel box inside the 1280x720 frame).
   - Convert to grayscale, apply CLAHE (clipLimit=2.0, tile=(8,8)).
   - Compute `mean_intensity` and `dark_ratio = count(pixels < dark_threshold) / total_pixels`.
   - Rule: `stage1_pass = mean_intensity >= mean_intensity_min AND dark_ratio <= dark_ratio_max`.
-  - Rationale: an empty slot is a dark hole (low mean, high dark ratio); a seated cap fills the ROI and reflects the LED (higher mean, lower dark ratio).
-- **Stage 2 (enabled by `use_hough: true`) -- circular-cap confirmation**:
-  - `cv2.HoughCircles(gray, HOUGH_GRADIENT, dp=1.2, minDist=..., param1=100, param2=25, minRadius=hough_radius_px.min, maxRadius=hough_radius_px.max)`.
-  - Require at least one detected circle with radius in the calibrated band.
-  - Rejects edge cases where Stage 1 alone could false-pass (e.g. slot covered by a stray label, glare spot filling the ROI).
+  - Rationale: filters pathological lighting (slot in shadow, camera obscured). Not the primary discriminator for presence; Stage 2 carries that load.
+- **Stage 2 -- HSV saturation (ROI only)**:
+  - Convert the ROI crop to HSV, compute `mean_saturation` on the S channel (0..255 scale).
+  - Rule: `stage2_pass = mean_saturation >= mean_saturation_min`.
+  - Rationale: a tube cap of **any** colour dumps chroma into the slot (blue cap, red cap, green cap, etc. all register high S); an empty slot of white plastic stays near-achromatic (low S). This is colour-agnostic, scale-tolerant, and immune to the label-letters-look-like-circles false-positive that Hough exhibited. See commit history for the reasoning behind dropping Hough.
 - Final verdict: `present = stage1_pass AND stage2_pass`.
-- **Calibration procedure (one-time, during on-device verify -- NOT training)**:
-  1. Manually drive the toolhead to the candidate `serum_tube_pose`; set LED on.
-  2. Capture ~5 empty-slot frames and ~5 with-tube frames.
-  3. Save them to `logs/checks/tube_calibration/` and compute mean/dark-ratio statistics.
-  4. Pick thresholds that separate the two populations with margin; write to `config/ultra_default.yaml`.
-  5. Measure the cap's pixel radius; write `hough_radius_px.min/max` with +/-20% tolerance.
-- **Failure escalation path (not in this PR, flagged as follow-up)**: if field data shows Tier 1+2 is insufficient, the upgrade order is (a) template matching (no new deps, one reference image), (b) Haar cascade via `cv2.CascadeClassifier` (no new runtime deps, trained off-device with ~100 pos + ~300 neg crops), (c) tiny CNN via `onnxruntime` (adds a ~30 MB runtime dep). Logged in the Open Items section, not scheduled.
+- **Why not Hough circles?** Earlier prototypes ran `cv2.HoughCircles` on the CLAHE grayscale as Stage 2. Two failure modes dominated: (a) **false positives on a full-frame ROI** -- the detector picked cartridge label letters ("O", "S") as circles when the slot was empty; (b) **false negatives on red caps** -- a red cap on a red tube body has poor grayscale edges, so Hough missed it entirely. Saturation inside a tight ROI fixes both.
 
 ### `src/ultra/vision/check_runner.py` (new, mirrors [src/ultra/vision/align_runner.py](../src/ultra/vision/align_runner.py))
 
@@ -195,15 +189,12 @@ checks:
       y: 0
       w: 0
       h: 0
-    # Stage 1 (intensity statistics)
+    # Stage 1 (intensity statistics, ROI only)
     dark_threshold: 60       # pixel value cutoff for "dark"
     mean_intensity_min: 90   # ROI mean must exceed this when tube present
     dark_ratio_max: 0.35     # dark-pixel fraction must stay below this
-    # Stage 2 (Hough circle confirm)
-    use_hough: true
-    hough_radius_px:
-      min: 22
-      max: 34
+    # Stage 2 (HSV saturation, ROI only)
+    mean_saturation_min: 40.0  # 0..255; empty=5-20, seated=60+
 ```
 
 Pose values fixed by operator measurement:
@@ -215,8 +206,8 @@ Pose values fixed by operator measurement:
 
 Still to calibrate on-device:
 
-- `checks.tube.roi` (pixel box enclosing the slot in the 1280x720 frame).
-- `checks.tube.dark_threshold`, `mean_intensity_min`, `dark_ratio_max`, `hough_radius_px.{min,max}` -- derived from the 5-empty + 5-with-tube reference captures.
+- `checks.tube.roi` (pixel box enclosing the slot in the 1280x720 frame). Use the drag-to-select overlay in the Engineering Camera pane, or paste measured coords directly.
+- `checks.tube.dark_threshold`, `mean_intensity_min`, `dark_ratio_max`, `mean_saturation_min` -- derived from the 5-empty + 5-with-tube reference captures.
 
 ## 7. GUI surface (minimal)
 
@@ -231,12 +222,13 @@ None. The checks run **before** the recipe starts, in the `UltraStateMachine` su
 
 - [x] **sm_wiring** -- Rewrote `_state_self_check` in [src/ultra/services/state_machine.py](../src/ultra/services/state_machine.py) for order-free flag latching (`_cartridge_ok`, `_tube_ok`, `_close_count`). Kept `SystemState` enum values unchanged; `AWAITING_PROTOCOL_START` is no longer reached in the happy path (the machine goes `SELF_CHECK -> RUNNING_PROTOCOL` once both flags latch, or back to `DRAWER_OPEN_LOAD_CARTRIDGE` if either flag is still False). Flags reset in `_state_idle`.
 - [x] **qr_module** -- Added [src/ultra/vision/qr_detect.py](../src/ultra/vision/qr_detect.py) using `cv2.QRCodeDetector` with the three-pass ladder (raw -> CLAHE -> adaptive threshold). `format='datamatrix'` escape hatch reroutes through `pylibdmtx` via [src/ultra/vision/dmtx_detect.py](../src/ultra/vision/dmtx_detect.py). Unit tests in [tests/vision/test_qr_detect.py](../tests/vision/test_qr_detect.py).
-- [x] **tube_module** -- Added [src/ultra/vision/tube_detect.py](../src/ultra/vision/tube_detect.py): Stage 1 intensity stats (CLAHE + mean + dark-ratio), Stage 2 Hough-circle confirm gated by `use_hough`. No ML. Unit tests in [tests/vision/test_tube_detect.py](../tests/vision/test_tube_detect.py).
+- [x] **tube_module** -- Added [src/ultra/vision/tube_detect.py](../src/ultra/vision/tube_detect.py): Stage 1 intensity stats (CLAHE + mean + dark-ratio inside ROI), Stage 2 HSV mean saturation inside ROI. No ML. Unit tests in [tests/vision/test_tube_detect.py](../tests/vision/test_tube_detect.py). **Hough circle confirmation was tried and removed** -- it produced false positives on label letters when the ROI was still the full frame, and false negatives on red caps against a red tube body (grayscale-edge-colour-blind). Saturation inside a calibrated ROI is colour-agnostic.
 - [x] **check_runner** -- Added [src/ultra/vision/check_runner.py](../src/ultra/vision/check_runner.py) mirroring `align_runner`: `run_cartridge_qr_check` and `run_serum_tube_check`, gantry + LED + fresh frame + detect + annotated-frame cache hook. No carousel rotation issued for tube detection (cartridge is drawer-locked with the slot already in FOV); `ensure_centrifuge_ready` stays as a safety gate.
 - [x] **config** -- Added the `checks.qr` and `checks.tube` blocks to [config/ultra_default.yaml](../config/ultra_default.yaml); added `startup.skip_tube_check`; flipped `startup.skip_qr` default to `false`.
 - [x] **events** -- State machine emits cloud-canonical events only: `cartridge_validation_started`/`cartridge_validation_failed` per cycle + deferred `cartridge_validation_ended` once both flags latch; `self_check_started`/`self_check_complete`/`self_check_failed` per cycle. No new event strings introduced.
 - [x] **gui_debug** -- Added `GET /api/camera/last-qr-frame`, `GET /api/camera/last-tube-frame`, `POST /api/camera/check-cartridge-qr`, `POST /api/camera/check-serum-tube` in [src/ultra/gui/api_stm32.py](../src/ultra/gui/api_stm32.py). Two engineering-panel buttons ("Check Cartridge QR", "Check Serum Tube") wired up in [src/ultra/gui/static/index.html](../src/ultra/gui/static/index.html) + [src/ultra/gui/static/ultra-engineering.js](../src/ultra/gui/static/ultra-engineering.js).
-- [ ] **verify** -- On-device: calibrate `checks.tube.roi` + intensity/Hough thresholds (see procedure below), flip `startup.skip_tube_check` to `false`, dry-run happy + each recovery path, attach log excerpt.
+- [x] **gui_roi_picker** -- `GET/POST /api/camera/tube-roi` in [src/ultra/gui/api_stm32.py](../src/ultra/gui/api_stm32.py) + drag-to-select overlay in the Serum Tube fieldset of [src/ultra/gui/static/index.html](../src/ultra/gui/static/index.html) and [src/ultra/gui/static/ultra-engineering.js](../src/ultra/gui/static/ultra-engineering.js). Save updates `app.config` in memory; the response echoes the values + a hint for pasting into `config/ultra_default.yaml` for restart durability.
+- [ ] **verify** -- On-device: calibrate `checks.tube.roi` via the GUI picker + intensity / saturation thresholds (see procedure below), flip `startup.skip_tube_check` to `false`, dry-run happy + each recovery path, attach log excerpt.
 
 ## 9a. On-device calibration procedure (the `verify` step)
 
@@ -250,15 +242,17 @@ The vision detectors ship with conservative placeholder thresholds and a zero-se
 
 ### 9a.2 Tube ROI + thresholds (~10 min)
 
-1. With the cartridge **empty** (no serum tube), press **Check Serum Tube** five times. The engineering panel caches the most recent annotated frame at `GET /api/camera/last-tube-frame`; save each frame.
-2. Seat a tube, press **Check Serum Tube** five more times, save each frame.
-3. In the saved **empty** frames, locate the bounding box that tightly encloses the slot. Write it into `config/ultra_default.yaml` as `checks.tube.roi: {x, y, w, h}`.
-4. Re-run both populations (5 empty + 5 seated) with the new ROI. The panel shows `mean_intensity` and `dark_ratio` for each. Pick thresholds that separate the two populations with margin:
-   - `mean_intensity_min` ~= midpoint between the two means, biased 20% toward the seated-tube mean.
-   - `dark_ratio_max` ~= midpoint between the two dark ratios, biased 20% toward the empty dark ratio.
-5. Measure the cap's pixel radius in the seated frames (any image tool works). Set `checks.tube.hough_radius_px.min = round(r * 0.8)` and `max = round(r * 1.2)`.
-6. Re-run 5 empty + 5 seated. Every empty must show `ok: false` (reason stage1 or stage2); every seated must show `ok: true`. If any fail, adjust the closer threshold by 5% and repeat.
-7. Flip `startup.skip_tube_check` to `false` in `config/ultra_default.yaml` and restart the service.
+1. Load a cartridge **with a seated serum tube** and press **Check Serum Tube**. The panel caches the most recent annotated frame; a saved ROI (if any) is drawn on it as a dashed green box.
+2. **Calibrate the ROI** using the drag-to-select overlay directly on the cached frame:
+   - Drag a rectangle that tightly encloses only the serum slot (no label, no housing, no cartridge logo). The "draft" values appear under the image in native-frame pixels.
+   - Click **Save ROI**. The server updates `app.config['checks']['tube']['roi']` in memory and echoes the numbers back with a `persist_hint`. Paste those four numbers into `config/ultra_default.yaml` under `checks.tube.roi` for restart durability (the in-memory update alone is lost on service restart).
+3. Re-press **Check Serum Tube** five times with the tube seated, then remove the tube and press five more times. The panel shows `mean_intensity`, `dark_ratio`, and `mean_saturation` per run.
+4. Tune thresholds to separate the two populations with margin:
+   - `mean_saturation_min` ~= midpoint between the two saturation means, biased 20% toward the seated mean. This is the primary discriminator; expect empty ~5-20, seated ~60-120 (any cap colour).
+   - `mean_intensity_min` ~= midpoint between the two means, biased 20% toward the seated mean. This is the pathological-lighting gate, not the presence gate.
+   - `dark_ratio_max` ~= midpoint biased 20% toward the empty dark ratio.
+5. Re-run 5 empty + 5 seated. Every empty must show `ok: false` (`stage1_fail` or `stage2_fail` in `reason`); every seated must show `ok: true`. If any fail, adjust the closer threshold by 5% and repeat. Test with **both blue and red caps** if your fleet ships both -- saturation works for any cap colour, but the threshold should be chosen against the lower-saturation colour.
+6. Flip `startup.skip_tube_check` to `false` in `config/ultra_default.yaml` and restart the service.
 
 ### 9a.3 End-to-end happy path
 

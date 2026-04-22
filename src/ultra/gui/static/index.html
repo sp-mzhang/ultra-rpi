@@ -1110,8 +1110,8 @@
       <div class="eng-dim" style="margin-bottom:6px">
         Probe pose: configured in
         <code>checks.tube.probe_pose</code>
-        (default X=20, Y=55). Intensity + Hough circle
-        confirmation; see
+        (default X=20, Y=55). Intensity + HSV saturation inside
+        the calibrated ROI; see
         <code>docs/cartridge_tube_validation.md</code>
         for calibration.
       </div>
@@ -1130,20 +1130,43 @@
           <span id="eng-tube-mean">--</span>
           <label>Dark ratio:</label>
           <span id="eng-tube-dark">--</span>
+          <label>Saturation:</label>
+          <span id="eng-tube-sat">--</span>
           <label>Stage 1 / Stage 2:</label>
           <span id="eng-tube-stages">--</span>
-          <label>Circles:</label>
-          <span id="eng-tube-circles">--</span>
           <label>Elapsed:</label>
           <span id="eng-tube-elapsed">--</span>
         </div>
         <div id="eng-tube-reason" class="eng-err" hidden></div>
         <div class="eng-cal-frame-wrap" style="margin-top:6px">
           <div class="eng-dim">
-            Frame used for tube detection:
+            Frame used for tube detection (drag on image to set
+            ROI, then Save):
           </div>
-          <img id="eng-tube-frame" class="eng-cal-frame"
-            alt="tube preview" hidden>
+          <div id="eng-tube-frame-host"
+            style="position:relative; display:inline-block;
+                   max-width:100%; user-select:none">
+            <img id="eng-tube-frame" class="eng-cal-frame"
+              alt="tube preview" hidden
+              style="display:block; max-width:100%">
+            <div id="eng-tube-roi-box"
+              hidden
+              style="position:absolute; border:2px dashed #0f0;
+                     background:rgba(0,255,0,0.08);
+                     pointer-events:none;
+                     box-sizing:border-box"></div>
+          </div>
+          <div class="eng-btn-row" style="margin-top:6px">
+            <button id="eng-tube-roi-save"
+              class="eng-cmd-btn" disabled>Save ROI</button>
+            <button id="eng-tube-roi-clear"
+              class="eng-cmd-btn">Clear ROI</button>
+            <span id="eng-tube-roi-status"
+              class="eng-dim">no ROI drawn</span>
+          </div>
+          <div id="eng-tube-roi-hint"
+            class="eng-dim" hidden
+            style="margin-top:4px"></div>
         </div>
       </div>
     </fieldset>

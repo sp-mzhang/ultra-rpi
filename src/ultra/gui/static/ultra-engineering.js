@@ -1390,13 +1390,13 @@
           body.dark_ratio != null
             ? body.dark_ratio.toFixed(3) : '--'
         );
+        $('#eng-tube-sat').textContent = (
+          body.mean_saturation != null
+            ? body.mean_saturation.toFixed(1) : '--'
+        );
         $('#eng-tube-stages').textContent =
           (body.stage1_pass ? 'S1 ok' : 'S1 FAIL') + ' / ' +
           (body.stage2_pass ? 'S2 ok' : 'S2 FAIL');
-        $('#eng-tube-circles').textContent = (
-          body.circle_count != null
-            ? String(body.circle_count) : '--'
-        );
         $('#eng-tube-elapsed').textContent = (
           body.elapsed_s != null ? body.elapsed_s + ' s' : '--'
         );
@@ -1413,6 +1413,9 @@
           img.src = '/api/camera/last-tube-frame?ts=' +
             encodeURIComponent(body.frame_ts);
           img.hidden = false;
+          // Once the new frame has loaded, refresh the ROI
+          // overlay so it stays pinned to the right pixels.
+          img.onload = () => refreshTubeRoiOverlay();
         } else {
           img.removeAttribute('src');
           img.hidden = true;
@@ -1422,6 +1425,7 @@
           ok: body.ok, reason: body.reason,
           mean_intensity: body.mean_intensity,
           dark_ratio: body.dark_ratio,
+          mean_saturation: body.mean_saturation,
           stage1: body.stage1_pass, stage2: body.stage2_pass,
         }));
       } catch (e) {
@@ -1431,6 +1435,222 @@
         goBtn.disabled = false;
       }
     };
+    wireTubeRoiPicker();
+  }
+
+  /* ---- Tube ROI picker ----
+   *
+   * Operator drags a rectangle on the last-tube-frame image to
+   * define the ROI (pixel-space). We convert from image-display
+   * coordinates to native-frame coordinates using the server-
+   * reported frame dims. Save POSTs to /api/camera/tube-roi;
+   * persistence across restarts still requires editing
+   * config/ultra_default.yaml, per the hint echoed in the
+   * response.
+   */
+  let _tubeRoiDraft = null;   // {x,y,w,h} in native-frame pixels
+  let _tubeFrameDims = { w: 0, h: 0 };
+
+  function _imgNativeDims(img) {
+    // naturalWidth/Height = original JPEG dims; display size is
+    // whatever the CSS gave us. Both are needed for mapping.
+    return {
+      nw: img.naturalWidth || 0,
+      nh: img.naturalHeight || 0,
+      dw: img.clientWidth || img.offsetWidth || 0,
+      dh: img.clientHeight || img.offsetHeight || 0,
+    };
+  }
+
+  function _displayRectFromNativeRoi(roi, img) {
+    const d = _imgNativeDims(img);
+    if (d.nw === 0 || d.nh === 0 || d.dw === 0 || d.dh === 0) {
+      return null;
+    }
+    const sx = d.dw / d.nw;
+    const sy = d.dh / d.nh;
+    return {
+      left: Math.round(roi.x * sx),
+      top: Math.round(roi.y * sy),
+      width: Math.round(roi.w * sx),
+      height: Math.round(roi.h * sy),
+    };
+  }
+
+  function _nativeRoiFromDisplayRect(rect, img) {
+    const d = _imgNativeDims(img);
+    if (d.nw === 0 || d.nh === 0 || d.dw === 0 || d.dh === 0) {
+      return null;
+    }
+    const sx = d.nw / d.dw;
+    const sy = d.nh / d.dh;
+    return {
+      x: Math.round(rect.left * sx),
+      y: Math.round(rect.top * sy),
+      w: Math.round(rect.width * sx),
+      h: Math.round(rect.height * sy),
+    };
+  }
+
+  function _paintTubeRoi(roi) {
+    const box = $('#eng-tube-roi-box');
+    const img = $('#eng-tube-frame');
+    if (!roi || roi.w <= 0 || roi.h <= 0 || img.hidden) {
+      box.hidden = true;
+      return;
+    }
+    const disp = _displayRectFromNativeRoi(roi, img);
+    if (!disp) {
+      box.hidden = true;
+      return;
+    }
+    box.style.left = disp.left + 'px';
+    box.style.top = disp.top + 'px';
+    box.style.width = disp.width + 'px';
+    box.style.height = disp.height + 'px';
+    box.hidden = false;
+  }
+
+  async function refreshTubeRoiOverlay() {
+    try {
+      const resp = await fetch('/api/camera/tube-roi');
+      if (!resp.ok) return;
+      const body = await resp.json();
+      _tubeFrameDims = {
+        w: body.frame_w || 0, h: body.frame_h || 0,
+      };
+      if (body.roi && body.roi.w > 0 && body.roi.h > 0) {
+        _tubeRoiDraft = { ...body.roi };
+        _paintTubeRoi(_tubeRoiDraft);
+        $('#eng-tube-roi-status').textContent =
+          'saved: x=' + body.roi.x + ' y=' + body.roi.y +
+          ' w=' + body.roi.w + ' h=' + body.roi.h;
+        $('#eng-tube-roi-save').disabled = true;
+      } else {
+        _tubeRoiDraft = null;
+        $('#eng-tube-roi-box').hidden = true;
+        $('#eng-tube-roi-status').textContent = 'no ROI drawn';
+        $('#eng-tube-roi-save').disabled = true;
+      }
+    } catch (e) {
+      /* silent -- overlay is optional */
+    }
+  }
+
+  function wireTubeRoiPicker() {
+    const img = $('#eng-tube-frame');
+    const host = $('#eng-tube-frame-host');
+    const box = $('#eng-tube-roi-box');
+    const saveBtn = $('#eng-tube-roi-save');
+    const clearBtn = $('#eng-tube-roi-clear');
+    const hint = $('#eng-tube-roi-hint');
+
+    let dragging = false;
+    let startX = 0, startY = 0;
+
+    function _onDown(ev) {
+      if (img.hidden) return;
+      const rect = img.getBoundingClientRect();
+      startX = ev.clientX - rect.left;
+      startY = ev.clientY - rect.top;
+      dragging = true;
+      ev.preventDefault();
+    }
+    function _onMove(ev) {
+      if (!dragging) return;
+      const rect = img.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+      const left = Math.max(0, Math.min(startX, x));
+      const top = Math.max(0, Math.min(startY, y));
+      const width = Math.min(
+        Math.abs(x - startX), img.clientWidth - left,
+      );
+      const height = Math.min(
+        Math.abs(y - startY), img.clientHeight - top,
+      );
+      box.style.left = left + 'px';
+      box.style.top = top + 'px';
+      box.style.width = width + 'px';
+      box.style.height = height + 'px';
+      box.hidden = false;
+    }
+    function _onUp() {
+      if (!dragging) return;
+      dragging = false;
+      const left = parseFloat(box.style.left) || 0;
+      const top = parseFloat(box.style.top) || 0;
+      const width = parseFloat(box.style.width) || 0;
+      const height = parseFloat(box.style.height) || 0;
+      if (width < 8 || height < 8) {
+        // Ignore accidental clicks.
+        box.hidden = true;
+        _tubeRoiDraft = null;
+        saveBtn.disabled = true;
+        $('#eng-tube-roi-status').textContent = 'no ROI drawn';
+        return;
+      }
+      const native = _nativeRoiFromDisplayRect({
+        left, top, width, height,
+      }, img);
+      if (!native) return;
+      _tubeRoiDraft = native;
+      saveBtn.disabled = false;
+      $('#eng-tube-roi-status').textContent =
+        'draft: x=' + native.x + ' y=' + native.y +
+        ' w=' + native.w + ' h=' + native.h;
+    }
+
+    host.addEventListener('mousedown', _onDown);
+    window.addEventListener('mousemove', _onMove);
+    window.addEventListener('mouseup', _onUp);
+
+    clearBtn.onclick = async () => {
+      _tubeRoiDraft = { x: 0, y: 0, w: 0, h: 0 };
+      box.hidden = true;
+      saveBtn.disabled = false;
+      $('#eng-tube-roi-status').textContent =
+        'draft: cleared (full frame)';
+    };
+
+    saveBtn.onclick = async () => {
+      if (!_tubeRoiDraft) return;
+      saveBtn.disabled = true;
+      try {
+        const resp = await fetch('/api/camera/tube-roi', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(_tubeRoiDraft),
+        });
+        const body = await resp.json();
+        if (!resp.ok) {
+          $('#eng-tube-roi-status').textContent =
+            'save error: ' + (body.detail || resp.status);
+          saveBtn.disabled = false;
+          return;
+        }
+        $('#eng-tube-roi-status').textContent =
+          'saved: x=' + body.roi.x + ' y=' + body.roi.y +
+          ' w=' + body.roi.w + ' h=' + body.roi.h;
+        if (body.persist_hint) {
+          hint.hidden = false;
+          hint.textContent = body.persist_hint;
+        }
+        engLog('tube-roi saved: ' + JSON.stringify(body.roi));
+      } catch (e) {
+        $('#eng-tube-roi-status').textContent = 'save error: ' + e;
+        saveBtn.disabled = false;
+      }
+    };
+
+    // Prime the overlay with whatever is already in config.
+    refreshTubeRoiOverlay();
+
+    // If the display size changes (window resize), rescale the
+    // overlay. Native-pixel ROI is the source of truth.
+    window.addEventListener('resize', () => {
+      if (_tubeRoiDraft) _paintTubeRoi(_tubeRoiDraft);
+    });
   }
 
   /* ---- LOCATIONS wiring ---- */

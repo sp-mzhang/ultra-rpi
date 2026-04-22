@@ -220,8 +220,8 @@ def run_serum_tube_check(
         config: Full app config dict. Reads the
             ``checks.tube`` block (probe_pose, retries_per_close,
             led_settle_ms, roi, dark_threshold,
-            mean_intensity_min, dark_ratio_max, use_hough,
-            hough_radius_px).
+            mean_intensity_min, dark_ratio_max,
+            mean_saturation_min).
         get_frame: Fresh-frame provider; see :func:`run_cartridge_qr_check`.
         cache_frame: Optional ``(frame, det) -> None`` hook for
             GUI preview caching.
@@ -245,9 +245,8 @@ def run_serum_tube_check(
         tube_cfg.get('mean_intensity_min', 90.0),
     )
     dark_ratio_max = float(tube_cfg.get('dark_ratio_max', 0.35))
-    use_hough = bool(tube_cfg.get('use_hough', True))
-    hough_radius_px = tube_cfg.get(
-        'hough_radius_px', {'min': 22, 'max': 34},
+    mean_saturation_min = float(
+        tube_cfg.get('mean_saturation_min', 40.0),
     )
 
     t0 = time.time()
@@ -291,8 +290,7 @@ def run_serum_tube_check(
                 dark_threshold=dark_threshold,
                 mean_intensity_min=mean_intensity_min,
                 dark_ratio_max=dark_ratio_max,
-                use_hough=use_hough,
-                hough_radius_px=hough_radius_px,
+                mean_saturation_min=mean_saturation_min,
             )
             if cache_frame is not None:
                 try:
@@ -305,9 +303,9 @@ def run_serum_tube_check(
             last_extras = {
                 'mean_intensity': round(det.mean_intensity, 2),
                 'dark_ratio': round(det.dark_ratio, 4),
+                'mean_saturation': round(det.mean_saturation, 2),
                 'stage1_pass': det.stage1_pass,
                 'stage2_pass': det.stage2_pass,
-                'circle_count': det.circle_count,
                 'roi': list(det.roi),
                 'attempt': attempt,
                 'elapsed_s': round(time.time() - t0, 3),
