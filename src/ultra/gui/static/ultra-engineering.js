@@ -1159,6 +1159,8 @@
   // captures its own annotated frame on demand.
   function wireEngCamera() {
     wireCarouselAlign();
+    wireCartridgeQrCheck();
+    wireSerumTubeCheck();
   }
 
   /* ---- Carousel alignment sub-panel ---- */
@@ -1279,6 +1281,152 @@
       } catch (e) {
         status.textContent = 'error';
         engLog('align-carousel network error: ' + e);
+      } finally {
+        goBtn.disabled = false;
+      }
+    };
+  }
+
+  function wireCartridgeQrCheck() {
+    const goBtn = $('#eng-qr-check-go');
+    const status = $('#eng-qr-check-status');
+    const resultBox = $('#eng-qr-check-result');
+    goBtn.onclick = async () => {
+      goBtn.disabled = true;
+      status.textContent = 'checking...';
+      try {
+        const resp = await fetch(
+          '/api/camera/check-cartridge-qr', { method: 'POST' },
+        );
+        const txt = await resp.text();
+        let body;
+        try {
+          body = txt ? JSON.parse(txt) : {};
+        } catch (e) {
+          body = { detail: txt };
+        }
+        if (!resp.ok) {
+          status.textContent = 'error';
+          engLog(
+            'check-cartridge-qr failed (' + resp.status +
+            '): ' + (body.detail || txt),
+          );
+          return;
+        }
+        resultBox.hidden = false;
+        $('#eng-qr-payload').textContent = body.payload || '--';
+        $('#eng-qr-pass').textContent = body.source_pass || '--';
+        $('#eng-qr-attempt').textContent = (
+          body.attempt != null ? String(body.attempt) : '--'
+        );
+        $('#eng-qr-elapsed').textContent = (
+          body.elapsed_s != null ? body.elapsed_s + ' s' : '--'
+        );
+        const err = $('#eng-qr-reason');
+        if (body.reason) {
+          err.hidden = false;
+          err.textContent = 'Reason: ' + body.reason;
+        } else {
+          err.hidden = true;
+          err.textContent = '';
+        }
+        const img = $('#eng-qr-frame');
+        if (body.frame_ts) {
+          img.src = '/api/camera/last-qr-frame?ts=' +
+            encodeURIComponent(body.frame_ts);
+          img.hidden = false;
+        } else {
+          img.removeAttribute('src');
+          img.hidden = true;
+        }
+        status.textContent = body.ok ? 'ok' : 'no QR';
+        engLog('check-cartridge-qr: ' + JSON.stringify({
+          ok: body.ok, payload: body.payload,
+          source_pass: body.source_pass, reason: body.reason,
+        }));
+      } catch (e) {
+        status.textContent = 'error';
+        engLog('check-cartridge-qr network error: ' + e);
+      } finally {
+        goBtn.disabled = false;
+      }
+    };
+  }
+
+  function wireSerumTubeCheck() {
+    const goBtn = $('#eng-tube-check-go');
+    const status = $('#eng-tube-check-status');
+    const resultBox = $('#eng-tube-check-result');
+    goBtn.onclick = async () => {
+      goBtn.disabled = true;
+      status.textContent = 'checking...';
+      try {
+        const resp = await fetch(
+          '/api/camera/check-serum-tube', { method: 'POST' },
+        );
+        const txt = await resp.text();
+        let body;
+        try {
+          body = txt ? JSON.parse(txt) : {};
+        } catch (e) {
+          body = { detail: txt };
+        }
+        if (!resp.ok) {
+          status.textContent = 'error';
+          engLog(
+            'check-serum-tube failed (' + resp.status +
+            '): ' + (body.detail || txt),
+          );
+          return;
+        }
+        resultBox.hidden = false;
+        $('#eng-tube-present').textContent = body.ok
+          ? 'yes' : 'no';
+        $('#eng-tube-mean').textContent = (
+          body.mean_intensity != null
+            ? body.mean_intensity.toFixed(1) : '--'
+        );
+        $('#eng-tube-dark').textContent = (
+          body.dark_ratio != null
+            ? body.dark_ratio.toFixed(3) : '--'
+        );
+        $('#eng-tube-stages').textContent =
+          (body.stage1_pass ? 'S1 ok' : 'S1 FAIL') + ' / ' +
+          (body.stage2_pass ? 'S2 ok' : 'S2 FAIL');
+        $('#eng-tube-circles').textContent = (
+          body.circle_count != null
+            ? String(body.circle_count) : '--'
+        );
+        $('#eng-tube-elapsed').textContent = (
+          body.elapsed_s != null ? body.elapsed_s + ' s' : '--'
+        );
+        const err = $('#eng-tube-reason');
+        if (body.reason) {
+          err.hidden = false;
+          err.textContent = 'Reason: ' + body.reason;
+        } else {
+          err.hidden = true;
+          err.textContent = '';
+        }
+        const img = $('#eng-tube-frame');
+        if (body.frame_ts) {
+          img.src = '/api/camera/last-tube-frame?ts=' +
+            encodeURIComponent(body.frame_ts);
+          img.hidden = false;
+        } else {
+          img.removeAttribute('src');
+          img.hidden = true;
+        }
+        status.textContent = body.ok ? 'present' : 'absent';
+        engLog('check-serum-tube: ' + JSON.stringify({
+          ok: body.ok, reason: body.reason,
+          mean_intensity: body.mean_intensity,
+          dark_ratio: body.dark_ratio,
+          stage1: body.stage1_pass, stage2: body.stage2_pass,
+        }));
+      } catch (e) {
+        status.textContent = 'error';
+        engLog('check-serum-tube network error: ' + e);
       } finally {
         goBtn.disabled = false;
       }

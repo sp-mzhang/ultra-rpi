@@ -1068,6 +1068,85 @@
         </div>
       </div>
     </fieldset>
+
+    <fieldset class="eng-inner-fs">
+      <legend>Cartridge QR</legend>
+      <div class="eng-dim" style="margin-bottom:6px">
+        Probe pose: configured in
+        <code>checks.qr.probe_pose</code> (default X=0, Y=83).
+        Three-pass decoder (raw -> CLAHE -> adaptive threshold).
+      </div>
+      <div class="eng-btn-row">
+        <button id="eng-qr-check-go"
+          class="eng-cmd-btn">Check Cartridge QR</button>
+        <span id="eng-qr-check-status"
+          class="eng-dim">idle</span>
+      </div>
+      <div id="eng-qr-check-result"
+        class="eng-carousel-result" hidden>
+        <div class="eng-form-grid">
+          <label>Decoded payload:</label>
+          <span id="eng-qr-payload">--</span>
+          <label>Pass:</label>
+          <span id="eng-qr-pass">--</span>
+          <label>Attempt:</label>
+          <span id="eng-qr-attempt">--</span>
+          <label>Elapsed:</label>
+          <span id="eng-qr-elapsed">--</span>
+        </div>
+        <div id="eng-qr-reason" class="eng-err" hidden></div>
+        <div class="eng-cal-frame-wrap" style="margin-top:6px">
+          <div class="eng-dim">
+            Frame used for QR decode:
+          </div>
+          <img id="eng-qr-frame" class="eng-cal-frame"
+            alt="qr preview" hidden>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset class="eng-inner-fs">
+      <legend>Serum Tube Presence</legend>
+      <div class="eng-dim" style="margin-bottom:6px">
+        Probe pose: configured in
+        <code>checks.tube.probe_pose</code>
+        (default X=20, Y=55). Intensity + Hough circle
+        confirmation; see
+        <code>docs/cartridge_tube_validation.md</code>
+        for calibration.
+      </div>
+      <div class="eng-btn-row">
+        <button id="eng-tube-check-go"
+          class="eng-cmd-btn">Check Serum Tube</button>
+        <span id="eng-tube-check-status"
+          class="eng-dim">idle</span>
+      </div>
+      <div id="eng-tube-check-result"
+        class="eng-carousel-result" hidden>
+        <div class="eng-form-grid">
+          <label>Present:</label>
+          <span id="eng-tube-present">--</span>
+          <label>Mean intensity:</label>
+          <span id="eng-tube-mean">--</span>
+          <label>Dark ratio:</label>
+          <span id="eng-tube-dark">--</span>
+          <label>Stage 1 / Stage 2:</label>
+          <span id="eng-tube-stages">--</span>
+          <label>Circles:</label>
+          <span id="eng-tube-circles">--</span>
+          <label>Elapsed:</label>
+          <span id="eng-tube-elapsed">--</span>
+        </div>
+        <div id="eng-tube-reason" class="eng-err" hidden></div>
+        <div class="eng-cal-frame-wrap" style="margin-top:6px">
+          <div class="eng-dim">
+            Frame used for tube detection:
+          </div>
+          <img id="eng-tube-frame" class="eng-cal-frame"
+            alt="tube preview" hidden>
+        </div>
+      </div>
+    </fieldset>
   </div>
 
   <!-- ===== LOCATIONS ===== -->

@@ -160,7 +160,17 @@ analysis:
 startup:
   auto_state_machine: false
   skip_nfc: false
-  skip_qr: true
+  # When true, the state machine skips the cartridge QR check and
+  # immediately latches cartridge_ok = True. Flip to true for bench
+  # work where a real QR-coded cartridge is not available. Default
+  # false now that ``checks.qr`` is wired up.
+  skip_qr: false
+  # Tube presence check needs on-device calibration of
+  # ``checks.tube.roi`` and the intensity / Hough thresholds
+  # before it can refuse to start a run. Ships true so early
+  # builds are not blocked; flip to false once calibration is
+  # locked in (see docs/cartridge_tube_validation.md).
+  skip_tube_check: true
   default_chip_id: L007W01R01C01
   restart_delay_s: 5
   self_check_stub_s: 5.0
@@ -233,3 +243,61 @@ carousel_align:
                                  # is +1 on this rig; motor drives
                                  # carousel CCW -> offset must be
                                  # applied with opposite sign.
+
+# ---------------------------------------------------------------
+# Pre-run validation checks (cartridge QR + serum tube).
+#
+# Both checks share the toolhead camera + ring LED. They are
+# driven from ``UltraStateMachine._state_self_check`` on every
+# drawer-close and run only until each flag latches True -- a
+# passing QR or tube check on cycle N is NOT re-run on cycle
+# N+1 (flags reset only on the machine returning to IDLE).
+#
+# No carousel rotation is issued for either check: the cartridge
+# is drawer-locked with the QR label and the serum slot already
+# in the camera's FOV.
+# ---------------------------------------------------------------
+checks:
+  qr:
+    enabled: true
+    format: qr                   # qr | datamatrix
+    min_payload_len: 4
+    retries_per_close: 2
+    led_settle_ms: 200
+    decode_timeout_ms: 500       # datamatrix path only; ignored for QR
+    probe_pose:                  # toolhead-camera pose over cartridge QR
+      x_mm: 0.0
+      y_mm: 83.0
+      z_mm: 0.0
+      xy_speed_mms: 40.0
+      z_speed_mms: 10.0
+  tube:
+    enabled: true
+    retries_per_close: 1
+    led_settle_ms: 200
+    probe_pose:                  # toolhead-camera pose over serum slot
+      x_mm: 20.0
+      y_mm: 55.0
+      z_mm: 0.0
+      xy_speed_mms: 40.0
+      z_speed_mms: 10.0
+    # Pixel ROI inside the 1280x720 frame. All-zero sentinel =
+    # full frame (safe fallback before on-device calibration).
+    # Lock this down during verify; see
+    # docs/cartridge_tube_validation.md section 6.
+    roi:
+      x: 0
+      y: 0
+      w: 0
+      h: 0
+    # Stage 1 (intensity statistics). Calibrate with the
+    # 5-empty + 5-with-tube reference captures.
+    dark_threshold: 60           # pixel value cutoff for "dark"
+    mean_intensity_min: 90       # ROI mean must exceed this when present
+    dark_ratio_max: 0.35         # dark-pixel fraction must stay below
+    # Stage 2 (Hough circle confirm). Measure the cap's pixel
+    # radius during verify and write +/-20% tolerance bounds.
+    use_hough: true
+    hough_radius_px:
+      min: 22
+      max: 34

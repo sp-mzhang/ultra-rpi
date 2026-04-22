@@ -824,4 +824,172 @@ def create_stm32_router(app: 'Application') -> APIRouter:
         result.payload['frame_ts'] = _last_align_frame.get('ts', 0)
         return result.payload
 
+    # ---- Cartridge QR + serum-tube debug endpoints ----
+    #
+    # Two small module-local caches keep the most recent annotated
+    # preview from each check so the engineering-panel buttons can
+    # render a thumbnail. Mirrors the ``_last_align_frame`` pattern
+    # a few dozen lines up. No persistence; state dies with the
+    # process.
+    _last_qr_frame: dict = {'jpeg': None, 'ts': 0.0}
+    _last_tube_frame: dict = {'jpeg': None, 'ts': 0.0}
+
+    def _cache_qr_frame(frame_bgr, det):
+        '''Render QR overlay + cache as JPEG. Failures are logged.'''
+        try:
+            import time as _time
+            import cv2
+            from ultra.vision.qr_detect import annotate as qr_annotate
+            overlay = qr_annotate(frame_bgr, det)
+            ok, buf = cv2.imencode(
+                '.jpg', overlay, [cv2.IMWRITE_JPEG_QUALITY, 80],
+            )
+            if ok:
+                _last_qr_frame['jpeg'] = bytes(buf)
+                _last_qr_frame['ts'] = _time.time()
+        except Exception as exc:
+            LOG.warning('qr annotate/encode failed: %s', exc)
+
+    def _cache_tube_frame(frame_bgr, det):
+        '''Cache the detector's pre-annotated preview as JPEG.
+
+        :class:`TubeDetection` already carries an ``annotated``
+        image, so we just encode it. Falls back to the raw frame
+        if annotation didn't run.
+        '''
+        try:
+            import time as _time
+            import cv2
+            img = getattr(det, 'annotated', None)
+            if img is None:
+                img = frame_bgr
+            ok, buf = cv2.imencode(
+                '.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80],
+            )
+            if ok:
+                _last_tube_frame['jpeg'] = bytes(buf)
+                _last_tube_frame['ts'] = _time.time()
+        except Exception as exc:
+            LOG.warning('tube annotate/encode failed: %s', exc)
+
+    @router.get('/camera/last-qr-frame')
+    async def camera_last_qr_frame():
+        '''Return the most recent annotated cartridge-QR JPEG.'''
+        from fastapi.responses import Response
+        jpeg = _last_qr_frame.get('jpeg')
+        if not jpeg:
+            raise HTTPException(
+                status_code=404,
+                detail='No QR frame yet',
+            )
+        return Response(
+            content=jpeg,
+            media_type='image/jpeg',
+            headers={'Cache-Control': 'no-store'},
+        )
+
+    @router.get('/camera/last-tube-frame')
+    async def camera_last_tube_frame():
+        '''Return the most recent annotated tube-presence JPEG.'''
+        from fastapi.responses import Response
+        jpeg = _last_tube_frame.get('jpeg')
+        if not jpeg:
+            raise HTTPException(
+                status_code=404,
+                detail='No tube frame yet',
+            )
+        return Response(
+            content=jpeg,
+            media_type='image/jpeg',
+            headers={'Cache-Control': 'no-store'},
+        )
+
+    @router.post('/camera/check-cartridge-qr')
+    async def check_cartridge_qr():
+        '''One-shot cartridge-QR decode (engineering debug).
+
+        Mirrors ``POST /camera/align-carousel``: drives
+        :func:`ultra.vision.check_runner.run_cartridge_qr_check`
+        with the engineering STM32 interface so the operator can
+        validate label reading, LED timing, and probe pose
+        without running the full state machine.
+        '''
+        from ultra.vision.check_runner import run_cartridge_qr_check
+
+        stm32 = get_eng_stm32()
+        if stm32 is None:
+            raise HTTPException(
+                status_code=503,
+                detail='STM32 not connected -- click '
+                       'Connect first',
+            )
+        runner = app.get_runner()
+        if runner.is_running:
+            raise HTTPException(
+                status_code=409,
+                detail='Protocol running -- refusing QR check',
+            )
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: run_cartridge_qr_check(
+                stm32=stm32,
+                config=app.config,
+                get_frame=_grab_bgr_frame,
+                cache_frame=_cache_qr_frame,
+            ),
+        )
+        payload = {
+            'ok': result.ok,
+            'reason': result.reason,
+            'payload': result.payload,
+            'frame_ts': _last_qr_frame.get('ts', 0),
+            **(result.extras or {}),
+        }
+        return payload
+
+    @router.post('/camera/check-serum-tube')
+    async def check_serum_tube():
+        '''One-shot serum-tube presence check (engineering debug).
+
+        Drives :func:`ultra.vision.check_runner.run_serum_tube_check`
+        so the operator can tune ROI + intensity / Hough
+        thresholds against a live cartridge. The annotated
+        preview is cached for ``GET /camera/last-tube-frame``.
+        '''
+        from ultra.vision.check_runner import run_serum_tube_check
+
+        stm32 = get_eng_stm32()
+        if stm32 is None:
+            raise HTTPException(
+                status_code=503,
+                detail='STM32 not connected -- click '
+                       'Connect first',
+            )
+        runner = app.get_runner()
+        if runner.is_running:
+            raise HTTPException(
+                status_code=409,
+                detail='Protocol running -- refusing tube check',
+            )
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: run_serum_tube_check(
+                stm32=stm32,
+                config=app.config,
+                get_frame=_grab_bgr_frame,
+                cache_frame=_cache_tube_frame,
+            ),
+        )
+        payload = {
+            'ok': result.ok,
+            'reason': result.reason,
+            'frame_ts': _last_tube_frame.get('ts', 0),
+            **(result.extras or {}),
+        }
+        return payload
+
     return router

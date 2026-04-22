@@ -119,7 +119,19 @@ class UltraStateMachine:
         self._skip_nfc = startup.get(
             'skip_nfc', False,
         )
-        self._skip_qr = startup.get('skip_qr', True)
+        # Default is now False because ``checks.qr`` is wired up and
+        # runs a real QR decode in ``_state_self_check``. Bench work
+        # that doesn't have a QR-coded cartridge can flip this back
+        # to True in ``config/ultra_default.yaml``.
+        self._skip_qr = startup.get('skip_qr', False)
+        # Tube check needs on-device calibration of
+        # ``checks.tube.roi`` and the intensity / Hough thresholds
+        # before it can meaningfully refuse to start a run. Ships
+        # True so early builds are not blocked; flip to False once
+        # calibration is locked in.
+        self._skip_tube_check = startup.get(
+            'skip_tube_check', True,
+        )
         self._default_chip_id = startup.get(
             'default_chip_id', 'ULTRA-TEST-001',
         )
@@ -129,6 +141,14 @@ class UltraStateMachine:
         self._restart_delay_s = startup.get(
             'restart_delay_s', 5.0,
         )
+
+        # Order-free validation flags latched on the first passing
+        # cycle; reset only on ``_state_idle`` entry (after a full
+        # PROTOCOL_COMPLETE -> DATA_UPLOAD -> IDLE).
+        self._cartridge_ok: bool = False
+        self._tube_ok: bool = False
+        self._close_count: int = 0
+        self._last_qr_payload: str | None = None
 
         self._nfc_provisioner: Any = None
         self._wifi_provisioner: Any = None
@@ -714,6 +734,15 @@ class UltraStateMachine:
 
     async def _state_idle(self) -> None:
         '''Wait for drawer to open.'''
+        # Reset order-free validation latches on every return to
+        # IDLE (typically after PROTOCOL_COMPLETE -> DATA_UPLOAD).
+        # Missing this reset would leave the old cartridge/tube
+        # flags True and let the next run skip validation entirely.
+        self._cartridge_ok = False
+        self._tube_ok = False
+        self._close_count = 0
+        self._last_qr_payload = None
+
         self._set_led(LED_WAITING)
         self._publish_event('device_ready')
         LOG.info(
@@ -744,18 +773,85 @@ class UltraStateMachine:
         self._set_state(SystemState.SELF_CHECK)
 
     async def _state_self_check(self) -> None:
-        '''Cartridge validation after drawer close.
+        '''Order-free cartridge QR + serum-tube validation.
 
-        The 5 s delay in _state_drawer_open simulates the
-        validation period.  We publish cartridge_validation_ended
-        immediately on entry, then wait for the 2nd drawer open.
+        Runs on every drawer-close until both flags
+        (``_cartridge_ok`` and ``_tube_ok``) are True. Each flag
+        latches on its first passing cycle and is NOT re-checked
+        on subsequent cycles, matching the doc:
+
+            docs/cartridge_tube_validation.md section 3.
+
+        Event emission mirrors the cloud-canonical contract
+        documented in ``iot_client.publish_event``:
+
+            * QR:   cartridge_validation_started ->
+                    (deferred cartridge_validation_ended on final
+                     success) / cartridge_validation_failed.
+            * Tube: self_check_started -> self_check_complete /
+                    self_check_failed.
+
+        Cloud events emitted here are also stored by the cloud
+        repo's report_event handler; the mobile app only
+        navigates on ``cartridge_validation_ended`` (published
+        once both flags latch), so the app contract stays intact
+        regardless of which order the two items are loaded.
         '''
-        self._publish_event('cartridge_validation_ended')
-        LOG.info('Cartridge validation complete')
-
+        self._close_count += 1
         LOG.info(
-            'Waiting for 2nd drawer open '
-            '(blood sample)',
+            'SELF_CHECK cycle %d (cartridge_ok=%s, tube_ok=%s)',
+            self._close_count,
+            self._cartridge_ok,
+            self._tube_ok,
+        )
+
+        # Apply bench-mode skips up-front so we never take the
+        # UART for a check we're about to no-op.
+        if self._skip_qr and not self._cartridge_ok:
+            LOG.info(
+                'skip_qr=True -- force-latching cartridge_ok',
+            )
+            self._cartridge_ok = True
+        if self._skip_tube_check and not self._tube_ok:
+            LOG.info(
+                'skip_tube_check=True -- force-latching tube_ok',
+            )
+            self._tube_ok = True
+
+        need_qr = not self._cartridge_ok
+        need_tube = not self._tube_ok
+
+        if need_qr or need_tube:
+            await self._run_validation_checks(
+                run_qr=need_qr,
+                run_tube=need_tube,
+            )
+
+        if self._cartridge_ok and self._tube_ok:
+            self._publish_event(
+                'cartridge_validation_ended',
+                cartridge_id=self._last_qr_payload,
+                extra={'close_count': self._close_count},
+            )
+            LOG.info(
+                'All checks passed on cycle %d '
+                '-- starting protocol',
+                self._close_count,
+            )
+            self._set_state(SystemState.RUNNING_PROTOCOL)
+            return
+
+        # One or both flags still False -- loop back and wait for
+        # another drawer open/close cycle so the operator can add
+        # the missing item. Monitor must be running so we see
+        # drawer edges.
+        LOG.info(
+            'Cycle %d incomplete '
+            '(cartridge_ok=%s, tube_ok=%s) '
+            '-- waiting for drawer reopen',
+            self._close_count,
+            self._cartridge_ok,
+            self._tube_ok,
         )
         self._ensure_monitor_running()
         self.drawer_opened_event.clear()
@@ -763,7 +859,198 @@ class UltraStateMachine:
         await self.drawer_opened_event.wait()
         self._publish_event('drawer_open')
         self._set_state(
-            SystemState.AWAITING_PROTOCOL_START,
+            SystemState.DRAWER_OPEN_LOAD_CARTRIDGE,
+        )
+
+    async def _run_validation_checks(
+            self,
+            *,
+            run_qr: bool,
+            run_tube: bool,
+    ) -> None:
+        '''Acquire the UART, run the requested checks, release.
+
+        Both QR and tube checks need exclusive STM32 access for
+        motion + LED commands, so we stop ``STM32StatusMonitor``
+        for the duration of the checks (same pattern as
+        ``_state_running_protocol`` and the protocol runner in
+        ``app._watch_protocol_trigger``) and restart it on the
+        way out. A per-call STM32Interface keeps the monitor's
+        UART handle unaffected.
+        '''
+        from ultra.hw.stm32_interface import STM32Interface
+        from ultra.hw.stm32_monitor import STM32StatusMonitor
+        from ultra.hw.camera_singleton import get_camera
+
+        stm32_cfg = self._config.get('stm32', {}) or {}
+        port = stm32_cfg.get('port', '/dev/ttyAMA3')
+        baud = stm32_cfg.get('baud', 921600)
+
+        STM32StatusMonitor.stop_active()
+        # Small grace period for the kernel tty layer to release
+        # /dev/ttyAMA3 before we open it again. Mirrors the delay
+        # in ``_state_running_protocol`` and /stm32/connect.
+        await asyncio.sleep(0.5)
+
+        stm32: STM32Interface | None = None
+        try:
+            stm32 = STM32Interface(port=port, baud=baud)
+            if not stm32.connect():
+                LOG.error(
+                    'validation: STM32 connect failed -- '
+                    'skipping checks this cycle',
+                )
+                return
+            if hasattr(
+                    stm32, 'apply_motion_defaults_from_config',
+            ):
+                stm32.apply_motion_defaults_from_config(
+                    self._config,
+                )
+
+            cam = get_camera(self._config)
+
+            def _get_frame(settle_ms: int):
+                import time as _time
+                baseline = cam.latest_frame_ts()
+                settle_s = max(0.0, settle_ms / 1000.0)
+                if settle_s > 0:
+                    _time.sleep(settle_s)
+                frame, _ts = cam.latest_frame_bgr(
+                    newer_than=baseline, wait_s=5.0,
+                )
+                return frame
+
+            if run_qr:
+                await self._run_qr_check(
+                    stm32=stm32, get_frame=_get_frame,
+                )
+
+            if run_tube:
+                await self._run_tube_check(
+                    stm32=stm32, get_frame=_get_frame,
+                )
+        finally:
+            if stm32 is not None:
+                try:
+                    stm32.disconnect()
+                except Exception as exc:
+                    LOG.warning(
+                        'validation: stm32.disconnect failed: %s',
+                        exc,
+                    )
+            # Hand /dev/ttyAMA3 back to the monitor so drawer
+            # edges resume firing. The small sleep mirrors the
+            # cleanup in ``_state_running_protocol``.
+            await asyncio.sleep(0.5)
+            if self._monitor is not None:
+                try:
+                    self._monitor.start()
+                except Exception as exc:
+                    LOG.warning(
+                        'validation: monitor.start failed: %s',
+                        exc,
+                    )
+
+    async def _run_qr_check(
+            self, *, stm32, get_frame,
+    ) -> None:
+        '''Single QR attempt; latches ``_cartridge_ok`` on pass.'''
+        from ultra.vision import check_runner
+
+        self._publish_event(
+            'cartridge_validation_started',
+            extra={'close_count': self._close_count},
+        )
+        try:
+            result = await asyncio.to_thread(
+                check_runner.run_cartridge_qr_check,
+                stm32=stm32,
+                config=self._config,
+                get_frame=get_frame,
+                cache_frame=None,
+            )
+        except Exception as exc:
+            LOG.exception('QR check raised: %s', exc)
+            self._publish_event(
+                'cartridge_validation_failed',
+                extra={
+                    'reason': f'exception: {exc}',
+                    'close_count': self._close_count,
+                },
+            )
+            return
+
+        if result.ok:
+            self._cartridge_ok = True
+            self._last_qr_payload = result.payload
+            LOG.info(
+                'QR check passed (payload=%r)',
+                result.payload,
+            )
+            # cartridge_validation_ended is deferred until both
+            # flags latch (mobile-app navigation gate).
+            return
+
+        LOG.info('QR check failed: %s', result.reason)
+        self._publish_event(
+            'cartridge_validation_failed',
+            extra={
+                'reason': result.reason or 'unknown',
+                'close_count': self._close_count,
+                **(result.extras or {}),
+            },
+        )
+
+    async def _run_tube_check(
+            self, *, stm32, get_frame,
+    ) -> None:
+        '''Single tube attempt; latches ``_tube_ok`` on pass.'''
+        from ultra.vision import check_runner
+
+        self._publish_event(
+            'self_check_started',
+            extra={'close_count': self._close_count},
+        )
+        try:
+            result = await asyncio.to_thread(
+                check_runner.run_serum_tube_check,
+                stm32=stm32,
+                config=self._config,
+                get_frame=get_frame,
+                cache_frame=None,
+            )
+        except Exception as exc:
+            LOG.exception('Tube check raised: %s', exc)
+            self._publish_event(
+                'self_check_failed',
+                extra={
+                    'reason': f'exception: {exc}',
+                    'close_count': self._close_count,
+                },
+            )
+            return
+
+        if result.ok:
+            self._tube_ok = True
+            LOG.info('Tube check passed')
+            self._publish_event(
+                'self_check_complete',
+                extra={
+                    'close_count': self._close_count,
+                    **(result.extras or {}),
+                },
+            )
+            return
+
+        LOG.info('Tube check failed: %s', result.reason)
+        self._publish_event(
+            'self_check_failed',
+            extra={
+                'reason': result.reason or 'unknown',
+                'close_count': self._close_count,
+                **(result.extras or {}),
+            },
         )
 
     async def _state_awaiting_start(self) -> None:
