@@ -286,10 +286,10 @@ checks:
     # Lock this down during verify; see
     # docs/cartridge_tube_validation.md section 6.
     roi:
-      x: 0
-      y: 0
-      w: 0
-      h: 0
+      x: 639
+      y: 402
+      w: 525
+      h: 165
     # Stage 1 (intensity statistics). Calibrate with the
     # 5-empty + 5-with-tube reference captures.
     dark_threshold: 60           # pixel value cutoff for "dark"
