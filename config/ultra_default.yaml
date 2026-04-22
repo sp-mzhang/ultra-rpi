@@ -193,13 +193,30 @@ carousel_align:
     z_speed_mms: 10.0
   led_settle_ms: 250             # wait after LED on before capture
   min_markers: 1               # refuse alignment below this count
-  # libdmtx scans every candidate edge exhaustively, so smaller
-  # markers (which have more false edge candidates around them)
-  # need a bigger time budget. 500 ms was too tight for the
-  # S/I/O/X side; 1500 ms matches the probe_markers_stream.sh
-  # value that reliably finds them on-device.
-  decode_timeout_ms: 1500
+  # Per libdmtx call. With tile_decode on, each tile gets its own
+  # fresh budget and a much smaller search space, so 500 ms/tile
+  # is plenty. When tile_decode is off, bump this to ~1500 ms to
+  # match probe_markers_stream.sh. Total wall time is roughly
+  #   decode_timeout_ms * tile_rows * tile_cols * (CLAHE ? 2 : 1)
+  # when libdmtx has to time out on a tile. In practice tiles with
+  # a marker finish almost instantly; only empty tiles cost the
+  # full budget.
+  decode_timeout_ms: 500
   use_clahe_fallback: true
+  # Tile decoding: slice the frame into rows x cols with overlap
+  # and run libdmtx on each tile independently. Rescues markers
+  # the single-pass scanner misses once it locks onto the first
+  # candidate (common with multiple markers per frame).
+  tile_decode: true
+  tile_rows: 2
+  tile_cols: 2
+  tile_overlap_px: 60            # >= largest expected marker /2
+  # CLAHE preprocessing for the enhanced pass. Finer tile grid +
+  # lower clip limit gives per-marker local contrast without
+  # amplifying the printed crosshair pattern into false L-finder
+  # candidates.
+  clahe_clip_limit: 2.0
+  clahe_tile_grid: 16
   sides:
     # ``station_offset_from_open_deg`` is the side-specific offset
     # from ``calibration.angle_open_initial_deg`` (see top of this

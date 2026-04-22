@@ -61,14 +61,77 @@ def _avg_angle(angles_deg: Iterable[float]) -> float | None:
     return math.degrees(math.atan2(ys, xs))
 
 
-def _enhance_for_decode(frame_bgr: np.ndarray) -> np.ndarray:
-    """CLAHE on the L channel; mirrors the probe script fallback."""
+def _enhance_for_decode(
+    frame_bgr: np.ndarray,
+    clip_limit: float = 2.0,
+    tile_grid: int = 16,
+) -> np.ndarray:
+    """CLAHE on the L channel; mirrors the probe script fallback.
+
+    Defaults are tuned for the carousel's small DataMatrix stamps
+    sitting next to a field of printed "+" crosses: a finer tile
+    grid (16x16) gives per-marker local adaptation, and a lower
+    clip limit (2.0) avoids amplifying the crosses into L-finder
+    candidates that confuse libdmtx.
+    """
     lab = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(
+        clipLimit=clip_limit,
+        tileGridSize=(int(tile_grid), int(tile_grid)),
+    )
     l_eq = clahe.apply(l)
     return cv2.cvtColor(
         cv2.merge((l_eq, a, b)), cv2.COLOR_LAB2BGR,
+    )
+
+
+def _tile_slices(
+    h: int, w: int, rows: int, cols: int, overlap_px: int,
+) -> list[tuple[int, int, int, int]]:
+    """Yield (y0, y1, x0, x1) tile rects covering ``h x w``.
+
+    Tiles overlap by ``overlap_px`` on each inner edge so a marker
+    straddling a tile boundary still lands fully inside at least
+    one tile. Tiles on the image border extend to the border.
+    """
+    rows = max(1, int(rows))
+    cols = max(1, int(cols))
+    overlap_px = max(0, int(overlap_px))
+    if rows == 1 and cols == 1:
+        return [(0, h, 0, w)]
+    tile_h = h // rows
+    tile_w = w // cols
+    slices: list[tuple[int, int, int, int]] = []
+    for r in range(rows):
+        for c in range(cols):
+            y0 = max(0, r * tile_h - overlap_px)
+            y1 = h if r == rows - 1 else min(
+                h, (r + 1) * tile_h + overlap_px,
+            )
+            x0 = max(0, c * tile_w - overlap_px)
+            x1 = w if c == cols - 1 else min(
+                w, (c + 1) * tile_w + overlap_px,
+            )
+            slices.append((y0, y1, x0, x1))
+    return slices
+
+
+def _offset_detection(
+    det: DmtxDetection, dx: float, dy: float,
+) -> DmtxDetection:
+    """Return a copy of ``det`` with all corners shifted by
+    ``(dx, dy)``. Used to remap tile-local detections back into
+    full-frame coordinates."""
+    def _sh(p: tuple[float, float]) -> tuple[float, float]:
+        return (p[0] + dx, p[1] + dy)
+
+    return DmtxDetection(
+        data=det.data,
+        bl=_sh(det.bl),
+        br=_sh(det.br),
+        tr=_sh(det.tr),
+        tl=_sh(det.tl),
     )
 
 
@@ -225,6 +288,12 @@ class CarouselAligner:
         decode_timeout_ms: int = 500,
         use_clahe_fallback: bool = True,
         angle_open_initial_deg: float = 290.0,
+        tile_decode: bool = True,
+        tile_rows: int = 2,
+        tile_cols: int = 2,
+        tile_overlap_px: int = 60,
+        clahe_clip_limit: float = 2.0,
+        clahe_tile_grid: int = 16,
     ) -> None:
         self.sides = sides
         self.polarity = 1 if polarity >= 0 else -1
@@ -232,6 +301,16 @@ class CarouselAligner:
         self.decode_timeout_ms = int(decode_timeout_ms)
         self.use_clahe_fallback = bool(use_clahe_fallback)
         self.angle_open_initial_deg = float(angle_open_initial_deg)
+        # Tiling: split the frame into rows x cols tiles with a
+        # small overlap and decode each independently so libdmtx's
+        # region scanner doesn't get stuck near the first marker.
+        self.tile_decode = bool(tile_decode)
+        self.tile_rows = max(1, int(tile_rows))
+        self.tile_cols = max(1, int(tile_cols))
+        self.tile_overlap_px = max(0, int(tile_overlap_px))
+        # CLAHE params for the enhanced preprocessing pass.
+        self.clahe_clip_limit = float(clahe_clip_limit)
+        self.clahe_tile_grid = max(1, int(clahe_tile_grid))
 
         # Cache the one-and-only reference + station. Missing
         # blister config is a hard build error -- the aligner has
@@ -301,6 +380,24 @@ class CarouselAligner:
                 (cfg or {}).get('use_clahe_fallback', True),
             ),
             angle_open_initial_deg=float(angle_open_initial_deg),
+            tile_decode=bool(
+                (cfg or {}).get('tile_decode', True),
+            ),
+            tile_rows=int(
+                (cfg or {}).get('tile_rows', 2),
+            ),
+            tile_cols=int(
+                (cfg or {}).get('tile_cols', 2),
+            ),
+            tile_overlap_px=int(
+                (cfg or {}).get('tile_overlap_px', 60),
+            ),
+            clahe_clip_limit=float(
+                (cfg or {}).get('clahe_clip_limit', 2.0),
+            ),
+            clahe_tile_grid=int(
+                (cfg or {}).get('clahe_tile_grid', 16),
+            ),
         )
 
     # --- detection ------------------------------------------------
@@ -310,27 +407,63 @@ class CarouselAligner:
     ) -> list[MarkerReading]:
         """Decode all DataMatrix markers in ``frame_bgr``.
 
-        Runs the raw RGB frame; if ``use_clahe_fallback``, also
-        runs a CLAHE-boosted variant and merges by location. Returns
-        one entry per unique marker (by center) with angle,
-        center, and size in pixels.
+        When ``tile_decode`` is on, splits the frame into
+        ``tile_rows x tile_cols`` tiles with ``tile_overlap_px``
+        overlap and runs libdmtx on each tile independently. Each
+        tile's region scanner seeds from a fresh raster, which
+        rescues markers the one-shot full-frame scanner misses
+        after locking onto the first candidate.
+
+        For every tile we run up to two preprocessing variants
+        (raw + optional CLAHE), then merge detections across all
+        tiles via ``_best_of`` (dedupe by center, keep longest
+        payload).
         """
+        h, w = frame_bgr.shape[:2]
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        batches = [
-            decode_with_corners(
-                rgb, timeout_ms=self.decode_timeout_ms, max_count=8,
-            ),
-        ]
         if self.use_clahe_fallback:
-            enhanced = _enhance_for_decode(frame_bgr)
-            rgb_eq = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
-            batches.append(
-                decode_with_corners(
-                    rgb_eq,
+            enhanced_bgr = _enhance_for_decode(
+                frame_bgr,
+                clip_limit=self.clahe_clip_limit,
+                tile_grid=self.clahe_tile_grid,
+            )
+            rgb_eq = cv2.cvtColor(
+                enhanced_bgr, cv2.COLOR_BGR2RGB,
+            )
+        else:
+            rgb_eq = None
+
+        if self.tile_decode:
+            tiles = _tile_slices(
+                h, w,
+                rows=self.tile_rows,
+                cols=self.tile_cols,
+                overlap_px=self.tile_overlap_px,
+            )
+        else:
+            tiles = [(0, h, 0, w)]
+
+        batches: list[list[DmtxDetection]] = []
+        for (y0, y1, x0, x1) in tiles:
+            raw_tile = rgb[y0:y1, x0:x1]
+            raw_hits = decode_with_corners(
+                raw_tile,
+                timeout_ms=self.decode_timeout_ms,
+                max_count=8,
+            )
+            batches.append([
+                _offset_detection(d, x0, y0) for d in raw_hits
+            ])
+            if rgb_eq is not None:
+                eq_tile = rgb_eq[y0:y1, x0:x1]
+                eq_hits = decode_with_corners(
+                    eq_tile,
                     timeout_ms=self.decode_timeout_ms,
                     max_count=8,
-                ),
-            )
+                )
+                batches.append([
+                    _offset_detection(d, x0, y0) for d in eq_hits
+                ])
         merged = _best_of(batches)
         out: list[MarkerReading] = []
         for det in merged:
