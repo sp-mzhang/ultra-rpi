@@ -137,29 +137,10 @@ LOG = logging.getLogger('probe_stream')
 DEFAULT_DECODE_EVERY = 3
 
 # pylibdmtx scan window (ms). Lower = faster, less robust.
-# Defaults; both can be overridden from the CLI. When tile_decode
-# is on (the default here and in carousel_align), each tile gets
-# its own fresh budget, so 500 ms/tile is usually enough; the
-# historical 1200 ms applies when running without tiling.
-DEFAULT_DECODE_TIMEOUT_MS = 500
+# Defaults; both can be overridden from the CLI.
+DEFAULT_DECODE_TIMEOUT_MS = 1200
 DEFAULT_MIN_MARKER_PX = 18
 DEFAULT_MIN_PAYLOAD_LEN = 2
-
-# Tiling defaults mirror config/ultra_default.yaml so running this
-# script matches aligner behaviour unless the operator overrides.
-DEFAULT_TILE_DECODE = True
-DEFAULT_TILE_ROWS = 3
-DEFAULT_TILE_COLS = 3
-DEFAULT_TILE_OVERLAP_PX = 60
-DEFAULT_CLAHE_CLIP_LIMIT = 2.0
-DEFAULT_CLAHE_TILE_GRID = 16
-DEFAULT_USE_ADAPTIVE_THRESHOLD = True
-DEFAULT_ADAPTIVE_BLOCK_SIZE = 31
-DEFAULT_ADAPTIVE_C = 5
-DEFAULT_ADAPTIVE_BLUR_KSIZE = 3
-DEFAULT_SYMBOL_SIZE = 'auto'
-DEFAULT_EDGE_MIN_PX = 20
-DEFAULT_EDGE_MAX_PX = 200
 
 
 def _grab_devices() -> list[str]:
@@ -375,105 +356,18 @@ def _detection_to_marker(det: DmtxDetection) -> dict:
     }
 
 
-def _adaptive_threshold_for_decode(
-    frame_bgr: np.ndarray,
-    block_size: int = DEFAULT_ADAPTIVE_BLOCK_SIZE,
-    c: int = DEFAULT_ADAPTIVE_C,
-    blur_ksize: int = DEFAULT_ADAPTIVE_BLUR_KSIZE,
-) -> np.ndarray:
-    """Binarise the frame so libdmtx's L-finder sees crisp edges.
-    Mirrors ``ultra.vision.carousel_align._adaptive_threshold_for_decode``.
-    """
-    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-    if blur_ksize and blur_ksize >= 3:
-        gray = cv2.GaussianBlur(
-            gray, (int(blur_ksize), int(blur_ksize)), 0,
-        )
-    block = int(block_size)
-    if block < 3:
-        block = 3
-    if block % 2 == 0:
-        block += 1
-    return cv2.adaptiveThreshold(
-        gray,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        block,
-        int(c),
-    )
-
-
-def _enhance_for_decode(
-    frame_bgr: np.ndarray,
-    clip_limit: float = DEFAULT_CLAHE_CLIP_LIMIT,
-    tile_grid: int = DEFAULT_CLAHE_TILE_GRID,
-) -> np.ndarray:
+def _enhance_for_decode(frame_bgr: np.ndarray) -> np.ndarray:
     """CLAHE on the L channel of LAB. Boosts local contrast on
     small features (DataMatrix cells) without over-amplifying
     noise the way global histogram-eq does. Returns a 3-channel
     BGR image so it can be fed back into pylibdmtx the same way
-    the raw frame would be.
-
-    Defaults (clip=2.0, tile=16) are tuned for the carousel's
-    small stamps sitting in a field of printed '+' crosses; see
-    the matching ``ultra.vision.carousel_align._enhance_for_decode``.
-    """
+    the raw frame would be."""
     lab = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(
-        clipLimit=float(clip_limit),
-        tileGridSize=(int(tile_grid), int(tile_grid)),
-    )
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     l_eq = clahe.apply(l)
     return cv2.cvtColor(
         cv2.merge((l_eq, a, b)), cv2.COLOR_LAB2BGR,
-    )
-
-
-def _tile_slices(
-    h: int, w: int, rows: int, cols: int, overlap_px: int,
-) -> list[tuple[int, int, int, int]]:
-    """Return ``(y0, y1, x0, x1)`` tile rects covering ``h x w``
-    with ``overlap_px`` shared with each inner neighbour. Mirrors
-    ``ultra.vision.carousel_align._tile_slices``."""
-    rows = max(1, int(rows))
-    cols = max(1, int(cols))
-    overlap_px = max(0, int(overlap_px))
-    if rows == 1 and cols == 1:
-        return [(0, h, 0, w)]
-    tile_h = h // rows
-    tile_w = w // cols
-    slices: list[tuple[int, int, int, int]] = []
-    for r in range(rows):
-        for c in range(cols):
-            y0 = max(0, r * tile_h - overlap_px)
-            y1 = h if r == rows - 1 else min(
-                h, (r + 1) * tile_h + overlap_px,
-            )
-            x0 = max(0, c * tile_w - overlap_px)
-            x1 = w if c == cols - 1 else min(
-                w, (c + 1) * tile_w + overlap_px,
-            )
-            slices.append((y0, y1, x0, x1))
-    return slices
-
-
-def _offset_detection(
-    det: DmtxDetection, dx: float, dy: float,
-) -> DmtxDetection:
-    """Shift every corner of ``det`` by ``(dx, dy)`` and return a
-    new detection, used to remap tile-local hits back to
-    full-frame image coordinates."""
-    def _sh(p: tuple[float, float]) -> tuple[float, float]:
-        return (p[0] + dx, p[1] + dy)
-
-    return DmtxDetection(
-        data=det.data,
-        bl=_sh(det.bl),
-        br=_sh(det.br),
-        tr=_sh(det.tr),
-        tl=_sh(det.tl),
     )
 
 
@@ -507,19 +401,6 @@ def _decode_markers(
     min_marker_px: int = DEFAULT_MIN_MARKER_PX,
     min_payload_len: int = DEFAULT_MIN_PAYLOAD_LEN,
     enhance: bool = False,
-    tile_decode: bool = DEFAULT_TILE_DECODE,
-    tile_rows: int = DEFAULT_TILE_ROWS,
-    tile_cols: int = DEFAULT_TILE_COLS,
-    tile_overlap_px: int = DEFAULT_TILE_OVERLAP_PX,
-    clahe_clip_limit: float = DEFAULT_CLAHE_CLIP_LIMIT,
-    clahe_tile_grid: int = DEFAULT_CLAHE_TILE_GRID,
-    use_adaptive_threshold: bool = DEFAULT_USE_ADAPTIVE_THRESHOLD,
-    adaptive_block_size: int = DEFAULT_ADAPTIVE_BLOCK_SIZE,
-    adaptive_c: int = DEFAULT_ADAPTIVE_C,
-    adaptive_blur_ksize: int = DEFAULT_ADAPTIVE_BLUR_KSIZE,
-    symbol_size: str | None = DEFAULT_SYMBOL_SIZE,
-    edge_min_px: int | None = DEFAULT_EDGE_MIN_PX,
-    edge_max_px: int | None = DEFAULT_EDGE_MAX_PX,
 ) -> tuple[list[dict], list[dict]]:
     """Run libdmtx and return ``(kept, rejected)`` marker dicts.
 
@@ -539,69 +420,20 @@ def _decode_markers(
     the frame and merges results, keeping the longest payload per
     spatial location -- gives noticeably better full-payload
     recovery on soft/blurry input."""
-    h, w = frame_bgr.shape[:2]
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    rgb_eq = None
+    decodes: list[list[DmtxDetection]] = [
+        decode_with_corners(
+            rgb, timeout_ms=timeout_ms, max_count=8,
+        ),
+    ]
     if enhance:
-        enhanced = _enhance_for_decode(
-            frame_bgr,
-            clip_limit=clahe_clip_limit,
-            tile_grid=clahe_tile_grid,
-        )
+        enhanced = _enhance_for_decode(frame_bgr)
         rgb_eq = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
-    bin_img = None
-    if use_adaptive_threshold:
-        bin_img = _adaptive_threshold_for_decode(
-            frame_bgr,
-            block_size=adaptive_block_size,
-            c=adaptive_c,
-            blur_ksize=adaptive_blur_ksize,
+        decodes.append(
+            decode_with_corners(
+                rgb_eq, timeout_ms=timeout_ms, max_count=8,
+            ),
         )
-
-    if tile_decode:
-        tiles = _tile_slices(
-            h, w,
-            rows=tile_rows,
-            cols=tile_cols,
-            overlap_px=tile_overlap_px,
-        )
-    else:
-        tiles = [(0, h, 0, w)]
-
-    hint_kwargs = {
-        'symbol_size': symbol_size,
-        'edge_min': edge_min_px,
-        'edge_max': edge_max_px,
-    }
-
-    decodes: list[list[DmtxDetection]] = []
-    for (y0, y1, x0, x1) in tiles:
-        raw_tile = rgb[y0:y1, x0:x1]
-        raw_hits = decode_with_corners(
-            raw_tile, timeout_ms=timeout_ms, max_count=8,
-            **hint_kwargs,
-        )
-        decodes.append([
-            _offset_detection(d, x0, y0) for d in raw_hits
-        ])
-        if rgb_eq is not None:
-            eq_tile = rgb_eq[y0:y1, x0:x1]
-            eq_hits = decode_with_corners(
-                eq_tile, timeout_ms=timeout_ms, max_count=8,
-                **hint_kwargs,
-            )
-            decodes.append([
-                _offset_detection(d, x0, y0) for d in eq_hits
-            ])
-        if bin_img is not None:
-            bin_tile = bin_img[y0:y1, x0:x1]
-            bin_hits = decode_with_corners(
-                bin_tile, timeout_ms=timeout_ms, max_count=8,
-                **hint_kwargs,
-            )
-            decodes.append([
-                _offset_detection(d, x0, y0) for d in bin_hits
-            ])
     merged = _best_of(decodes)
     kept: list[dict] = []
     rejected: list[dict] = []
@@ -803,21 +635,6 @@ class StreamWorker:
         min_payload_len: int = DEFAULT_MIN_PAYLOAD_LEN,
         debug_decode: bool = False,
         enhance: bool = False,
-        tile_decode: bool = DEFAULT_TILE_DECODE,
-        tile_rows: int = DEFAULT_TILE_ROWS,
-        tile_cols: int = DEFAULT_TILE_COLS,
-        tile_overlap_px: int = DEFAULT_TILE_OVERLAP_PX,
-        clahe_clip_limit: float = DEFAULT_CLAHE_CLIP_LIMIT,
-        clahe_tile_grid: int = DEFAULT_CLAHE_TILE_GRID,
-        use_adaptive_threshold: bool = (
-            DEFAULT_USE_ADAPTIVE_THRESHOLD
-        ),
-        adaptive_block_size: int = DEFAULT_ADAPTIVE_BLOCK_SIZE,
-        adaptive_c: int = DEFAULT_ADAPTIVE_C,
-        adaptive_blur_ksize: int = DEFAULT_ADAPTIVE_BLUR_KSIZE,
-        symbol_size: str | None = DEFAULT_SYMBOL_SIZE,
-        edge_min_px: int | None = DEFAULT_EDGE_MIN_PX,
-        edge_max_px: int | None = DEFAULT_EDGE_MAX_PX,
     ) -> None:
         self.device = device
         self.width = width
@@ -831,19 +648,6 @@ class StreamWorker:
         self.min_payload_len = min_payload_len
         self.debug_decode = debug_decode
         self.enhance = enhance
-        self.tile_decode = tile_decode
-        self.tile_rows = tile_rows
-        self.tile_cols = tile_cols
-        self.tile_overlap_px = tile_overlap_px
-        self.clahe_clip_limit = clahe_clip_limit
-        self.clahe_tile_grid = clahe_tile_grid
-        self.use_adaptive_threshold = use_adaptive_threshold
-        self.adaptive_block_size = adaptive_block_size
-        self.adaptive_c = adaptive_c
-        self.adaptive_blur_ksize = adaptive_blur_ksize
-        self.symbol_size = symbol_size
-        self.edge_min_px = edge_min_px
-        self.edge_max_px = edge_max_px
         if record_dir is not None:
             record_dir.mkdir(parents=True, exist_ok=True)
 
@@ -910,21 +714,6 @@ class StreamWorker:
                     min_marker_px=self.min_marker_px,
                     min_payload_len=self.min_payload_len,
                     enhance=self.enhance,
-                    tile_decode=self.tile_decode,
-                    tile_rows=self.tile_rows,
-                    tile_cols=self.tile_cols,
-                    tile_overlap_px=self.tile_overlap_px,
-                    clahe_clip_limit=self.clahe_clip_limit,
-                    clahe_tile_grid=self.clahe_tile_grid,
-                    use_adaptive_threshold=(
-                        self.use_adaptive_threshold
-                    ),
-                    adaptive_block_size=self.adaptive_block_size,
-                    adaptive_c=self.adaptive_c,
-                    adaptive_blur_ksize=self.adaptive_blur_ksize,
-                    symbol_size=self.symbol_size,
-                    edge_min_px=self.edge_min_px,
-                    edge_max_px=self.edge_max_px,
                 )
                 last_decode_ms = (
                     time.monotonic() - t0
@@ -1269,98 +1058,6 @@ def main() -> int:
              'multi-character payloads on soft/blurry frames.',
     )
     ap.add_argument(
-        '--tile-decode', dest='tile_decode',
-        action='store_true', default=DEFAULT_TILE_DECODE,
-        help='split the frame into tile_rows x tile_cols tiles '
-             f'(default {DEFAULT_TILE_ROWS}x{DEFAULT_TILE_COLS}) '
-             'and run libdmtx on each tile independently. '
-             'Rescues markers the single-pass scanner misses '
-             'after locking onto the first candidate. ENABLED '
-             'by default; use --no-tile-decode to disable.',
-    )
-    ap.add_argument(
-        '--no-tile-decode', dest='tile_decode',
-        action='store_false',
-        help='disable tile-decoding (run libdmtx once on the '
-             'full frame). Use for A/B comparison.',
-    )
-    ap.add_argument(
-        '--tile-rows', type=int, default=DEFAULT_TILE_ROWS,
-        help=f'tile rows (default {DEFAULT_TILE_ROWS})',
-    )
-    ap.add_argument(
-        '--tile-cols', type=int, default=DEFAULT_TILE_COLS,
-        help=f'tile cols (default {DEFAULT_TILE_COLS})',
-    )
-    ap.add_argument(
-        '--tile-overlap-px', type=int,
-        default=DEFAULT_TILE_OVERLAP_PX,
-        help=f'tile overlap in pixels on each inner edge '
-             f'(default {DEFAULT_TILE_OVERLAP_PX}; '
-             f'should be >= half the largest expected marker).',
-    )
-    ap.add_argument(
-        '--clahe-clip-limit', type=float,
-        default=DEFAULT_CLAHE_CLIP_LIMIT,
-        help=f'CLAHE clip limit for --enhance '
-             f'(default {DEFAULT_CLAHE_CLIP_LIMIT}).',
-    )
-    ap.add_argument(
-        '--clahe-tile-grid', type=int,
-        default=DEFAULT_CLAHE_TILE_GRID,
-        help=f'CLAHE tile grid size NxN for --enhance '
-             f'(default {DEFAULT_CLAHE_TILE_GRID}).',
-    )
-    ap.add_argument(
-        '--adaptive-threshold', dest='use_adaptive_threshold',
-        action='store_true',
-        default=DEFAULT_USE_ADAPTIVE_THRESHOLD,
-        help='add a third preprocessing pass: adaptive '
-             'binarisation. Turns printed crosshairs into smooth '
-             'blobs that libdmtx rejects fast, and makes real '
-             'DataMatrix cells crisp. ENABLED by default; use '
-             '--no-adaptive-threshold to disable.',
-    )
-    ap.add_argument(
-        '--no-adaptive-threshold', dest='use_adaptive_threshold',
-        action='store_false',
-        help='disable the adaptive-threshold preprocessing pass.',
-    )
-    ap.add_argument(
-        '--adaptive-block-size', type=int,
-        default=DEFAULT_ADAPTIVE_BLOCK_SIZE,
-        help=f'cv2.adaptiveThreshold neighbourhood size in px '
-             f'(odd, >= 3; default '
-             f'{DEFAULT_ADAPTIVE_BLOCK_SIZE}).',
-    )
-    ap.add_argument(
-        '--adaptive-c', type=int,
-        default=DEFAULT_ADAPTIVE_C,
-        help=f'cv2.adaptiveThreshold constant subtracted from the '
-             f'local mean (default {DEFAULT_ADAPTIVE_C}).',
-    )
-    ap.add_argument(
-        '--symbol-size', type=str,
-        default=DEFAULT_SYMBOL_SIZE,
-        help=f'libdmtx DmtxPropSymbolSize hint. '
-             f'"auto" (default), "square_auto", "rect_auto", or '
-             f'an explicit shape like "10x10", "12x12".',
-    )
-    ap.add_argument(
-        '--edge-min-px', type=int,
-        default=DEFAULT_EDGE_MIN_PX,
-        help=f'libdmtx DmtxPropEdgeMin in pixels (default '
-             f'{DEFAULT_EDGE_MIN_PX}). Rejects candidates '
-             f'shorter than this.',
-    )
-    ap.add_argument(
-        '--edge-max-px', type=int,
-        default=DEFAULT_EDGE_MAX_PX,
-        help=f'libdmtx DmtxPropEdgeMax in pixels (default '
-             f'{DEFAULT_EDGE_MAX_PX}). Rejects candidates '
-             f'longer than this.',
-    )
-    ap.add_argument(
         '--port', type=int, default=8765,
         help='HTTP port to serve MJPEG on (default 8765)',
     )
@@ -1440,18 +1137,6 @@ def main() -> int:
         min_payload_len=args.min_payload_len,
         debug_decode=args.debug_decode,
         enhance=args.enhance,
-        tile_decode=args.tile_decode,
-        tile_rows=args.tile_rows,
-        tile_cols=args.tile_cols,
-        tile_overlap_px=args.tile_overlap_px,
-        clahe_clip_limit=args.clahe_clip_limit,
-        clahe_tile_grid=args.clahe_tile_grid,
-        use_adaptive_threshold=args.use_adaptive_threshold,
-        adaptive_block_size=args.adaptive_block_size,
-        adaptive_c=args.adaptive_c,
-        symbol_size=args.symbol_size,
-        edge_min_px=args.edge_min_px,
-        edge_max_px=args.edge_max_px,
     )
     if not worker.start():
         return 2
