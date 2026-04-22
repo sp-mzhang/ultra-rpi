@@ -61,6 +61,53 @@ def _avg_angle(angles_deg: Iterable[float]) -> float | None:
     return math.degrees(math.atan2(ys, xs))
 
 
+def _adaptive_threshold_for_decode(
+    frame_bgr: np.ndarray,
+    block_size: int = 31,
+    c: int = 5,
+    blur_ksize: int = 3,
+) -> np.ndarray:
+    """Binarise the frame so libdmtx's L-finder sees clean edges.
+
+    Returns a single-channel ``uint8`` image. Pipeline:
+
+      1. BGR -> grayscale
+      2. small Gaussian blur (``blur_ksize x blur_ksize``) to
+         smooth speckle without rounding DataMatrix cell edges
+      3. ``cv2.adaptiveThreshold`` (Gaussian-weighted, binary
+         inverted) so printed "+" crosshairs and DataMatrix cells
+         become crisp dark-on-light shapes with straight edges.
+
+    Against the carousel's cross-hatched background this pass
+    rescues markers the CLAHE variant cannot, because the
+    crosses' smooth rounded edges get rejected by libdmtx's
+    L-finder much faster than when they sit on a greyscale
+    gradient.
+
+    ``block_size`` must be odd and >= 3; it's the neighbourhood
+    radius in pixels over which the local mean is computed. 31 px
+    works well for the ~60 px carousel markers.
+    """
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    if blur_ksize and blur_ksize >= 3:
+        gray = cv2.GaussianBlur(
+            gray, (int(blur_ksize), int(blur_ksize)), 0,
+        )
+    block = int(block_size)
+    if block < 3:
+        block = 3
+    if block % 2 == 0:
+        block += 1
+    return cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        block,
+        int(c),
+    )
+
+
 def _enhance_for_decode(
     frame_bgr: np.ndarray,
     clip_limit: float = 2.0,
@@ -289,11 +336,20 @@ class CarouselAligner:
         use_clahe_fallback: bool = True,
         angle_open_initial_deg: float = 290.0,
         tile_decode: bool = True,
-        tile_rows: int = 2,
-        tile_cols: int = 2,
+        tile_rows: int = 3,
+        tile_cols: int = 3,
         tile_overlap_px: int = 60,
         clahe_clip_limit: float = 2.0,
         clahe_tile_grid: int = 16,
+        use_adaptive_threshold: bool = True,
+        adaptive_block_size: int = 31,
+        adaptive_c: int = 5,
+        adaptive_blur_ksize: int = 3,
+        symbol_size: str | None = 'auto',
+        edge_min_px: int | None = 20,
+        edge_max_px: int | None = 200,
+        edge_thresh: int | None = None,
+        square_devn: int | None = None,
     ) -> None:
         self.sides = sides
         self.polarity = 1 if polarity >= 0 else -1
@@ -311,6 +367,23 @@ class CarouselAligner:
         # CLAHE params for the enhanced preprocessing pass.
         self.clahe_clip_limit = float(clahe_clip_limit)
         self.clahe_tile_grid = max(1, int(clahe_tile_grid))
+        # Adaptive-threshold preprocessing pass: turns printed
+        # crosshairs into smooth blobs that libdmtx's L-finder
+        # rejects quickly, freeing budget for real markers.
+        self.use_adaptive_threshold = bool(use_adaptive_threshold)
+        self.adaptive_block_size = int(adaptive_block_size)
+        self.adaptive_c = int(adaptive_c)
+        self.adaptive_blur_ksize = int(adaptive_blur_ksize)
+        # Region-scanner hints forwarded to every libdmtx call. See
+        # ``ultra.vision.dmtx_detect.decode_with_corners`` for the
+        # semantics. ``symbol_size='auto'`` (shape-auto) is the
+        # safe default. Edge bounds cut away trivial tiny/huge
+        # candidate edges the scanner would otherwise chase.
+        self.symbol_size = symbol_size
+        self.edge_min_px = edge_min_px
+        self.edge_max_px = edge_max_px
+        self.edge_thresh = edge_thresh
+        self.square_devn = square_devn
 
         # Cache the one-and-only reference + station. Missing
         # blister config is a hard build error -- the aligner has
@@ -384,10 +457,10 @@ class CarouselAligner:
                 (cfg or {}).get('tile_decode', True),
             ),
             tile_rows=int(
-                (cfg or {}).get('tile_rows', 2),
+                (cfg or {}).get('tile_rows', 3),
             ),
             tile_cols=int(
-                (cfg or {}).get('tile_cols', 2),
+                (cfg or {}).get('tile_cols', 3),
             ),
             tile_overlap_px=int(
                 (cfg or {}).get('tile_overlap_px', 60),
@@ -398,6 +471,23 @@ class CarouselAligner:
             clahe_tile_grid=int(
                 (cfg or {}).get('clahe_tile_grid', 16),
             ),
+            use_adaptive_threshold=bool(
+                (cfg or {}).get('use_adaptive_threshold', True),
+            ),
+            adaptive_block_size=int(
+                (cfg or {}).get('adaptive_block_size', 31),
+            ),
+            adaptive_c=int(
+                (cfg or {}).get('adaptive_c', 5),
+            ),
+            adaptive_blur_ksize=int(
+                (cfg or {}).get('adaptive_blur_ksize', 3),
+            ),
+            symbol_size=(cfg or {}).get('symbol_size', 'auto'),
+            edge_min_px=(cfg or {}).get('edge_min_px', 20),
+            edge_max_px=(cfg or {}).get('edge_max_px', 200),
+            edge_thresh=(cfg or {}).get('edge_thresh', None),
+            square_devn=(cfg or {}).get('square_devn', None),
         )
 
     # --- detection ------------------------------------------------
@@ -420,7 +510,12 @@ class CarouselAligner:
         payload).
         """
         h, w = frame_bgr.shape[:2]
+        # Build the full-frame preprocessing variants once; we
+        # slice them per-tile below so we don't repeat the
+        # CLAHE / threshold work per tile.
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        rgb_eq: np.ndarray | None = None
+        bin_img: np.ndarray | None = None
         if self.use_clahe_fallback:
             enhanced_bgr = _enhance_for_decode(
                 frame_bgr,
@@ -430,8 +525,13 @@ class CarouselAligner:
             rgb_eq = cv2.cvtColor(
                 enhanced_bgr, cv2.COLOR_BGR2RGB,
             )
-        else:
-            rgb_eq = None
+        if self.use_adaptive_threshold:
+            bin_img = _adaptive_threshold_for_decode(
+                frame_bgr,
+                block_size=self.adaptive_block_size,
+                c=self.adaptive_c,
+                blur_ksize=self.adaptive_blur_ksize,
+            )
 
         if self.tile_decode:
             tiles = _tile_slices(
@@ -443,6 +543,14 @@ class CarouselAligner:
         else:
             tiles = [(0, h, 0, w)]
 
+        hint_kwargs = {
+            'symbol_size': self.symbol_size,
+            'edge_min': self.edge_min_px,
+            'edge_max': self.edge_max_px,
+            'edge_thresh': self.edge_thresh,
+            'square_devn': self.square_devn,
+        }
+
         batches: list[list[DmtxDetection]] = []
         for (y0, y1, x0, x1) in tiles:
             raw_tile = rgb[y0:y1, x0:x1]
@@ -450,6 +558,7 @@ class CarouselAligner:
                 raw_tile,
                 timeout_ms=self.decode_timeout_ms,
                 max_count=8,
+                **hint_kwargs,
             )
             batches.append([
                 _offset_detection(d, x0, y0) for d in raw_hits
@@ -460,9 +569,25 @@ class CarouselAligner:
                     eq_tile,
                     timeout_ms=self.decode_timeout_ms,
                     max_count=8,
+                    **hint_kwargs,
                 )
                 batches.append([
                     _offset_detection(d, x0, y0) for d in eq_hits
+                ])
+            if bin_img is not None:
+                # Adaptive-threshold output is single-channel
+                # uint8; libdmtx's 8bpp pack handles that natively
+                # so we can pass the slice straight in without any
+                # colour conversion.
+                bin_tile = bin_img[y0:y1, x0:x1]
+                bin_hits = decode_with_corners(
+                    bin_tile,
+                    timeout_ms=self.decode_timeout_ms,
+                    max_count=8,
+                    **hint_kwargs,
+                )
+                batches.append([
+                    _offset_detection(d, x0, y0) for d in bin_hits
                 ])
         merged = _best_of(batches)
         out: list[MarkerReading] = []

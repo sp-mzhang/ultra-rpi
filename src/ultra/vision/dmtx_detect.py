@@ -48,12 +48,15 @@ import numpy as np
 from pylibdmtx.pylibdmtx_error import PyLibDMTXError
 from pylibdmtx.wrapper import (
     DmtxPackOrder,
+    DmtxProperty,
+    DmtxSymbolSize,
     DmtxUndefined,
     DmtxVector2,
     c_ubyte_p,
     dmtxDecodeCreate,
     dmtxDecodeDestroy,
     dmtxDecodeMatrixRegion,
+    dmtxDecodeSetProp,
     dmtxImageCreate,
     dmtxImageDestroy,
     dmtxMatrix3VMultiplyBy,
@@ -63,6 +66,40 @@ from pylibdmtx.wrapper import (
     dmtxTimeAdd,
     dmtxTimeNow,
 )
+
+# String aliases for ``DmtxPropSymbolSize`` so callers can pass a
+# friendly YAML value ('auto', 'square_auto', '10x10', ...) instead
+# of importing the enum.
+_SYMBOL_SIZE_ALIASES: dict[str, int] = {
+    'auto': int(DmtxSymbolSize.DmtxSymbolShapeAuto),
+    'shape_auto': int(DmtxSymbolSize.DmtxSymbolShapeAuto),
+    'square_auto': int(DmtxSymbolSize.DmtxSymbolSquareAuto),
+    'rect_auto': int(DmtxSymbolSize.DmtxSymbolRectAuto),
+}
+for _sym in DmtxSymbolSize:
+    if _sym.name.startswith('DmtxSymbol') and (
+        'Auto' not in _sym.name
+    ):
+        # e.g. 'DmtxSymbol10x10' -> '10x10'
+        _alias = _sym.name.replace('DmtxSymbol', '', 1).lower()
+        _SYMBOL_SIZE_ALIASES[_alias] = int(_sym)
+
+
+def _resolve_symbol_size(name: str | int | None) -> int:
+    """Convert a YAML-friendly symbol-size name into the libdmtx
+    enum integer. ``None`` maps to the auto-shape default."""
+    if name is None:
+        return int(DmtxSymbolSize.DmtxSymbolShapeAuto)
+    if isinstance(name, int):
+        return name
+    key = str(name).strip().lower().replace(' ', '')
+    if key in _SYMBOL_SIZE_ALIASES:
+        return _SYMBOL_SIZE_ALIASES[key]
+    raise ValueError(
+        f'Unknown DataMatrix symbol size {name!r}; '
+        f'expected one of: '
+        f'{sorted(_SYMBOL_SIZE_ALIASES)}',
+    )
 
 # Mirror pylibdmtx's pack-order map (copied verbatim so we don't
 # depend on a private symbol).
@@ -241,6 +278,11 @@ def decode_with_corners(
     shrink: int = 1,
     max_count: Optional[int] = None,
     corrections: Optional[int] = None,
+    symbol_size: Optional[str | int] = None,
+    edge_min: Optional[int] = None,
+    edge_max: Optional[int] = None,
+    edge_thresh: Optional[int] = None,
+    square_devn: Optional[int] = None,
 ) -> list[DmtxDetection]:
     """Decode every DataMatrix barcode in ``image`` and return the
     four rotated corners for each.
@@ -254,6 +296,24 @@ def decode_with_corners(
         max_count: stop after this many successful decodes.
         corrections: libdmtx error-correction level, or ``None``
                      for library default.
+        symbol_size: restrict libdmtx to a specific DataMatrix
+                     shape. ``None`` or ``'auto'`` = library
+                     default (shape-auto). Pass ``'square_auto'``
+                     to skip rectangular sizes, or an explicit
+                     size like ``'10x10'``, ``'12x12'``, ...
+        edge_min: minimum candidate-region edge length in pixels
+                  (post-shrink). Regions shorter than this are
+                  rejected immediately -- cheap way to cull tiny
+                  noise edges. ``None`` = library default.
+        edge_max: maximum candidate-region edge length in pixels
+                  (post-shrink). ``None`` = library default.
+        edge_thresh: minimum edge gradient contrast 1..100 that
+                     libdmtx's region finder will seat on. Higher
+                     = fewer false candidates but may miss
+                     low-contrast markers. ``None`` = default.
+        square_devn: allowed deviation (in percent) from a perfect
+                     square for quadrilateral candidates. ``None``
+                     = library default (10).
 
     Returns:
         list of :class:`DmtxDetection`, in the order libdmtx
@@ -275,6 +335,39 @@ def decode_with_corners(
         cast(pixels, c_ubyte_p), width, height, _PACK_ORDER[bpp],
     ) as img:
         with _decoder(img, shrink) as dec:
+            # Apply region-scanner hints before the first
+            # dmtxRegionFindNext call so the entire scan respects
+            # them. We rely on pylibdmtx exposing dmtxDecodeSetProp.
+            if symbol_size is not None:
+                dmtxDecodeSetProp(
+                    dec,
+                    int(DmtxProperty.DmtxPropSymbolSize),
+                    _resolve_symbol_size(symbol_size),
+                )
+            if edge_min is not None:
+                dmtxDecodeSetProp(
+                    dec,
+                    int(DmtxProperty.DmtxPropEdgeMin),
+                    int(edge_min),
+                )
+            if edge_max is not None:
+                dmtxDecodeSetProp(
+                    dec,
+                    int(DmtxProperty.DmtxPropEdgeMax),
+                    int(edge_max),
+                )
+            if edge_thresh is not None:
+                dmtxDecodeSetProp(
+                    dec,
+                    int(DmtxProperty.DmtxPropEdgeThresh),
+                    int(edge_thresh),
+                )
+            if square_devn is not None:
+                dmtxDecodeSetProp(
+                    dec,
+                    int(DmtxProperty.DmtxPropSquareDevn),
+                    int(square_devn),
+                )
             if corrections is None:
                 corrections = DmtxUndefined
             while True:

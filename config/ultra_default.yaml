@@ -208,8 +208,8 @@ carousel_align:
   # the single-pass scanner misses once it locks onto the first
   # candidate (common with multiple markers per frame).
   tile_decode: true
-  tile_rows: 2
-  tile_cols: 2
+  tile_rows: 3
+  tile_cols: 3
   tile_overlap_px: 60            # >= largest expected marker /2
   # CLAHE preprocessing for the enhanced pass. Finer tile grid +
   # lower clip limit gives per-marker local contrast without
@@ -217,6 +217,27 @@ carousel_align:
   # candidates.
   clahe_clip_limit: 2.0
   clahe_tile_grid: 16
+  # Adaptive-threshold preprocessing pass. Binarises the frame so
+  # the printed "+" crosshairs become smooth blobs (rejected fast
+  # by libdmtx's L-finder) and the real DataMatrix cells become
+  # crisp squares. Biggest single rescue for small markers on a
+  # cross-hatched background; costs ~10 ms/tile.
+  use_adaptive_threshold: true
+  adaptive_block_size: 31        # must be odd, >= 3
+  adaptive_c: 5
+  adaptive_blur_ksize: 3         # Gaussian pre-blur kernel
+  # libdmtx region-scanner hints. ``symbol_size: auto`` = the
+  # library default (try every shape). edge_min_px / edge_max_px
+  # cull trivially small/large candidate edges before the full
+  # region decode, which is where most scanner time is wasted on
+  # cross-hatched frames. Markers here are ~5--6 mm, ~50--72 px
+  # on-camera, so bounds of 20..200 px pass real markers while
+  # rejecting most false candidates.
+  symbol_size: auto
+  edge_min_px: 20
+  edge_max_px: 200
+  # edge_thresh / square_devn fall through to libdmtx defaults
+  # unless an override is added here.
   sides:
     # ``station_offset_from_open_deg`` is the side-specific offset
     # from ``calibration.angle_open_initial_deg`` (see top of this
