@@ -1126,6 +1126,10 @@
         <div class="eng-form-grid">
           <label>Present:</label>
           <span id="eng-tube-present">--</span>
+          <label>Method:</label>
+          <span id="eng-tube-method">--</span>
+          <label>Seated / Empty score:</label>
+          <span id="eng-tube-scores">--</span>
           <label>Mean intensity:</label>
           <span id="eng-tube-mean">--</span>
           <label>Dark ratio:</label>
@@ -1168,6 +1172,25 @@
             class="eng-dim" hidden
             style="margin-top:4px"></div>
         </div>
+        <div class="eng-dim"
+          style="margin-top:10px; border-top:1px solid #333;
+                 padding-top:8px">
+          Reference samples (template matching). Captures the
+          current ROI crop; takes precedence over saturation
+          when both classes have &ge;1 sample. Run <b>Check
+          Serum Tube</b> first so there's a raw frame to grab.
+        </div>
+        <div class="eng-btn-row" style="margin-top:6px">
+          <button id="eng-tube-ref-seated"
+            class="eng-cmd-btn">Capture as SEATED</button>
+          <button id="eng-tube-ref-empty"
+            class="eng-cmd-btn">Capture as EMPTY</button>
+          <span id="eng-tube-ref-status"
+            class="eng-dim">--</span>
+        </div>
+        <div id="eng-tube-ref-gallery"
+          style="display:flex; flex-wrap:wrap; gap:6px;
+                 margin-top:6px"></div>
       </div>
     </fieldset>
   </div>

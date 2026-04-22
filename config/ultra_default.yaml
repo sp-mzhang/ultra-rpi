@@ -301,3 +301,14 @@ checks:
     # 5 empty closes + 5 with-tube closes, pick a threshold in
     # the gap (typical values: empty ~5-20, seated ~60-120).
     mean_saturation_min: 40.0
+    # Template-matching backend. Takes precedence over the
+    # saturation path when both classes have >=1 reference saved
+    # under `dir`. References are captured via the engineering
+    # GUI (Serum Tube fieldset -> Capture as SEATED / EMPTY).
+    # See docs/cartridge_tube_validation.md section 9a.3.
+    templates:
+      enabled: true
+      dir: tube_refs           # relative to project root
+      min_score: 0.5           # winning NCC floor; below = ambiguous
+      margin: 0.05             # seated must beat empty by this gap
+      search_px: 5             # slot jitter absorbed, +/- pixels

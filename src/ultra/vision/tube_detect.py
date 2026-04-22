@@ -56,6 +56,16 @@ class TubeDetection:
     about. Everything else is surfaced so the GUI debug page can
     show operators which signal failed (and by how much) during
     calibration.
+
+    ``method`` reports which detector path was taken:
+
+    * ``'template'`` -- labelled reference crops were loaded and
+      used as the primary signal. The ``stageN_pass`` fields
+      still reflect the saturation / intensity gates run for
+      reporting parity, but they do not drive ``present``.
+    * ``'saturation'`` -- no (or insufficient) templates, the
+      classic Stage 1 intensity + Stage 2 saturation pipeline
+      produced the verdict.
     '''
     present: bool
     mean_intensity: float
@@ -63,6 +73,13 @@ class TubeDetection:
     mean_saturation: float
     stage1_pass: bool
     stage2_pass: bool
+    method: str = 'saturation'
+    # Only populated when method == 'template'. NCC in [-1, 1],
+    # -1 means no refs of that class were available.
+    seated_score: float = 0.0
+    empty_score: float = 0.0
+    seated_count: int = 0
+    empty_count: int = 0
     # Pass-through so the GUI can place the frame under the ROI
     # overlay without re-reading the config.
     roi: tuple[int, int, int, int] = (0, 0, 0, 0)
@@ -107,6 +124,10 @@ def detect_tube(
     mean_intensity_min: float = 90.0,
     dark_ratio_max: float = 0.35,
     mean_saturation_min: float = 40.0,
+    templates: dict | None = None,
+    template_min_score: float = 0.5,
+    template_margin: float = 0.0,
+    template_search_px: int = 5,
 ) -> TubeDetection:
     '''Run both detection stages on one frame.
 
@@ -125,6 +146,20 @@ def detect_tube(
             Stage-2 pass (0..255 scale). An empty slot of white
             plastic usually reads 5-20; a seated cap of any
             colour reads 60+ under the ring LED.
+        templates: Optional reference set from
+            :func:`ultra.vision.tube_template.load_references`.
+            When both classes contain at least one ref, the
+            template-matching path becomes the primary verdict
+            and saturation stages fall back to reporting-only.
+        template_min_score: Floor NCC score the winning class
+            must beat; below it the verdict is ABSENT with
+            ``reason='template_low_confidence'`` (anomaly / ROI
+            drifted off slot / camera covered).
+        template_margin: Required ``seated - empty`` gap for a
+            SEATED verdict. Useful when both classes score high
+            simultaneously (e.g. partially seated).
+        template_search_px: +/- pixel window searched around
+            each ref's nominal position, absorbs slot jitter.
 
     Returns:
         A :class:`TubeDetection` with every sub-signal + an
@@ -166,20 +201,55 @@ def detect_tube(
     mean_saturation = float(hsv[:, :, 1].mean())
     stage2_pass = mean_saturation >= float(mean_saturation_min)
 
-    present = stage1_pass and stage2_pass
-    reason: str | None = None
-    if not present:
-        if not stage1_pass:
-            reason = (
-                f'stage1_fail '
-                f'(mean={mean_intensity:.1f}, '
-                f'dark_ratio={dark_ratio:.3f})'
+    # Classifier selection: template matching takes over if
+    # refs for *both* classes are available. Otherwise fall back
+    # to saturation. Stage 1 / Stage 2 booleans are still
+    # reported in both paths so the GUI can show the diagnostic.
+    method = 'saturation'
+    seated_score = 0.0
+    empty_score = 0.0
+    seated_count = 0
+    empty_count = 0
+    template_reason: str | None = None
+    template_present: bool | None = None
+    if templates:
+        from ultra.vision import tube_template
+        seated_count = len(templates.get(tube_template.LABEL_SEATED, []))
+        empty_count = len(templates.get(tube_template.LABEL_EMPTY, []))
+        if seated_count > 0 and empty_count > 0:
+            match = tube_template.score_match(
+                crop, templates,
+                search_px=int(template_search_px),
             )
-        else:
-            reason = (
-                f'stage2_fail '
-                f'(mean_saturation={mean_saturation:.1f})'
+            seated_score = float(match.seated_score)
+            empty_score = float(match.empty_score)
+            template_present, template_reason = (
+                tube_template.classify(
+                    match,
+                    min_score=float(template_min_score),
+                    margin=float(template_margin),
+                )
             )
+            method = 'template'
+
+    if method == 'template':
+        present = bool(template_present)
+        reason = template_reason
+    else:
+        present = stage1_pass and stage2_pass
+        reason = None
+        if not present:
+            if not stage1_pass:
+                reason = (
+                    f'stage1_fail '
+                    f'(mean={mean_intensity:.1f}, '
+                    f'dark_ratio={dark_ratio:.3f})'
+                )
+            else:
+                reason = (
+                    f'stage2_fail '
+                    f'(mean_saturation={mean_saturation:.1f})'
+                )
 
     det = TubeDetection(
         present=present,
@@ -188,6 +258,11 @@ def detect_tube(
         mean_saturation=mean_saturation,
         stage1_pass=stage1_pass,
         stage2_pass=stage2_pass,
+        method=method,
+        seated_score=seated_score,
+        empty_score=empty_score,
+        seated_count=seated_count,
+        empty_count=empty_count,
         roi=(rx, ry, rw, rh),
         reason=reason,
     )
@@ -217,12 +292,24 @@ def annotate(
 
     hud = [
         f'tube: {"PRESENT" if det.present else "ABSENT"}',
+        f'method: {det.method}',
+    ]
+    if det.method == 'template':
+        hud.append(
+            f'seated: {det.seated_score:.3f} '
+            f'(n={det.seated_count})',
+        )
+        hud.append(
+            f'empty:  {det.empty_score:.3f} '
+            f'(n={det.empty_count})',
+        )
+    hud.extend([
         f'mean: {det.mean_intensity:.1f}',
         f'dark_ratio: {det.dark_ratio:.3f}',
         f'saturation: {det.mean_saturation:.1f}',
         f'stage1: {"ok" if det.stage1_pass else "FAIL"}',
         f'stage2: {"ok" if det.stage2_pass else "FAIL"}',
-    ]
+    ])
     if det.reason:
         hud.append(f'reason: {det.reason}')
 

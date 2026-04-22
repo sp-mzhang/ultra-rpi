@@ -93,9 +93,19 @@ Detector: **`cv2.QRCodeDetector` only** (already bundled in `opencv-python-headl
 
 ### `src/ultra/vision/tube_detect.py` (new)
 
-The serum tube sits in a slot on the carousel at the `SERUM` station. The cartridge is drawer-locked with the slot already in the toolhead camera's FOV -- **no carousel rotation is issued**. We drive the toolhead to the configured probe pose and look straight down with the ring LED on. **No machine learning and no training** -- this is a classical-CV presence check with two complementary signals, both computed inside a calibrated ROI (calibration values, not learned weights).
+The serum tube sits in a slot on the carousel at the `SERUM` station. The cartridge is drawer-locked with the slot already in the toolhead camera's FOV -- **no carousel rotation is issued**. We drive the toolhead to the configured probe pose and look straight down with the ring LED on. **No machine learning and no training** -- presence is decided by classical CV with two independent backends, both computed inside a calibrated ROI (calibration values, not learned weights).
 
-- Public API: `detect_tube(frame_bgr, *, roi, dark_threshold, mean_intensity_min, dark_ratio_max, mean_saturation_min) -> TubeDetection(present, mean_intensity, dark_ratio, mean_saturation, stage1_pass, stage2_pass, roi, reason, annotated)`.
+The detector has two verdict paths, picked automatically per call:
+
+1. **Template matching** (preferred when refs exist). Labelled reference ROI crops captured from this specific machine are NCC-scored against the current ROI. Winning class is the predicted label. Captures machine-specific lighting, handles any cap colour including white, trivially extensible.
+2. **Saturation fallback** (always available). If the reference set is empty for either class (first boot, or the operator hasn't calibrated yet), the detector uses HSV saturation inside the ROI as the primary gate. Colour-agnostic across coloured caps; only weakness is white/transparent caps.
+
+- Public API: `detect_tube(frame_bgr, *, roi, dark_threshold, mean_intensity_min, dark_ratio_max, mean_saturation_min, templates=None, template_min_score, template_margin, template_search_px) -> TubeDetection`. The returned dataclass carries every sub-signal: `present, method, seated_score, empty_score, seated_count, empty_count, mean_intensity, dark_ratio, mean_saturation, stage1_pass, stage2_pass, roi, reason, annotated`.
+- **Template backend (`src/ultra/vision/tube_template.py`, active when `templates` is populated)**:
+  - Saves per-machine reference ROI crops under `checks.tube.templates.dir` (PNG, `seated_<ts>.png` / `empty_<ts>.png`).
+  - For each check, every reference is NCC-scored (`cv2.matchTemplate`, `TM_CCOEFF_NORMED`) against the current ROI with a small reflection-padded search window (`template_search_px`, default +/-5 px) to absorb slot jitter.
+  - Class score = max NCC across all refs of that class. Verdict is SEATED iff `seated_score >= empty_score + margin` AND `max(seated, empty) >= min_score`. Failures surface as `template_low_confidence` (nothing matches well, likely ROI drift or camera covered) or `template_empty_match` (empty class scored higher) or `template_insufficient_refs` (at least one class has zero refs saved).
+  - Size-mismatched refs (e.g. captured before an ROI edit) are skipped at load time with a warning; no crashes, just a shrinking usable ref count until the operator recaptures.
 - **Stage 1 -- intensity statistics (ROI only)**:
   - Crop to the configured `roi` (pixel box inside the 1280x720 frame).
   - Convert to grayscale, apply CLAHE (clipLimit=2.0, tile=(8,8)).
@@ -195,6 +205,13 @@ checks:
     dark_ratio_max: 0.35     # dark-pixel fraction must stay below this
     # Stage 2 (HSV saturation, ROI only)
     mean_saturation_min: 40.0  # 0..255; empty=5-20, seated=60+
+    # Template-matching backend (preferred when refs present)
+    templates:
+      enabled: true
+      dir: tube_refs           # PNG refs, project-root-relative
+      min_score: 0.5           # winning NCC floor
+      margin: 0.05             # seated_score must beat empty by this
+      search_px: 5             # slot-jitter tolerance (+/- px)
 ```
 
 Pose values fixed by operator measurement:
@@ -207,7 +224,8 @@ Pose values fixed by operator measurement:
 Still to calibrate on-device:
 
 - `checks.tube.roi` (pixel box enclosing the slot in the 1280x720 frame). Use the drag-to-select overlay in the Engineering Camera pane, or paste measured coords directly.
-- `checks.tube.dark_threshold`, `mean_intensity_min`, `dark_ratio_max`, `mean_saturation_min` -- derived from the 5-empty + 5-with-tube reference captures.
+- **Template references** (the preferred detector): capture 3-5 SEATED and 3-5 EMPTY ROI crops via the Engineering panel's **Capture as SEATED / EMPTY** buttons. Nothing else is needed while refs are present on this machine.
+- `checks.tube.dark_threshold`, `mean_intensity_min`, `dark_ratio_max`, `mean_saturation_min` -- still required as a fallback when references are unavailable; derive from 5-empty + 5-with-tube reference captures.
 
 ## 7. GUI surface (minimal)
 
@@ -228,7 +246,8 @@ None. The checks run **before** the recipe starts, in the `UltraStateMachine` su
 - [x] **events** -- State machine emits cloud-canonical events only: `cartridge_validation_started`/`cartridge_validation_failed` per cycle + deferred `cartridge_validation_ended` once both flags latch; `self_check_started`/`self_check_complete`/`self_check_failed` per cycle. No new event strings introduced.
 - [x] **gui_debug** -- Added `GET /api/camera/last-qr-frame`, `GET /api/camera/last-tube-frame`, `POST /api/camera/check-cartridge-qr`, `POST /api/camera/check-serum-tube` in [src/ultra/gui/api_stm32.py](../src/ultra/gui/api_stm32.py). Two engineering-panel buttons ("Check Cartridge QR", "Check Serum Tube") wired up in [src/ultra/gui/static/index.html](../src/ultra/gui/static/index.html) + [src/ultra/gui/static/ultra-engineering.js](../src/ultra/gui/static/ultra-engineering.js).
 - [x] **gui_roi_picker** -- `GET/POST /api/camera/tube-roi` in [src/ultra/gui/api_stm32.py](../src/ultra/gui/api_stm32.py) + drag-to-select overlay in the Serum Tube fieldset of [src/ultra/gui/static/index.html](../src/ultra/gui/static/index.html) and [src/ultra/gui/static/ultra-engineering.js](../src/ultra/gui/static/ultra-engineering.js). Save updates `app.config` in memory; the response echoes the values + a hint for pasting into `config/ultra_default.yaml` for restart durability.
-- [ ] **verify** -- On-device: calibrate `checks.tube.roi` via the GUI picker + intensity / saturation thresholds (see procedure below), flip `startup.skip_tube_check` to `false`, dry-run happy + each recovery path, attach log excerpt.
+- [x] **template_matching (Tier 1)** -- Added [src/ultra/vision/tube_template.py](../src/ultra/vision/tube_template.py) (save/list/load refs, NCC with search window, classifier with `min_score` / `margin` gates). `detect_tube` now prefers the template path when both classes have refs; saturation is the fallback. API endpoints: `GET/POST /api/camera/tube-refs`, `DELETE /api/camera/tube-refs/{filename}`, `GET /api/camera/tube-refs/{filename}` (thumbnail). GUI: **Capture as SEATED / EMPTY** buttons + thumbnail gallery with per-ref delete, in the Serum Tube fieldset. Refs stored under `tube_refs/` (git-ignored). Tests in [tests/vision/test_tube_template.py](../tests/vision/test_tube_template.py).
+- [ ] **verify** -- On-device: calibrate `checks.tube.roi` via the GUI picker, capture template refs (9a.3) OR tune saturation thresholds (9a.2) as fallback, flip `startup.skip_tube_check` to `false`, dry-run happy + each recovery path, attach log excerpt.
 
 ## 9a. On-device calibration procedure (the `verify` step)
 
@@ -240,21 +259,37 @@ The vision detectors ship with conservative placeholder thresholds and a zero-se
 2. If the panel shows `ok: true`, the pose / LED settle are already good -- no change needed.
 3. If `reason: no_qr_detected` persists, open `config/ultra_default.yaml` and nudge `checks.qr.probe_pose.y_mm` (default 83) +/-3 mm until the cached frame at `GET /api/camera/last-qr-frame` shows the full QR with a clean quiet zone; retry.
 
-### 9a.2 Tube ROI + thresholds (~10 min)
+### 9a.2 Tube ROI (~2 min)
 
 1. Load a cartridge **with a seated serum tube** and press **Check Serum Tube**. The panel caches the most recent annotated frame; a saved ROI (if any) is drawn on it as a dashed green box.
 2. **Calibrate the ROI** using the drag-to-select overlay directly on the cached frame:
    - Drag a rectangle that tightly encloses only the serum slot (no label, no housing, no cartridge logo). The "draft" values appear under the image in native-frame pixels.
-   - Click **Save ROI**. The server updates `app.config['checks']['tube']['roi']` in memory and echoes the numbers back with a `persist_hint`. Paste those four numbers into `config/ultra_default.yaml` under `checks.tube.roi` for restart durability (the in-memory update alone is lost on service restart).
-3. Re-press **Check Serum Tube** five times with the tube seated, then remove the tube and press five more times. The panel shows `mean_intensity`, `dark_ratio`, and `mean_saturation` per run.
-4. Tune thresholds to separate the two populations with margin:
-   - `mean_saturation_min` ~= midpoint between the two saturation means, biased 20% toward the seated mean. This is the primary discriminator; expect empty ~5-20, seated ~60-120 (any cap colour).
-   - `mean_intensity_min` ~= midpoint between the two means, biased 20% toward the seated mean. This is the pathological-lighting gate, not the presence gate.
-   - `dark_ratio_max` ~= midpoint biased 20% toward the empty dark ratio.
-5. Re-run 5 empty + 5 seated. Every empty must show `ok: false` (`stage1_fail` or `stage2_fail` in `reason`); every seated must show `ok: true`. If any fail, adjust the closer threshold by 5% and repeat. Test with **both blue and red caps** if your fleet ships both -- saturation works for any cap colour, but the threshold should be chosen against the lower-saturation colour.
-6. Flip `startup.skip_tube_check` to `false` in `config/ultra_default.yaml` and restart the service.
+   - Click **Save ROI**. The server (a) updates `app.config['checks']['tube']['roi']` in memory, (b) writes the value into `/etc/ultra/machine.yaml` (the `ULTRA_CONFIG` overlay loaded on startup) so it survives a restart, and (c) best-effort pushes to S3 via the existing machine-settings flow when a `device_sn` is configured. The status line under the image reports exactly which of those three landed; no manual YAML edits required.
+3. The ROI is now locked. Proceed to 9a.3 to capture template references (preferred) or 9a.4 for the saturation fallback.
 
-### 9a.3 End-to-end happy path
+### 9a.3 Template reference capture (preferred, ~2 min)
+
+With the ROI already saved from 9a.2 and a known-good cartridge:
+
+1. Load the cartridge **with a seated tube**, press **Check Serum Tube**. Then press **Capture as SEATED** in the Serum Tube fieldset. A thumbnail appears in the gallery labelled SEATED with its capture time. Repeat 3-5 times, optionally varying cap colour / orientation to cover the fleet's tolerance.
+2. Remove the tube (leave the cartridge), press **Check Serum Tube**, then **Capture as EMPTY**. Repeat 3-5 times.
+3. Re-run **Check Serum Tube** with and without a tube. The result panel now shows `method: template` and two NCC scores. Seated runs should show `seated > empty` with both scores >= 0.6; empty runs the opposite. Anything closer than 0.05 between scores is noise -- capture more refs.
+4. Refs live in `tube_refs/` at the repo root (git-ignored). Back up that directory when imaging a unit; copy it onto a new unit to skip recalibration.
+5. If the ROI is later edited, old refs no longer match the new crop size. They're skipped at load time with a warning; recapture to restore template matching, or delete old entries from the gallery.
+
+Operator signal: **the gallery is the calibration state**. No YAML edit is needed for template matching to turn on.
+
+### 9a.4 Saturation threshold tune (fallback only, skip if template refs exist)
+
+If for some reason the template backend cannot be used (e.g. fleet variance too high, or a brand-new unit before first calibration), tune the saturation path:
+
+1. Re-press **Check Serum Tube** five times with the tube seated, then remove the tube and press five more times. The panel shows `mean_intensity`, `dark_ratio`, and `mean_saturation` per run.
+2. `mean_saturation_min` ~= midpoint between the two saturation means, biased 20% toward the seated mean (empty ~5-20, seated ~60-120).
+3. `mean_intensity_min` / `dark_ratio_max` tuned likewise -- these are pathological-lighting gates, not presence gates.
+4. Re-run 5 empty + 5 seated. Every empty must show `ok: false` and every seated must show `ok: true`.
+5. Flip `startup.skip_tube_check` to `false` in `config/ultra_default.yaml` and restart the service.
+
+### 9a.5 End-to-end happy path
 
 After calibration, with no cartridge in the machine:
 
@@ -262,7 +297,7 @@ After calibration, with no cartridge in the machine:
 2. Confirm in `journalctl -u ultra-rpi` that `SELF_CHECK cycle 1` logs followed by both `QR check passed` and `Tube check passed`, then `All checks passed on cycle 1 -- starting protocol`.
 3. Confirm in the cloud event ledger (or local mock) that `cartridge_validation_started`, `self_check_started`, `self_check_complete`, and `cartridge_validation_ended` all appear in that order. `cartridge_validation_failed` and `self_check_failed` must be absent.
 
-### 9a.4 Happy-path log excerpt (reference)
+### 9a.6 Happy-path log excerpt (reference)
 
 Attach the operator's trace from 9a.3 below once validated. Template:
 
@@ -274,7 +309,7 @@ YYYY-MM-DD HH:MM:SS INFO [ultra.services.state_machine] All checks passed on cyc
 YYYY-MM-DD HH:MM:SS INFO [ultra.services.state_machine] State -> running_protocol: Running protocol...
 ```
 
-### 9a.5 Recovery-path spot checks
+### 9a.7 Recovery-path spot checks
 
 - Cartridge-only load: confirm `cartridge_validation_failed` (no QR yet) or `self_check_failed` (no tube) is emitted, machine returns to `DRAWER_OPEN_LOAD_CARTRIDGE`, and the second close clears the remaining flag without re-running the already-passing check.
 - Tube-only load: symmetric case.

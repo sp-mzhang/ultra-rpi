@@ -63,6 +63,42 @@ def _grab_frame(
         return None
 
 
+def _resolve_refs_dir(raw: str) -> str:
+    '''Resolve a refs dir: absolute stays absolute, relative
+    anchors at the project root (so the config can stay short).'''
+    import os.path as op
+    if op.isabs(raw):
+        return raw
+    project_root = op.abspath(
+        op.join(op.dirname(__file__), '..', '..', '..'),
+    )
+    return op.join(project_root, raw)
+
+
+def _roi_size_from_cfg(
+    roi: dict | tuple | None,
+) -> tuple[int, int] | None:
+    '''Return ``(w, h)`` if roi is a non-zero rectangle, else None.
+
+    ``None`` disables the size check in load_references, meaning
+    every ref on disk is accepted regardless of size. Callers
+    that want strict size matching should pass a non-zero ROI.
+    '''
+    if roi is None:
+        return None
+    if isinstance(roi, dict):
+        w = int(roi.get('w', 0) or 0)
+        h = int(roi.get('h', 0) or 0)
+    else:
+        try:
+            _, _, w, h = (int(v) for v in roi)
+        except (TypeError, ValueError):
+            return None
+    if w <= 0 or h <= 0:
+        return None
+    return (w, h)
+
+
 def _move_to_pose(stm32, probe: dict) -> bool:
     r = stm32.send_command_wait_done(
         cmd={
@@ -249,6 +285,36 @@ def run_serum_tube_check(
         tube_cfg.get('mean_saturation_min', 40.0),
     )
 
+    # Template-matching backend: load refs from disk and pass to
+    # the detector. If either class is empty, detect_tube() falls
+    # back to the saturation path automatically.
+    tmpl_cfg = tube_cfg.get('templates', {}) or {}
+    templates = None
+    tmpl_enabled = bool(tmpl_cfg.get('enabled', True))
+    tmpl_min_score = float(tmpl_cfg.get('min_score', 0.5))
+    tmpl_margin = float(tmpl_cfg.get('margin', 0.0))
+    tmpl_search_px = int(tmpl_cfg.get('search_px', 5))
+    if tmpl_enabled:
+        refs_dir = _resolve_refs_dir(
+            tmpl_cfg.get('dir', 'tube_refs'),
+        )
+        # The refs must match the ROI crop size; pre-compute it
+        # so mismatched refs (e.g. captured before an ROI edit)
+        # are rejected cleanly.
+        roi_size = _roi_size_from_cfg(roi)
+        try:
+            from ultra.vision import tube_template
+            templates = tube_template.load_references(
+                refs_dir, required_size=roi_size,
+            )
+        except Exception as exc:
+            LOG.warning(
+                'tube: template load failed (%s); falling back '
+                'to saturation',
+                exc,
+            )
+            templates = None
+
     t0 = time.time()
     led_on = False
     try:
@@ -291,6 +357,10 @@ def run_serum_tube_check(
                 mean_intensity_min=mean_intensity_min,
                 dark_ratio_max=dark_ratio_max,
                 mean_saturation_min=mean_saturation_min,
+                templates=templates,
+                template_min_score=tmpl_min_score,
+                template_margin=tmpl_margin,
+                template_search_px=tmpl_search_px,
             )
             if cache_frame is not None:
                 try:
@@ -301,11 +371,16 @@ def run_serum_tube_check(
                     )
 
             last_extras = {
+                'method': det.method,
                 'mean_intensity': round(det.mean_intensity, 2),
                 'dark_ratio': round(det.dark_ratio, 4),
                 'mean_saturation': round(det.mean_saturation, 2),
                 'stage1_pass': det.stage1_pass,
                 'stage2_pass': det.stage2_pass,
+                'seated_score': round(det.seated_score, 4),
+                'empty_score': round(det.empty_score, 4),
+                'seated_count': det.seated_count,
+                'empty_count': det.empty_count,
                 'roi': list(det.roi),
                 'attempt': attempt,
                 'elapsed_s': round(time.time() - t0, 3),

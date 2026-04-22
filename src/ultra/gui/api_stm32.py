@@ -49,6 +49,15 @@ class TubeRoiBody(BaseModel):
     h: int = 0
 
 
+class TubeRefBody(BaseModel):
+    '''Request body for ``POST /api/camera/tube-refs``.
+
+    ``label`` is the class name (``seated`` or ``empty``) the
+    captured ROI crop will be tagged with.
+    '''
+    label: str
+
+
 def create_stm32_router(app: 'Application') -> APIRouter:
     router = APIRouter()
 
@@ -846,7 +855,13 @@ def create_stm32_router(app: 'Application') -> APIRouter:
     # a few dozen lines up. No persistence; state dies with the
     # process.
     _last_qr_frame: dict = {'jpeg': None, 'ts': 0.0}
-    _last_tube_frame: dict = {'jpeg': None, 'ts': 0.0}
+    # ``raw_bgr`` is kept alongside the annotated JPEG so the
+    # reference-capture endpoint can crop the unmodified camera
+    # frame (overlay pixels in the JPEG would contaminate NCC
+    # scores). ``None`` until the first tube check runs.
+    _last_tube_frame: dict = {
+        'jpeg': None, 'ts': 0.0, 'raw_bgr': None,
+    }
 
     def _cache_qr_frame(frame_bgr, det):
         '''Render QR overlay + cache as JPEG. Failures are logged.'''
@@ -865,11 +880,13 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             LOG.warning('qr annotate/encode failed: %s', exc)
 
     def _cache_tube_frame(frame_bgr, det):
-        '''Cache the detector's pre-annotated preview as JPEG.
+        '''Cache both the annotated JPEG preview and the raw BGR.
 
         :class:`TubeDetection` already carries an ``annotated``
-        image, so we just encode it. Falls back to the raw frame
-        if annotation didn't run.
+        image for the preview JPEG. We also stash a copy of
+        ``frame_bgr`` so the reference-capture endpoint can
+        re-crop the unmodified pixels without any overlay
+        artefacts.
         '''
         try:
             import time as _time
@@ -883,6 +900,10 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             if ok:
                 _last_tube_frame['jpeg'] = bytes(buf)
                 _last_tube_frame['ts'] = _time.time()
+                _last_tube_frame['raw_bgr'] = (
+                    frame_bgr.copy()
+                    if frame_bgr is not None else None
+                )
         except Exception as exc:
             LOG.warning('tube annotate/encode failed: %s', exc)
 
@@ -968,9 +989,11 @@ def create_stm32_router(app: 'Application') -> APIRouter:
         '''One-shot serum-tube presence check (engineering debug).
 
         Drives :func:`ultra.vision.check_runner.run_serum_tube_check`
-        so the operator can tune ROI + intensity / Hough
-        thresholds against a live cartridge. The annotated
-        preview is cached for ``GET /camera/last-tube-frame``.
+        so the operator can tune the ROI, capture template
+        references, or inspect saturation stats against a live
+        cartridge. The annotated preview and raw BGR frame are
+        cached for ``GET /camera/last-tube-frame`` and the
+        reference-capture endpoint.
         '''
         from ultra.vision.check_runner import run_serum_tube_check
 
@@ -1012,12 +1035,14 @@ def create_stm32_router(app: 'Application') -> APIRouter:
     # preview with the current ROI drawn on it, drags a tighter
     # rectangle on the overlay, then clicks Save -- which POSTs
     # here. We update app.config in-memory (takes effect on the
-    # next check) and echo the values back so the operator can
-    # paste them into config/ultra_default.yaml for restart
-    # durability. We deliberately do not rewrite the YAML file
-    # here: it carries extensive comments that yaml.safe_dump
-    # would drop, and the machine-settings editor already offers
-    # a comment-preserving path for persistent changes.
+    # next check) AND persist to /etc/ultra/machine.yaml (the
+    # ULTRA_CONFIG overlay loaded on startup) so the value
+    # survives a service restart. S3 upload piggybacks when a
+    # device_sn is available, keeping the fleet copy in sync
+    # without manual intervention. The config/ultra_default.yaml
+    # defaults file is never touched -- only the overlay is
+    # machine-specific, and the overlay is the only file that
+    # should diverge between units.
 
     @router.get('/camera/tube-roi')
     async def camera_tube_roi_get():
@@ -1078,15 +1103,247 @@ def create_stm32_router(app: 'Application') -> APIRouter:
             'tube ROI updated in-memory: x=%d y=%d w=%d h=%d',
             x, y, w, h,
         )
+
+        # Persist to /etc/ultra/machine.yaml so the value
+        # survives a restart. Run in the default executor
+        # because both local write and the S3 upload can block.
+        from ultra.gui.api_config import persist_config_overlay
+        loop = asyncio.get_running_loop()
+        try:
+            persisted = await loop.run_in_executor(
+                None,
+                lambda: persist_config_overlay(
+                    ['checks', 'tube', 'roi'],
+                    {'x': x, 'y': y, 'w': w, 'h': h},
+                    upload_s3=True,
+                    app_config=app.config,
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=str(exc),
+            ) from exc
+        except Exception as exc:
+            LOG.exception('persist tube ROI failed')
+            raise HTTPException(
+                status_code=500,
+                detail=f'persist failed: {exc}',
+            ) from exc
+
+        # Build a concrete status string so the GUI can show
+        # exactly where the value landed.
+        bits = []
+        if persisted['local_written']:
+            bits.append(f"saved to {persisted['local_path']}")
+        else:
+            bits.append(
+                f"could NOT write {persisted['local_path']} "
+                '(service lacks permission? run as root or '
+                'fix directory ownership)',
+            )
+        if persisted['s3_uploaded']:
+            bits.append('uploaded to S3')
+        elif persisted['s3_error']:
+            bits.append(f"S3 skipped: {persisted['s3_error']}")
+        status_msg = '; '.join(bits)
+
         return {
             'ok': True,
             'roi': {'x': x, 'y': y, 'w': w, 'h': h},
+            'persisted': persisted,
+            'status': status_msg,
             'persist_hint': (
-                'In-memory only. For restart-durable save, paste '
-                f'x: {x} / y: {y} / w: {w} / h: {h} into '
-                'config/ultra_default.yaml under checks.tube.roi, '
-                'or use the Machine Settings editor.'
+                status_msg
+                + '. Restart the service to reload from disk '
+                'if you want to verify, but the change is '
+                'already live in memory.'
             ),
         }
+
+    # ---- Tube template references (GUI gallery) ----
+    #
+    # Saved PNG crops of the current ROI, labelled SEATED /
+    # EMPTY. When both classes have >= 1 ref, the detector's
+    # template path replaces the saturation-only verdict. These
+    # endpoints are the only path to create / delete / view the
+    # on-disk references; the detector loads them lazily on
+    # every check.
+
+    def _tube_refs_dir() -> str:
+        from ultra.vision.check_runner import _resolve_refs_dir
+        tube_cfg = (
+            (app.config.get('checks', {}) or {}).get('tube', {})
+            or {}
+        )
+        tmpl_cfg = tube_cfg.get('templates', {}) or {}
+        return _resolve_refs_dir(tmpl_cfg.get('dir', 'tube_refs'))
+
+    def _current_roi_crop_from_frame():
+        '''Pull the raw-BGR frame from the tube cache + crop to ROI.
+
+        Returns ``(crop_bgr, (x, y, w, h))`` on success or
+        ``(None, reason_str)`` on any failure. The crop must match
+        the pixels the detector actually sees, so we use the raw
+        BGR cached at check time, not the annotated preview.
+        '''
+        raw = _last_tube_frame.get('raw_bgr')
+        if raw is None:
+            return (
+                None,
+                'no cached raw tube frame -- run Check Serum '
+                'Tube first so the capture pipeline has a frame',
+            )
+        tube_cfg = (
+            (app.config.get('checks', {}) or {}).get('tube', {})
+            or {}
+        )
+        roi = tube_cfg.get('roi', {}) or {}
+        x = int(roi.get('x', 0) or 0)
+        y = int(roi.get('y', 0) or 0)
+        w = int(roi.get('w', 0) or 0)
+        h = int(roi.get('h', 0) or 0)
+        fh, fw = raw.shape[:2]
+        if w <= 0 or h <= 0:
+            return (
+                None,
+                'ROI is unset (0,0,0,0) -- calibrate ROI before '
+                'capturing references',
+            )
+        x = max(0, min(x, fw - 1))
+        y = max(0, min(y, fh - 1))
+        w = max(1, min(w, fw - x))
+        h = max(1, min(h, fh - y))
+        crop = raw[y:y + h, x:x + w].copy()
+        return crop, (x, y, w, h)
+
+    @router.get('/camera/tube-refs')
+    async def camera_tube_refs_list():
+        '''Return metadata for every saved reference ROI.'''
+        from ultra.vision import tube_template
+        try:
+            items = tube_template.list_references(_tube_refs_dir())
+        except Exception as exc:
+            LOG.exception('tube-refs list failed')
+            raise HTTPException(
+                status_code=500,
+                detail=f'list refs failed: {exc}',
+            ) from exc
+        tube_cfg = (
+            (app.config.get('checks', {}) or {}).get('tube', {})
+            or {}
+        )
+        roi = tube_cfg.get('roi', {}) or {}
+        cur_w = int(roi.get('w', 0) or 0)
+        cur_h = int(roi.get('h', 0) or 0)
+        for it in items:
+            it['matches_current_roi'] = (
+                cur_w > 0 and cur_h > 0
+                and it['width'] == cur_w
+                and it['height'] == cur_h
+            )
+            # Strip the server path from the response; the GUI
+            # only needs the filename.
+            it.pop('path', None)
+        return {
+            'items': items,
+            'current_roi': {
+                'w': cur_w, 'h': cur_h,
+            },
+            'seated_count': sum(
+                1 for i in items if i['label'] == 'seated'
+            ),
+            'empty_count': sum(
+                1 for i in items if i['label'] == 'empty'
+            ),
+        }
+
+    @router.post('/camera/tube-refs')
+    async def camera_tube_refs_create(body: TubeRefBody):
+        '''Capture the current ROI crop as a labelled reference.
+
+        Requires a prior ``POST /camera/check-serum-tube`` so the
+        frame cache is populated. The crop is taken from the raw
+        camera frame (not the annotated preview) so overlay
+        pixels don't contaminate the reference.
+        '''
+        from ultra.vision import tube_template
+        label = (body.label or '').strip().lower()
+        if label not in (
+            tube_template.LABEL_SEATED, tube_template.LABEL_EMPTY,
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f'invalid label {body.label!r}; expected '
+                    '"seated" or "empty"'
+                ),
+            )
+        crop, roi_or_reason = _current_roi_crop_from_frame()
+        if crop is None:
+            raise HTTPException(
+                status_code=409,
+                detail=str(roi_or_reason),
+            )
+        try:
+            path = tube_template.save_reference(
+                _tube_refs_dir(), label, crop,
+            )
+        except (ValueError, OSError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f'save failed: {exc}',
+            ) from exc
+        import os.path as op
+        filename = op.basename(path)
+        return {
+            'ok': True,
+            'filename': filename,
+            'label': label,
+            'roi': list(roi_or_reason),
+        }
+
+    @router.delete('/camera/tube-refs/{filename}')
+    async def camera_tube_refs_delete(filename: str):
+        '''Remove one saved reference by filename.'''
+        from ultra.vision import tube_template
+        try:
+            removed = tube_template.delete_reference(
+                _tube_refs_dir(), filename,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=str(exc),
+            ) from exc
+        if not removed:
+            raise HTTPException(
+                status_code=404,
+                detail=f'no such reference: {filename}',
+            )
+        return {'ok': True, 'filename': filename}
+
+    @router.get('/camera/tube-refs/{filename}')
+    async def camera_tube_refs_image(filename: str):
+        '''Return the raw PNG bytes of one saved reference.'''
+        from fastapi.responses import FileResponse
+        import os.path as op
+        if (
+            not filename or '/' in filename or '\\' in filename
+            or '..' in filename
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f'invalid filename {filename!r}',
+            )
+        path = op.join(_tube_refs_dir(), filename)
+        if not op.isfile(path):
+            raise HTTPException(
+                status_code=404,
+                detail=f'no such reference: {filename}',
+            )
+        return FileResponse(
+            path,
+            media_type='image/png',
+            headers={'Cache-Control': 'no-store'},
+        )
 
     return router

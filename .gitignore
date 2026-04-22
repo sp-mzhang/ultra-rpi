@@ -13,3 +13,6 @@ build/
 .DS_Store
 .cache/
 lib/assay_validation/*.py
+# Per-machine reference captures for tube template matching.
+# These are calibration artefacts, not source code.
+tube_refs/

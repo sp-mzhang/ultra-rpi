@@ -125,6 +125,149 @@ def _write_local_machine_yaml(yaml_text: str) -> None:
         )
 
 
+def _read_local_machine_yaml() -> dict[str, Any]:
+    '''Return the parsed local machine-settings overlay.
+
+    This is the file referenced by ``ULTRA_CONFIG`` in the
+    systemd unit (``/etc/ultra/machine.yaml``). Absent file or
+    unreadable contents both return ``{}`` -- the caller
+    initialises a fresh overlay. Structural YAML errors raise
+    :class:`ValueError` so the operator sees a precise message.
+    '''
+    import yaml
+    import os.path as op
+    if not op.isfile(LOCAL_MACHINE_YAML):
+        return {}
+    try:
+        with open(LOCAL_MACHINE_YAML, encoding='utf-8') as fh:
+            data = yaml.safe_load(fh) or {}
+    except OSError as exc:
+        LOG.warning(
+            'Could not read %s: %s', LOCAL_MACHINE_YAML, exc,
+        )
+        return {}
+    except yaml.YAMLError as exc:
+        raise ValueError(
+            f'{LOCAL_MACHINE_YAML} is not valid YAML: {exc}',
+        ) from exc
+    if not isinstance(data, dict):
+        raise ValueError(
+            f'{LOCAL_MACHINE_YAML} must contain a YAML mapping '
+            f'at the top level, got {type(data).__name__}',
+        )
+    return data
+
+
+def persist_config_overlay(
+    path_keys: list[str],
+    value: Any,
+    *,
+    upload_s3: bool = True,
+    app_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    '''Set one nested key in ``/etc/ultra/machine.yaml`` and save.
+
+    Reads the existing overlay, sets ``path_keys`` (e.g.
+    ``['checks', 'tube', 'roi']``) to *value*, writes the file
+    back out, and optionally pushes to S3 so the cloud copy
+    stays authoritative. Intermediate mappings are created on
+    demand.
+
+    Args:
+        path_keys: Nested key path to set; non-empty.
+        value: JSON-serialisable value. Existing siblings are
+            preserved.
+        upload_s3: If True and ``app_config['device_sn']`` is
+            set, also ``put_machine_settings_yaml``. Best-effort:
+            a network failure logs a warning but does not raise
+            -- local persistence is still considered a success.
+        app_config: The in-memory config (needed only for
+            ``device_sn`` lookup). When omitted, S3 upload is
+            skipped regardless of *upload_s3*.
+
+    Returns:
+        ``{'local_written': bool, 'local_path': str,
+        's3_uploaded': bool, 's3_error': str | None,
+        'yaml_text': str}``. The ``yaml_text`` field is handy
+        for the GUI to cache-invalidate its settings editor.
+
+    Raises:
+        ValueError: when *path_keys* is empty or the existing
+            overlay is structurally invalid.
+    '''
+    import yaml
+    if not path_keys:
+        raise ValueError('path_keys must be non-empty')
+    overlay = _read_local_machine_yaml()
+    # Walk/create the nested structure. If any mid-level is a
+    # non-dict, overwrite it -- the operator just asked for a
+    # nested set, that's the only sane resolution.
+    node: dict[str, Any] = overlay
+    for key in path_keys[:-1]:
+        cur = node.get(key)
+        if not isinstance(cur, dict):
+            cur = {}
+            node[key] = cur
+        node = cur
+    node[path_keys[-1]] = value
+
+    yaml_text = yaml.dump(
+        overlay,
+        default_flow_style=False,
+        allow_unicode=True,
+        sort_keys=False,
+    )
+
+    import os
+    local_written = False
+    try:
+        os.makedirs(
+            os.path.dirname(LOCAL_MACHINE_YAML), exist_ok=True,
+        )
+        with open(
+            LOCAL_MACHINE_YAML, 'w', encoding='utf-8',
+        ) as fh:
+            fh.write(yaml_text)
+        local_written = True
+        LOG.info(
+            'persist_config_overlay wrote %s (keys=%s)',
+            LOCAL_MACHINE_YAML, path_keys,
+        )
+    except OSError as exc:
+        LOG.warning(
+            'persist_config_overlay: cannot write %s: %s',
+            LOCAL_MACHINE_YAML, exc,
+        )
+
+    s3_uploaded = False
+    s3_error: str | None = None
+    if upload_s3 and app_config is not None:
+        device_sn = app_config.get('device_sn', '')
+        if device_sn:
+            try:
+                from ultra.services import config_store
+                config_store.put_machine_settings_yaml(
+                    device_sn, yaml_text,
+                )
+                s3_uploaded = True
+            except Exception as exc:
+                s3_error = str(exc)
+                LOG.warning(
+                    'persist_config_overlay: S3 upload failed '
+                    'for %s: %s', device_sn, exc,
+                )
+        else:
+            s3_error = 'device_sn not set; S3 upload skipped'
+
+    return {
+        'local_written': local_written,
+        'local_path': LOCAL_MACHINE_YAML,
+        's3_uploaded': s3_uploaded,
+        's3_error': s3_error,
+        'yaml_text': yaml_text,
+    }
+
+
 def create_config_router(app: 'Application') -> APIRouter:
     router = APIRouter()
 

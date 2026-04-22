@@ -207,3 +207,57 @@ def test_annotated_image_is_returned():
     )
     assert det.annotated is not None
     assert det.annotated.shape == frame.shape
+
+
+# ----------------------------------------------------------------
+# Template-matching backend takes precedence over saturation
+# ----------------------------------------------------------------
+
+def test_template_path_takes_precedence_when_refs_present():
+    '''If refs exist for both classes, verdict comes from NCC.'''
+    from ultra.vision import tube_template as tt
+    # Build a frame that would FAIL saturation (low-sat grey)
+    # but matches an "empty" grey reference pattern.
+    frame = _gray_frame(210, shape=(200, 200))
+    # Matching the crop shape to the ref size; ROI is full frame.
+    grey_ref = _gray_frame(210, shape=(200, 200))
+    blue_ref = _colour_frame((200, 50, 50), shape=(200, 200))
+    templates = {
+        tt.LABEL_EMPTY: [('empty_1.png', grey_ref)],
+        tt.LABEL_SEATED: [('seated_1.png', blue_ref)],
+    }
+    det = td.detect_tube(
+        frame, roi=None,
+        # Absurd saturation threshold so the saturation path
+        # would say ABSENT. Template path must override.
+        mean_saturation_min=200.0,
+        templates=templates,
+        template_min_score=0.5,
+        template_search_px=0,
+    )
+    assert det.method == 'template'
+    assert det.seated_count == 1
+    assert det.empty_count == 1
+    # Frame matches empty ref, so empty_score should dominate.
+    assert det.empty_score > det.seated_score
+    assert det.present is False
+    assert 'template_empty_match' in (det.reason or '')
+
+
+def test_saturation_fallback_when_one_class_missing():
+    '''Refs for only one class -> template path disabled.'''
+    from ultra.vision import tube_template as tt
+    frame = _colour_frame((200, 50, 50))
+    templates = {
+        tt.LABEL_SEATED: [('s.png', frame.copy())],
+        tt.LABEL_EMPTY: [],
+    }
+    det = td.detect_tube(
+        frame, roi=None,
+        mean_saturation_min=40.0,
+        templates=templates,
+    )
+    # Only one class -> detector must fall back to saturation,
+    # where the blue frame passes cleanly.
+    assert det.method == 'saturation'
+    assert det.present is True

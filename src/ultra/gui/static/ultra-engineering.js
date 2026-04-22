@@ -1382,6 +1382,20 @@
         resultBox.hidden = false;
         $('#eng-tube-present').textContent = body.ok
           ? 'yes' : 'no';
+        const method = body.method || 'saturation';
+        $('#eng-tube-method').textContent = method;
+        if (method === 'template') {
+          $('#eng-tube-scores').textContent =
+            (body.seated_score != null
+              ? body.seated_score.toFixed(3) : '--') +
+            ' (n=' + (body.seated_count ?? 0) + ') / ' +
+            (body.empty_score != null
+              ? body.empty_score.toFixed(3) : '--') +
+            ' (n=' + (body.empty_count ?? 0) + ')';
+        } else {
+          $('#eng-tube-scores').textContent =
+            'n/a (no refs -- using saturation)';
+        }
         $('#eng-tube-mean').textContent = (
           body.mean_intensity != null
             ? body.mean_intensity.toFixed(1) : '--'
@@ -1436,6 +1450,141 @@
       }
     };
     wireTubeRoiPicker();
+    wireTubeRefGallery();
+  }
+
+  /* ---- Tube reference gallery (template matching) ----
+   *
+   * Works against /api/camera/tube-refs. Capture buttons post
+   * a label; list re-renders after every change. Thumbnails are
+   * the raw PNG on disk, sized small to keep the DOM light.
+   */
+  function _refClassBadge(label) {
+    const colour = label === 'seated' ? '#0a0' : '#a40';
+    return '<span style="color:' + colour +
+      '; font-weight:bold">' + label.toUpperCase() + '</span>';
+  }
+
+  async function refreshTubeRefs() {
+    const host = $('#eng-tube-ref-gallery');
+    try {
+      const resp = await fetch('/api/camera/tube-refs');
+      if (!resp.ok) {
+        host.innerHTML = '';
+        return;
+      }
+      const body = await resp.json();
+      const items = body.items || [];
+      host.innerHTML = '';
+      if (items.length === 0) {
+        host.innerHTML =
+          '<div class="eng-dim">No references saved yet.' +
+          ' Template matching is disabled until both SEATED' +
+          ' and EMPTY have at least one capture.</div>';
+        return;
+      }
+      for (const it of items) {
+        const tile = document.createElement('div');
+        tile.style.cssText =
+          'display:flex; flex-direction:column;' +
+          ' align-items:center; gap:2px;' +
+          ' padding:4px; border:1px solid #333;' +
+          ' border-radius:4px; background:#111';
+        const img = document.createElement('img');
+        img.src = '/api/camera/tube-refs/' +
+          encodeURIComponent(it.filename) +
+          '?ts=' + it.ts_ms;
+        img.alt = it.filename;
+        img.style.cssText =
+          'max-width:96px; max-height:96px; display:block';
+        const meta = document.createElement('div');
+        meta.style.cssText =
+          'font-size:11px; line-height:1.2; text-align:center;' +
+          ' color:#ccc';
+        const date = it.ts_ms
+          ? new Date(it.ts_ms).toLocaleTimeString()
+          : '?';
+        const sizeWarn = it.matches_current_roi
+          ? ''
+          : ' <span style="color:#e77">(size mismatch)</span>';
+        meta.innerHTML =
+          _refClassBadge(it.label) + '<br>' +
+          it.width + 'x' + it.height + sizeWarn + '<br>' +
+          date;
+        const del = document.createElement('button');
+        del.textContent = 'Delete';
+        del.className = 'eng-cmd-btn';
+        del.style.cssText = 'font-size:11px; padding:2px 6px';
+        del.onclick = async () => {
+          del.disabled = true;
+          try {
+            const r = await fetch(
+              '/api/camera/tube-refs/' +
+              encodeURIComponent(it.filename),
+              { method: 'DELETE' },
+            );
+            if (!r.ok) {
+              const t = await r.text();
+              engLog('delete ref failed: ' + t);
+            }
+          } catch (e) {
+            engLog('delete ref error: ' + e);
+          }
+          await refreshTubeRefs();
+        };
+        tile.appendChild(img);
+        tile.appendChild(meta);
+        tile.appendChild(del);
+        host.appendChild(tile);
+      }
+      $('#eng-tube-ref-status').textContent =
+        'saved: seated=' + (body.seated_count ?? 0) +
+        ', empty=' + (body.empty_count ?? 0);
+    } catch (e) {
+      engLog('refreshTubeRefs error: ' + e);
+    }
+  }
+
+  async function _captureTubeRef(label) {
+    const statusEl = $('#eng-tube-ref-status');
+    statusEl.textContent = 'capturing ' + label + '...';
+    try {
+      const resp = await fetch('/api/camera/tube-refs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label }),
+      });
+      const txt = await resp.text();
+      let body;
+      try { body = txt ? JSON.parse(txt) : {}; }
+      catch (e) { body = { detail: txt }; }
+      if (!resp.ok) {
+        let msg;
+        if (typeof body.detail === 'string') {
+          msg = body.detail;
+        } else if (Array.isArray(body.detail)) {
+          msg = body.detail.map((e) => e.msg || '').join('; ');
+        } else {
+          msg = JSON.stringify(body) || txt || 'unknown';
+        }
+        statusEl.textContent =
+          'capture error (HTTP ' + resp.status + '): ' + msg;
+        return;
+      }
+      statusEl.textContent =
+        'saved ' + body.label + ' as ' + body.filename;
+      await refreshTubeRefs();
+    } catch (e) {
+      statusEl.textContent = 'capture error: ' + e;
+    }
+  }
+
+  function wireTubeRefGallery() {
+    $('#eng-tube-ref-seated').onclick = () =>
+      _captureTubeRef('seated');
+    $('#eng-tube-ref-empty').onclick = () =>
+      _captureTubeRef('empty');
+    refreshTubeRefs();
   }
 
   /* ---- Tube ROI picker ----
@@ -1659,14 +1808,22 @@
           saveBtn.disabled = false;
           return;
         }
-        $('#eng-tube-roi-status').textContent =
-          'saved: x=' + body.roi.x + ' y=' + body.roi.y +
+        const roiStr =
+          'x=' + body.roi.x + ' y=' + body.roi.y +
           ' w=' + body.roi.w + ' h=' + body.roi.h;
-        if (body.persist_hint) {
-          hint.hidden = false;
-          hint.textContent = body.persist_hint;
-        }
-        engLog('tube-roi saved: ' + JSON.stringify(body.roi));
+        const persisted = body.persisted || {};
+        const localOk = persisted.local_written === true;
+        $('#eng-tube-roi-status').textContent =
+          'saved ' + roiStr +
+          (localOk ? ' -- persisted on disk' :
+            ' -- IN-MEMORY ONLY (local write failed)');
+        hint.hidden = false;
+        hint.textContent = body.status || body.persist_hint ||
+          'saved';
+        engLog(
+          'tube-roi saved: ' + JSON.stringify(body.roi) +
+          ' persisted=' + JSON.stringify(persisted),
+        );
       } catch (e) {
         $('#eng-tube-roi-status').textContent =
           'save error: ' + (e && e.message ? e.message : e);
