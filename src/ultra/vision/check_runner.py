@@ -9,21 +9,32 @@ Per-check flow (no carousel rotation -- the cartridge is
 drawer-locked with both the QR label and the serum slot already
 in the toolhead-camera FOV):
 
-  1. :func:`ensure_centrifuge_ready` as a safety gate. The
-     camera LED shares PC12 with the centrifuge strobe, so we
-     refuse to light it while the BLDC is spinning.
-  2. ``move_gantry`` to the configured probe pose (QR:
+  1. ``move_gantry`` to the configured probe pose (QR:
      ``(0, 83, 0)``; tube: ``(20, 55, 0)``).
-  3. ``cam_led_set(True)``, wait ``led_settle_ms``.
-  4. Grab a fresh BGR frame captured strictly after the LED
+  2. ``cam_led_set(True)``, wait ``led_settle_ms``.
+  3. Grab a fresh BGR frame captured strictly after the LED
      turned on.
-  5. Run the relevant detector (QR or tube).
-  6. ``cam_led_set(False)`` (always, in ``finally``).
-  7. Cache an annotated preview JPEG via ``cache_frame`` for
+  4. Run the relevant detector (QR or tube).
+  5. ``cam_led_set(False)`` (always, in ``finally``).
+  6. Cache an annotated preview JPEG via ``cache_frame`` for
      GUI readback.
 
-Retries happen inside steps 3--5, bounded by
+Retries happen inside steps 2--4, bounded by
 ``checks.<name>.retries_per_close``.
+
+Historical note: there used to be a
+:func:`align_runner.ensure_centrifuge_ready` safety gate at the
+top of each check because the camera LED shares PC12 with the
+centrifuge strobe on legacy hardware -- lighting the LED while
+the BLDC was spinning could cause strobe artefacts. The gate was
+removed for cartridge validation because (a) SELF_CHECK only
+runs immediately after a drawer close, when the BLDC has been
+idle for seconds, (b) the gate added 0.5--1 s of latency and
+could itself fail (BLDC ERROR) when there was nothing actually
+spinning, and (c) ``align_runner`` still runs the gate before
+the spin-heavy carousel alignment phase, which is the actual
+risky workload. If you ever observe LED flicker during these
+checks, re-add the gate here first before chasing other causes.
 '''
 from __future__ import annotations
 
@@ -144,7 +155,6 @@ def run_cartridge_qr_check(
         payload on success.
     '''
     from ultra.vision import qr_detect
-    from ultra.vision.align_runner import ensure_centrifuge_ready
 
     qr_cfg = ((config or {}).get('checks', {}) or {}).get('qr', {}) or {}
     probe = qr_cfg.get('probe_pose', {}) or {}
@@ -157,14 +167,6 @@ def run_cartridge_qr_check(
     t0 = time.time()
     led_on = False
     try:
-        try:
-            ensure_centrifuge_ready(stm32)
-        except RuntimeError as exc:
-            return CheckResult(
-                ok=False, reason=str(exc),
-                extras={'elapsed_s': round(time.time() - t0, 3)},
-            )
-
         if not _move_to_pose(stm32, probe):
             return CheckResult(
                 ok=False, reason='move_gantry_failed',
@@ -248,8 +250,8 @@ def run_serum_tube_check(
 
     No carousel rotation is issued: the cartridge is
     drawer-locked with the slot already in the camera's FOV.
-    :func:`ensure_centrifuge_ready` still runs as a safety gate
-    (the LED shares PC12 with the centrifuge strobe).
+    No centrifuge readiness gate either -- see the module
+    docstring for the rationale.
 
     Args:
         stm32: STM32 hardware interface.
@@ -266,7 +268,6 @@ def run_serum_tube_check(
         :class:`CheckResult` with ``ok=det.present``.
     '''
     from ultra.vision import tube_detect
-    from ultra.vision.align_runner import ensure_centrifuge_ready
 
     tube_cfg = (
         ((config or {}).get('checks', {}) or {}).get('tube', {}) or {}
@@ -318,14 +319,6 @@ def run_serum_tube_check(
     t0 = time.time()
     led_on = False
     try:
-        try:
-            ensure_centrifuge_ready(stm32)
-        except RuntimeError as exc:
-            return CheckResult(
-                ok=False, reason=str(exc),
-                extras={'elapsed_s': round(time.time() - t0, 3)},
-            )
-
         if not _move_to_pose(stm32, probe):
             return CheckResult(
                 ok=False, reason='move_gantry_failed',
