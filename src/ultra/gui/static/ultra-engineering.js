@@ -1616,16 +1616,46 @@
     saveBtn.onclick = async () => {
       if (!_tubeRoiDraft) return;
       saveBtn.disabled = true;
+      const payload = {
+        x: Math.round(_tubeRoiDraft.x | 0),
+        y: Math.round(_tubeRoiDraft.y | 0),
+        w: Math.round(_tubeRoiDraft.w | 0),
+        h: Math.round(_tubeRoiDraft.h | 0),
+      };
       try {
         const resp = await fetch('/api/camera/tube-roi', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(_tubeRoiDraft),
+          body: JSON.stringify(payload),
         });
-        const body = await resp.json();
+        const txt = await resp.text();
+        let body;
+        try { body = txt ? JSON.parse(txt) : {}; }
+        catch (e) { body = { detail: txt }; }
         if (!resp.ok) {
+          // detail can be a string (our HTTPException) or an
+          // array of validation errors (FastAPI 422). Flatten
+          // both into something the operator can read.
+          let msg;
+          if (typeof body.detail === 'string') {
+            msg = body.detail;
+          } else if (Array.isArray(body.detail)) {
+            msg = body.detail.map((e) => {
+              const loc = (e.loc || []).join('.');
+              return (loc ? loc + ': ' : '') + (e.msg || '');
+            }).join('; ');
+          } else if (body.detail) {
+            msg = JSON.stringify(body.detail);
+          } else {
+            msg = JSON.stringify(body) || txt || 'unknown';
+          }
           $('#eng-tube-roi-status').textContent =
-            'save error: ' + (body.detail || resp.status);
+            'save error (HTTP ' + resp.status + '): ' + msg;
+          engLog(
+            'tube-roi save failed (' + resp.status +
+            ') payload=' + JSON.stringify(payload) +
+            ' resp=' + txt,
+          );
           saveBtn.disabled = false;
           return;
         }
@@ -1638,7 +1668,8 @@
         }
         engLog('tube-roi saved: ' + JSON.stringify(body.roi));
       } catch (e) {
-        $('#eng-tube-roi-status').textContent = 'save error: ' + e;
+        $('#eng-tube-roi-status').textContent =
+          'save error: ' + (e && e.message ? e.message : e);
         saveBtn.disabled = false;
       }
     };

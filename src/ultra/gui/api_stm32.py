@@ -35,6 +35,20 @@ class Stm32CmdRequest(BaseModel):
     lock_timeout: float | None = None
 
 
+class TubeRoiBody(BaseModel):
+    '''Request body for ``POST /api/camera/tube-roi``.
+
+    All four fields are in native-frame pixels. The zero
+    sentinel ``(0, 0, 0, 0)`` means "clear ROI, detector falls
+    back to full frame"; otherwise the detector clamps into the
+    frame.
+    '''
+    x: int = 0
+    y: int = 0
+    w: int = 0
+    h: int = 0
+
+
 def create_stm32_router(app: 'Application') -> APIRouter:
     router = APIRouter()
 
@@ -1004,13 +1018,6 @@ def create_stm32_router(app: 'Application') -> APIRouter:
     # here: it carries extensive comments that yaml.safe_dump
     # would drop, and the machine-settings editor already offers
     # a comment-preserving path for persistent changes.
-
-    class TubeRoiBody(BaseModel):
-        '''Body for ``POST /camera/tube-roi``.'''
-        x: int
-        y: int
-        w: int
-        h: int
 
     @router.get('/camera/tube-roi')
     async def camera_tube_roi_get():
