@@ -266,12 +266,18 @@ phases:
       # Return the ~55 uL cushion (residual serum + air slug)
       # to the SERUM tube.  The cart dispense left the tip
       # above PP4 with the carousel at the pipette position,
-      # so we retract Z, rotate the carousel so SERUM is back
-      # under the serum port, blow the remainder into the
-      # tube, then rotate forward again so subsequent reagent
-      # dispenses can reach PP4.
+      # so we retract Z, move the gantry XY over the serum
+      # port, then rotate the carousel so SERUM is back under
+      # the serum port, blow the remainder into the tube, and
+      # finally rotate forward again so subsequent reagent
+      # dispenses can reach PP4.  Order matches the aspirate
+      # sequence above: move-to-port first, then rotate.
       - type: home_z
-        label: Home Z before rotate-to-serum
+        label: Home Z before move-to-serum
+
+      - type: move_to_location
+        label: Move to serum port (cushion return)
+        well: SERUM
 
       - type: centrifuge_goto_serum
         label: Rotate back to serum for cushion return
