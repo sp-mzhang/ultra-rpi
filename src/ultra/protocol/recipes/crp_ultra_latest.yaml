@@ -1,28 +1,16 @@
 name: CRP Ultra Latest
 description: >
-  HS CRP chip-dispense protocol, mapped to
-  CRP_protocol_32C.csv. Centrifuge phase runs
-  (unlock / rotate / lift / pipette-goto) with
-  spin and shake skipped. 6 reagent dispenses on
-  cartridge port A: Hydrophilic, DI water, PBST
-  (120 s chip warm wait + 2-stage fast/slow), Sample
-  Buffer #1, Sample (aspirated directly from the
-  serum tube via centrifuge rotation), Sample Buffer
-  #2. One tip per reagent, pre-flight LLD, analysis
-  trigger after the final dispense, then lock. Air
-  slug 25 uL, aspirate 20 uL/s, chip temp 32 C.
-  Aspirate volumes are CSV + 20 uL on every reagent
-  so the tip always carries a 20 uL liquid cushion
-  beyond the cart dispense volume; cart dispense
-  volumes match the CSV exactly and the extra 20 uL
-  is returned to the source well at the end of each
-  transfer.
-
+  HS CRP chip-dispense protocol, mapped to CRP_protocol_32C.csv. Centrifuge phase runs (unlock / rotate / lift /
+  pipette-goto) with spin and shake skipped. 6 reagent dispenses on cartridge port A: Hydrophilic, DI water, PBST (120 s
+  chip warm wait + 2-stage fast/slow), Sample Buffer #1, Sample (aspirated directly from the serum tube via centrifuge
+  rotation), Sample Buffer #2. One tip per reagent, pre-flight LLD, analysis trigger after the final dispense, then
+  lock. Air slug 25 uL, aspirate 20 uL/s, chip temp 32 C. Aspirate volumes are CSV + 20 uL on every reagent so the tip
+  always carries a 20 uL liquid cushion beyond the cart dispense volume; cart dispense volumes match the CSV exactly and
+  the extra 20 uL is returned to the source well at the end of each transfer.
 reader:
   acq_mode: continuous
   acq_time_total_s: 20000
   acq_time_step_s: 4
-
 peak_detect:
   fit_type: detect_peaks
   stitch_th: 1.15
@@ -31,145 +19,78 @@ peak_detect:
     ignore_start: 400
     min_power: -45
     prom: 1.5
-
 constants:
   air_slug_ul: 25
   reasp_ul: 12
   cart_disp_vel: 0.5
   skip_centrifuge_spin: true
   skip_centrifuge_shake: true
-
 wells:
-  # Reagent source wells (CSV A1..E1 map to ultra S/M slots).
-  # Cart dispense volumes match the CSV exactly; aspirate volumes
-  # are CSV + 20 uL so the tip always carries an extra 20 uL of
-  # liquid cushion beyond what gets pushed to the cartridge.  The
-  # extra 20 uL (plus the reasp) is returned to the source well at
-  # the end of each transfer, so effective reagent consumption is
-  # unchanged.
-  # volume_ul = loaded volume; must exceed asp_vol by ~30-50 uL
-  # so LLD can aspirate to the end of asp_vol without the tip
-  # becoming uncovered and sucking air mid-aspirate.  S9 (Sample
-  # Buffer) is drawn twice so it needs 2x the per-shot margin.
-  S7: {loc: 27, reagent: Hydrophilic,   volume_ul: 170}  # asp 130 (CSV 110 + 20)
-  M3: {loc: 35, reagent: DI Water,      volume_ul: 270}  # asp 210 (CSV 190 + 20)
-  M5: {loc: 37, reagent: PBST,          volume_ul: 280}  # asp 220 (CSV 200 + 20)
-  S9: {loc: 29, reagent: Sample Buffer, volume_ul: 240}  # asp 90 x2 (CSV 70 + 20)
-
-  # Sample/serum tube on the centrifuge carousel.  CSV E1
-  # expects 70 uL aspirated; with the +20 uL cushion we pull
-  # 90 uL, so load at least ~150 uL into the tube to give LLD
-  # ~60 uL of headroom.
+  S7:    {loc: 27, reagent: Hydrophilic, volume_ul: 170}
+  M3:    {loc: 35, reagent: DI Water, volume_ul: 270}
+  M5:    {loc: 37, reagent: PBST, volume_ul: 280}
   SERUM: {loc: 18, reagent: Sample, volume_ul: 150}
-
-  # Cartridge target
-  PP4: {loc: 11, reagent: Cartridge, volume_ul: 0}
+  M11:   {loc: 43, reagent: Sample Buffer, volume_ul: 240}
+  PP4:   {loc: 11, reagent: Cartridge, volume_ul: 0}
 
 phases:
   - name: A
     label: Centrifuge
     include: _common.yaml#centrifuge_phase
-
   - name: B
     label: Chip Dispenses
     steps:
       - type: tip_pick
         label: Pick Tip 1
         tip_id: 1
-
       - type: lld
         label: Pre-flight LLD
         threshold: 15
-
-      # --- Hydrophilic coating (S7, CSV A1) ---
-      # CSV rows 1-5: air 25 @ 20 uL/s, asp 110 @ 20,
-      # cart 70 @ 0.5, reasp 12 @ 0.5, 5 s post-delay,
-      # empty 77 @ 16.7.  asp_vol is CSV + 20 uL of extra
-      # liquid cushion; tip after dispense holds
-      # 130 + 25 - 70 + 12 = 97 uL returned to S7.
       - type: reagent_transfer
         label: cart_dispense_Hydrophilic
         source: S7
         target: PP4
         asp_vol: 130
         cart_vol: 70
-        asp_speed: 20.0
+        asp_speed: 20
         cart_vel: 0.5
         air_slug: 25
         reasp_ul: 12
         return_speed: 16.7
         stream: true
-
-      - type: delay
-        label: Post-Hydrophilic wait
-        seconds: 5
-
       - type: tip_swap
         label: Tip swap 1 -> 2
         from_id: 1
         to_id: 2
-
-      # --- DI Water (M3, CSV B1) ---
-      # CSV rows 6-10: air 25 @ 20, asp 190 @ 20,
-      # cart 160 @ 1.5, reasp 12 @ 0.5, 5 s post-delay,
-      # empty 67 @ 16.7. Firmware shares one velocity
-      # for cart+reasp, so reasp runs at 1.5 here.
-      # asp_vol = CSV + 20; tip returns
-      # 210 + 25 - 160 + 12 = 87 uL to M3.
       - type: reagent_transfer
         label: cart_dispense_DI_Water
         source: M3
         target: PP4
         asp_vol: 210
         cart_vol: 160
-        asp_speed: 20.0
+        asp_speed: 20
         cart_vel: 1.5
         air_slug: 25
         reasp_ul: 12
         return_speed: 16.7
         stream: true
-
-      - type: delay
-        label: Post-DI_Water wait
-        seconds: 5
-
       - type: tip_swap
         label: Tip swap 2 -> 3
         from_id: 2
         to_id: 3
-
-      # --- PBST (M5, CSV C1), 2-stage with 120 s chip warm wait ---
-      # CSV row 11 "Air draw and chip warm wait": 120 s.
-      - type: delay
-        label: PBST chip warm wait
-        seconds: 120
-
-      # CSV rows 12-13: air 25 @ 20, asp 200 @ 20,
-      # fast cart 100 @ 3.33 (200 uL/min), skip return.
-      # hold_at_cart keeps Z at the cartridge port so the
-      # slow leg can fire back-to-back without a Z round-trip.
-      # asp_vol = CSV + 20; extra 20 uL rides through to
-      # tip_preload for the slow leg.
       - type: reagent_transfer
         label: cart_dispense_PBST_fast
         source: M5
         target: PP4
         asp_vol: 220
         cart_vol: 100
-        asp_speed: 20.0
+        asp_speed: 20
         cart_vel: 3.33
         air_slug: 25
         reasp_ul: 0
         skip_return: true
         hold_at_cart: true
         stream: true
-
-      # CSV rows 14-15: slow cart 90 @ 0.5, reasp 10 @ 0.5.
-      # Row 16: empty 45 @ 33.3 (handled by return_speed).
-      # Tip preload = asp+air-cart_stage1 = 220+25-100 = 145 uL.
-      # assume_at_cart skips the XY move and Z descent since
-      # the fast leg left the tip already at the cart port.
-      # Tip after slow leg = 145 - 90 + 10 = 65 uL returned to M5.
       - type: reagent_transfer
         label: cart_dispense_PBST_slow
         source: M5
@@ -183,73 +104,43 @@ phases:
         tip_preload_ul: 145
         assume_at_cart: true
         stream: true
-
-      - type: delay
-        label: Post-PBST wait
-        seconds: 1
-
       - type: tip_swap
         label: Tip swap 3 -> 4
         from_id: 3
         to_id: 4
-
-      # --- Sample Buffer #1 (S9, CSV D1) ---
-      # CSV rows 17-20: air 25 @ 20, asp 70 @ 20,
-      # cart 60 @ 0.5, no reasp, empty 35 @ 33.3.
-      # asp_vol = CSV + 20; tip returns
-      # 90 + 25 - 60 + 0 = 55 uL to S9.
       - type: reagent_transfer
         label: cart_dispense_SampleBuffer_1
-        source: S9
+        source: M11
         target: PP4
         asp_vol: 90
         cart_vol: 60
-        asp_speed: 20.0
+        asp_speed: 20
         cart_vel: 0.5
         air_slug: 25
         reasp_ul: 0
         return_speed: 33.3
         stream: true
-
       - type: tip_swap
         label: Tip swap 4 -> 5
         from_id: 4
         to_id: 5
-
-      # --- Sample (SERUM tube, CSV E1) ---
-      # The sample comes from the serum tube on the centrifuge
-      # carousel instead of a pre-loaded S/M well, so we split
-      # the CSV row into two halves with a rotate-aspirate-
-      # rotate-dispense sequence (same pattern as crp_ultra).
-      #
-      # CSV rows 21-24: air 25 @ 20, asp 70 @ 20,
-      # cart 60 @ 0.25 (15 uL/min), no reasp, empty 35 @ 33.3.
-      # asp_vol = CSV + 20 uL cushion = 90 uL; tip preload into
-      # the cart dispense is 90 liquid + 25 air = 115 uL.
-      # Tip returns 115 - 60 + 0 = 55 uL to SERUM.
-
       - type: move_to_location
         label: Move to serum port
         well: SERUM
-
       - type: centrifuge_goto_serum
         label: Rotate to serum position
-
       - type: smart_aspirate
         label: Aspirate Sample from serum tube
         well: SERUM
         volume: 90
-        speed: 20.0
+        speed: 20
         air_slug: 25
         piston_reset: true
         stream: true
-
       - type: home_z
         label: Home Z after serum aspirate
-
       - type: centrifuge_goto_pipette
         label: Rotate to pipette position
-
       - type: reagent_transfer
         label: cart_dispense_Sample
         source: SERUM
@@ -262,76 +153,51 @@ phases:
         skip_return: true
         tip_preload_ul: 115
         stream: true
-
-      # Return the ~55 uL cushion (residual serum + air slug)
-      # to the SERUM tube.  The cart dispense left the tip
-      # above PP4 with the carousel at the pipette position,
-      # so we retract Z, move the gantry XY over the serum
-      # port, then rotate the carousel so SERUM is back under
-      # the serum port, blow the remainder into the tube, and
-      # finally rotate forward again so subsequent reagent
-      # dispenses can reach PP4.  Order matches the aspirate
-      # sequence above: move-to-port first, then rotate.
       - type: home_z
         label: Home Z before move-to-serum
-
       - type: move_to_location
         label: Move to serum port (cushion return)
         well: SERUM
-
       - type: centrifuge_goto_serum
         label: Rotate back to serum for cushion return
-
       - type: well_dispense
         label: Return Sample cushion to serum tube
         well: SERUM
         volume: 55
         speed: 33.3
         blowout: true
-
       - type: home_z
         label: Home Z after serum return
-
       - type: centrifuge_goto_pipette
         label: Rotate back to pipette position
-
       - type: tip_swap
         label: Tip swap 5 -> 6
         from_id: 5
         to_id: 6
-
-      # --- Sample Buffer #2 (S9, CSV D1) --- identical to #1.
-      # CSV rows 25-28.  asp_vol = CSV + 20; tip returns
-      # 90 + 25 - 60 + 0 = 55 uL to S9.
       - type: reagent_transfer
         label: cart_dispense_SampleBuffer_2
-        source: S9
+        source: M11
         target: PP4
         asp_vol: 90
         cart_vol: 60
-        asp_speed: 20.0
+        asp_speed: 20
         cart_vel: 0.5
         air_slug: 25
         reasp_ul: 0
         return_speed: 33.3
         stream: true
-
       - type: timing_marker
         label: Analysis_Trigger_Post_SampleBuffer2
         event_type: start
         trigger_analysis: true
-
       - type: timing_marker
         label: Analysis_Trigger_Post_SampleBuffer2
         event_type: stop
-
       - type: tip_return
         label: Return Tip 6
         tip_id: 6
-
       - type: home_close
         label: Home all + close lid
-
   - name: C
     label: Lock
     include: _common.yaml#lock_phase
