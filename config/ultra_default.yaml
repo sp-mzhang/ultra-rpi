@@ -42,12 +42,15 @@ gantry:
   #
   # Set any value to 0 to fall back to the firmware axis default.
   motion:
-    # Operational defaults: 50 mm/s XY, 10 mm/s Z. Firmware can
-    # sustain higher XY (flat-torque ceiling is ~300 mm/s) -- raise
-    # once 50 mm/s is validated. Z keeps ~44% headroom under the
-    # firmware ceiling (GANTRY_Z_MAX_SPS = 18 mm/s).
-    x_speed_mms: 50.0
-    y_speed_mms: 50.0
+    # Operational defaults: 25 mm/s XY, 10 mm/s Z. Lowered from 50 mm/s
+    # after operator feedback that 50 was too aggressive on the XY
+    # rails (cartridge holders rattled, tips occasionally rocked in
+    # the rack on long traverses). Firmware can sustain higher XY
+    # (flat-torque ceiling ~300 mm/s) -- raise once 25 mm/s is
+    # validated as too slow for cycle time. Z keeps ~44% headroom
+    # under the firmware ceiling (GANTRY_Z_MAX_SPS = 18 mm/s).
+    x_speed_mms: 25.0
+    y_speed_mms: 25.0
     z_speed_mms: 10.0
 
   tip_swap:
@@ -60,9 +63,14 @@ gantry:
     # +X seat offset from slot centre during eject, in mm.
     # Firmware default: 7.5 mm.
     x_eject_mm: 7.5
-    # XY cruise speed during tip swap, in mm/s.
-    # Bumped to operational default; firmware default also 50 mm/s.
-    xy_speed_mms: 50.0
+    # XY cruise speed during the unloaded tip-swap moves
+    # (long approach to / from the rack), in mm/s. Lowered from
+    # 50 to match gantry.motion. The LOADED slides (rack strips
+    # the tip during return; nozzle seats into tip during pickup)
+    # use a separate firmware-side constant
+    # (s_tip_load_xy_speed_01mms, currently 25 mm/s) and are not
+    # configurable from this yaml today.
+    xy_speed_mms: 25.0
     # Z cruise speed during tip swap, in mm/s.
     # ~44% headroom under firmware ceiling (GANTRY_Z_MAX_SPS = 18 mm/s).
     z_speed_mms: 10.0
