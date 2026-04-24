@@ -149,23 +149,38 @@ phases:
         mix_vol: 150
         speed: 100.0
         cycles: 4
+        # Final mix cycle ends with 50 uL retained in the tip so the
+        # next leg can dispense directly without a fresh LLF aspirate.
+        pull_vol: 50
 
-      # ---- Serial dilution stage 2: 50 uL from S1 -> 20 uL into S2, return 30 uL to S1 ----
-      - type: well_transfer_return
-        label: Transfer 50 uL S1 -> 20 uL S2, return 30 uL to S1
-        source: S1
-        dest: S2
-        asp_vol: 50
-        disp_vol: 20
-        vel: 33.3
+      # ---- Serial dilution stage 2: 20 uL from S1 -> S2, return 30 uL to S1 ----
+      # Tip already holds 50 uL from the S1 mix (pull_vol above), so we
+      # just dispense 20 uL to S2 and blow the 30 uL remainder back to S1.
+      - type: well_dispense
+        label: Dispense 20 uL S1 -> S2
+        well: S2
+        volume: 20
+        speed: 33.3
+        blowout: false
+      - type: well_dispense
+        label: Return 30 uL S1 remainder
+        well: S1
+        volume: 30
+        speed: 33.3
+        blowout: true
+
       - type: tip_mix
         label: Mix S2 (final diluted sample)
         well: S2
         mix_vol: 150
         speed: 100.0
         cycles: 4
+        # Final mix cycle leaves 80 uL in the tip (60 uL cart + 20 uL
+        # cushion).  The cart dispense below skips its own LLF aspirate.
+        pull_vol: 80
 
       # ---- Cart dispense the diluted sample from S2 ----
+      # skip_aspirate: tip already preloaded with 80 uL by the mix above.
       - type: reagent_transfer
         label: cart_dispense_DilutedSample
         source: S2
@@ -178,6 +193,7 @@ phases:
         reasp_ul: 12
         return_speed: 33.3
         stream: true
+        skip_aspirate: true
       - type: tip_swap
         label: Tip swap 5 -> 6
         from_id: 5
