@@ -62,7 +62,7 @@ gantry:
     retract_mm: 2.0
     # +X seat offset from slot centre during eject, in mm.
     # Firmware default: 7.5 mm.
-    x_eject_mm: 10.0
+    x_eject_mm: 10
     # XY cruise speed during the unloaded tip-swap moves
     # (long approach to / from the rack), in mm/s. Lowered from
     # 50 to match gantry.motion. The LOADED slides (rack strips
@@ -106,7 +106,7 @@ calibration:
   loc_offset_y_um: 0
   loc_offset_z_um: 0
   angle_open_initial_deg: 290
-  default_cartridge_z_mm: -23.8
+  default_cartridge_z_mm: -23
 
 # Acquisition and peak_detect live in each protocol recipe YAML.
 
