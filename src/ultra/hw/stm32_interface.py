@@ -1165,6 +1165,27 @@ class STM32Interface:
             'centrifuge_unlock', 'centrifuge_lock',
             'centrifuge_reverse',
         ):
+            # NOTE: LOCK uses a slightly lower lift than UNLOCK/REVERSE
+            # (37.0 mm vs the wire default 38.0 mm) — empirically the
+            # cam engages cleanly at 37.0 mm without overdriving the
+            # lift against the lock detent at the top of stroke.
+            # Override only when packing the lock command; unlock and
+            # reverse keep the shared wire default (380 = 38.0 mm).
+            #
+            # NOTE: LOCK also uses a much smaller end-angle overshoot
+            # (1° vs the wire default 15°) to minimise the load the
+            # BLDC must drive against the cartridge once the cam is
+            # engaged.  The 15° overshoot at lift_high regularly
+            # tripped the BLDC's current limit (flags=0x0020 jam) on
+            # tight cartridges; 1° is enough to seat the cam without
+            # stalling.  UNLOCK/REVERSE keep 15° because their final
+            # rotates happen with the lift already retracted.
+            if cmd_name == 'centrifuge_lock':
+                lift_high_01mm = int(cmd.get('lift_high_01mm', 370))
+                angle_extra_deg = int(cmd.get('angle_extra_deg', 1))
+            else:
+                lift_high_01mm = int(cmd.get('lift_high_01mm', 380))
+                angle_extra_deg = int(cmd.get('angle_extra_deg', 15))
             return fp.pack_centrifuge_sequence(
                 seq,
                 angle_open_initial_deg=int(
@@ -1172,6 +1193,8 @@ class STM32Interface:
                         'angle_open_initial_deg', 290,
                     ),
                 ),
+                angle_extra_deg=angle_extra_deg,
+                lift_high_01mm=lift_high_01mm,
             )
         if cmd_name == 'centrifuge_move_angle':
             return fp.pack_centrifuge_move_angle(
