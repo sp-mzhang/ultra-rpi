@@ -20,6 +20,14 @@ if TYPE_CHECKING:
 
 LOG = logging.getLogger(__name__)
 
+# Default absolute gantry Z (mm, negative = below home) used by every
+# recipe-driven `lid_move` (the `lid` step and the implicit close inside
+# `home_close`).  -7.0 mm is 2 mm deeper than the firmware default
+# (s_lid_z_engage_mm = -5.0 mm) and reliably catches the lid lip across
+# the current cartridge population.  Per-step `z_engage_mm` overrides
+# this on the `lid` step; `home_close` always uses this constant.
+LID_DEFAULT_Z_ENGAGE_MM: float = -7.0
+
 STEP_REGISTRY: dict[str, type[StepExecutor]] = {}
 
 
@@ -707,14 +715,32 @@ class LiftMoveStep(StepExecutor):
 
 @step_type('lid')
 class LidStep(StepExecutor):
-    '''Open or close the lid.'''
+    '''Open or close the lid.
+
+    Parameters:
+        open (bool, default True):
+            True  -> open the lid (notch-closed -> notch-open + extra X).
+            False -> close the lid (notch-open -> notch-closed).
+        z_engage_mm (float, default -7.0):
+            Absolute gantry Z target (mm, negative = below home) at
+            which the toolhead engages the lid notch during the X
+            pivot. Lowered from the firmware default of -5.0 mm so
+            the notch reliably catches under the lid lip; tune per
+            unit if a cartridge needs a shallower or deeper engage.
+            Forwarded as ``z_engage_um = round(z_engage_mm * 1000)``
+            on the ``lid_move`` (0x8210) command.
+    '''
 
     def execute(self, params, runner) -> bool:
         open_lid = params.get('open', True)
+        z_engage_mm = float(
+            params.get('z_engage_mm', LID_DEFAULT_Z_ENGAGE_MM),
+        )
         r = runner.stm32.send_command_wait_done(
             cmd={
                 'cmd': 'lid_move',
                 'open': open_lid,
+                'z_engage_um': int(round(z_engage_mm * 1000)),
             },
             timeout_s=30.0,
         )
@@ -1693,7 +1719,13 @@ class HomeCloseStep(StepExecutor):
         if not _ok(r):
             return False
         r = runner.stm32.send_command_wait_done(
-            cmd={'cmd': 'lid_move', 'open': False},
+            cmd={
+                'cmd': 'lid_move',
+                'open': False,
+                'z_engage_um': int(round(
+                    LID_DEFAULT_Z_ENGAGE_MM * 1000,
+                )),
+            },
             timeout_s=30.0,
         )
         return _ok(r)
@@ -1947,6 +1979,14 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
     ],
     'lid': [
         _p('open', 'boolean', default=True),
+        # Absolute gantry Z (mm, negative) at which the toolhead
+        # engages the lid notch.  Default is LID_DEFAULT_Z_ENGAGE_MM
+        # (-7.0 mm) -- 2 mm deeper than the firmware default
+        # (s_lid_z_engage_mm = -5.0 mm) -- because the shallower
+        # firmware default sometimes failed to catch the lid lip
+        # on tighter cartridges.  Override per-step if a cartridge
+        # needs a shallower or deeper engage.
+        _p('z_engage_mm', default=LID_DEFAULT_Z_ENGAGE_MM),
     ],
     'move_to_location': [
         _p('well', 'string', well_ref=True, required=True),
