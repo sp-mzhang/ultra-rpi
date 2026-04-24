@@ -1,12 +1,14 @@
 name: CRP Ultra Latest
 description: >
-  HS CRP chip-dispense protocol, mapped to CRP_protocol_32C.csv. Centrifuge phase runs (unlock / rotate / lift /
-  pipette-goto) with spin and shake skipped. 6 reagent dispenses on cartridge port A: Hydrophilic, DI water, PBST (120 s
-  chip warm wait + 2-stage fast/slow), Sample Buffer #1, Sample (aspirated directly from the serum tube via centrifuge
-  rotation), Sample Buffer #2. One tip per reagent, pre-flight LLD, analysis trigger after the final dispense, then
-  lock. Air slug 25 uL, aspirate 20 uL/s, chip temp 32 C. Aspirate volumes are CSV + 20 uL on every reagent so the tip
-  always carries a 20 uL liquid cushion beyond the cart dispense volume; cart dispense volumes match the CSV exactly and
-  the extra 20 uL is returned to the source well at the end of each transfer.
+  HS CRP chip-dispense protocol with on-deck serial dilution of the patient serum. Centrifuge phase runs
+  (unlock / rotate / lift / pipette-goto) with spin and shake skipped. Cartridge port A receives, in order:
+  Hydrophilic, PBST (120 s chip warm wait + 2-stage fast/slow), Sample Buffer #1, Diluted Sample, Sample Buffer #2.
+  Serum is aspirated directly from the tube via centrifuge rotation (50 uL), then serially diluted: 20 uL into S1
+  (180 uL Sample Buffer) -> mix -> 20 uL into S2 (180 uL CRP CWP) -> mix -> cart dispense from S2.  Excess from each
+  transfer is either dumped to M12 (waste) or returned to S1.  One tip per reagent (1, 3, 4, 5, 6) with the dilution
+  done on the same tip used for the serum pickup.  Pre-flight LLD, analysis trigger fires on the final SampleBuffer #2
+  dispense, then lock.  Air slug 25 uL, aspirate 20 uL/s, chip temp 32 C.  Cart dispense volumes match the CSV exactly;
+  the 20 uL aspirate cushion on each transfer is returned to the source well at the end.
 reader:
   acq_mode: continuous
   acq_time_total_s: 20000
@@ -27,11 +29,13 @@ constants:
   skip_centrifuge_shake: true
 wells:
   S7:    {loc: 27, reagent: Hydrophilic, volume_ul: 170}
-  M3:    {loc: 35, reagent: DI Water, volume_ul: 270}
   M5:    {loc: 37, reagent: PBST, volume_ul: 280}
   SERUM: {loc: 18, reagent: Sample, volume_ul: 150}
   M11:   {loc: 43, reagent: Sample Buffer, volume_ul: 240}
-  PP4:   {loc: 11, reagent: Cartridge, volume_ul: 0}
+  S1:    {loc: 21, reagent: Sample Buffer, volume_ul: 180}   # dilution stage 1 (1:10 of serum)
+  S2:    {loc: 22, reagent: CRP CWP,       volume_ul: 180}   # dilution stage 2 (1:10 of S1, 1:100 overall)
+  M12:   {loc: 44, reagent: Waste,         volume_ul: 0}     # discard for excess serum aspirate
+  PP4:   {loc: 11, reagent: Cartridge,     volume_ul: 0}
 
 phases:
   - name: A
@@ -59,24 +63,8 @@ phases:
         return_speed: 16.7
         stream: true
       - type: tip_swap
-        label: Tip swap 1 -> 2
+        label: Tip swap 1 -> 3
         from_id: 1
-        to_id: 2
-      - type: reagent_transfer
-        label: cart_dispense_DI_Water
-        source: M3
-        target: PP4
-        asp_vol: 210
-        cart_vol: 160
-        asp_speed: 20
-        cart_vel: 1.5
-        air_slug: 25
-        reasp_ul: 12
-        return_speed: 16.7
-        stream: true
-      - type: tip_swap
-        label: Tip swap 2 -> 3
-        from_id: 2
         to_id: 3
       - type: reagent_transfer
         label: cart_dispense_PBST_fast
@@ -132,7 +120,7 @@ phases:
       - type: smart_aspirate
         label: Aspirate Sample from serum tube
         well: SERUM
-        volume: 90
+        volume: 50
         speed: 20
         air_slug: 25
         piston_reset: true
@@ -141,35 +129,55 @@ phases:
         label: Home Z after serum aspirate
       - type: centrifuge_goto_pipette
         label: Rotate to pipette position
-      - type: reagent_transfer
-        label: cart_dispense_Sample
-        source: SERUM
-        target: PP4
-        asp_vol: 0
-        cart_vol: 60
-        cart_vel: 0.25
-        reasp_ul: 0
-        skip_aspirate: true
-        skip_return: true
-        tip_preload_ul: 115
-        stream: true
-      - type: home_z
-        label: Home Z before move-to-serum
-      - type: move_to_location
-        label: Move to serum port (cushion return)
-        well: SERUM
-      - type: centrifuge_goto_serum
-        label: Rotate back to serum for cushion return
+
+      # ---- Serial dilution stage 1: 50 uL serum -> 20 uL into S1, dump 30 uL to M12 waste ----
       - type: well_dispense
-        label: Return Sample cushion to serum tube
-        well: SERUM
-        volume: 55
+        label: Dispense 20 uL serum into S1 (Sample Buffer)
+        well: S1
+        volume: 20
         speed: 33.3
+        blowout: false
+      - type: well_dispense
+        label: Dump 30 uL serum remainder to M12 waste
+        well: M12
+        volume: 30
+        speed: 100.0
         blowout: true
-      - type: home_z
-        label: Home Z after serum return
-      - type: centrifuge_goto_pipette
-        label: Rotate back to pipette position
+      - type: tip_mix
+        label: Mix S1 (diluted serum)
+        well: S1
+        mix_vol: 150
+        speed: 100.0
+        cycles: 4
+
+      # ---- Serial dilution stage 2: 50 uL from S1 -> 20 uL into S2, return 30 uL to S1 ----
+      - type: well_transfer_return
+        label: Transfer 50 uL S1 -> 20 uL S2, return 30 uL to S1
+        source: S1
+        dest: S2
+        asp_vol: 50
+        disp_vol: 20
+        vel: 33.3
+      - type: tip_mix
+        label: Mix S2 (final diluted sample)
+        well: S2
+        mix_vol: 150
+        speed: 100.0
+        cycles: 4
+
+      # ---- Cart dispense the diluted sample from S2 ----
+      - type: reagent_transfer
+        label: cart_dispense_DilutedSample
+        source: S2
+        target: PP4
+        asp_vol: 80
+        cart_vol: 60
+        asp_speed: 20
+        cart_vel: 0.25
+        air_slug: 25
+        reasp_ul: 12
+        return_speed: 33.3
+        stream: true
       - type: tip_swap
         label: Tip swap 5 -> 6
         from_id: 5
