@@ -22,11 +22,11 @@ LOG = logging.getLogger(__name__)
 
 # Default absolute gantry Z (mm, negative = below home) used by every
 # recipe-driven `lid_move` (the `lid` step and the implicit close inside
-# `home_close`).  -7.0 mm is 2 mm deeper than the firmware default
+# `home_close`).  -6.0 mm is 1 mm deeper than the firmware default
 # (s_lid_z_engage_mm = -5.0 mm) and reliably catches the lid lip across
 # the current cartridge population.  Per-step `z_engage_mm` overrides
 # this on the `lid` step; `home_close` always uses this constant.
-LID_DEFAULT_Z_ENGAGE_MM: float = -7.0
+LID_DEFAULT_Z_ENGAGE_MM: float = -6.0
 
 STEP_REGISTRY: dict[str, type[StepExecutor]] = {}
 
@@ -721,7 +721,7 @@ class LidStep(StepExecutor):
         open (bool, default True):
             True  -> open the lid (notch-closed -> notch-open + extra X).
             False -> close the lid (notch-open -> notch-closed).
-        z_engage_mm (float, default -7.0):
+        z_engage_mm (float, default -6.0):
             Absolute gantry Z target (mm, negative = below home) at
             which the toolhead engages the lid notch during the X
             pivot. Lowered from the firmware default of -5.0 mm so
@@ -1981,7 +1981,7 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('open', 'boolean', default=True),
         # Absolute gantry Z (mm, negative) at which the toolhead
         # engages the lid notch.  Default is LID_DEFAULT_Z_ENGAGE_MM
-        # (-7.0 mm) -- 2 mm deeper than the firmware default
+        # (-6.0 mm) -- 1 mm deeper than the firmware default
         # (s_lid_z_engage_mm = -5.0 mm) -- because the shallower
         # firmware default sometimes failed to catch the lid lip
         # on tighter cartridges.  Override per-step if a cartridge
