@@ -143,9 +143,9 @@ phases:
       # --- Serial dilutions (Tips 3-4) ---
 
       - type: tip_swap
-        label: Tip swap 2 -> 3
+        label: Tip swap 2 -> 7
         from_id: 2
-        to_id: 3
+        to_id: 7
 
       - type: tip_mix
         label: Mix M4 (10x dilution)
@@ -170,8 +170,8 @@ phases:
         cycles: 4
 
       - type: tip_swap
-        label: Tip swap 3 -> 4
-        from_id: 3
+        label: Tip swap 7 -> 4
+        from_id: 7
         to_id: 4
 
       - type: dilution_transfer
@@ -219,9 +219,9 @@ phases:
         stream: true
 
       - type: tip_swap
-        label: Tip swap 5 -> 6
+        label: Tip swap 5 -> 8
         from_id: 5
-        to_id: 6
+        to_id: 8
 
       # DI Water
       - type: reagent_transfer
@@ -330,8 +330,8 @@ phases:
         event_type: stop
 
       - type: tip_return
-        label: Return Tip 6
-        tip_id: 6
+        label: Return Tip 8
+        tip_id: 8
 
       - type: home_close
         label: Home all + close lid

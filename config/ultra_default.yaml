@@ -62,7 +62,7 @@ gantry:
     retract_mm: 2.0
     # +X seat offset from slot centre during eject, in mm.
     # Firmware default: 7.5 mm.
-    x_eject_mm: 7.5
+    x_eject_mm: 10.0
     # XY cruise speed during the unloaded tip-swap moves
     # (long approach to / from the rack), in mm/s. Lowered from
     # 50 to match gantry.motion. The LOADED slides (rack strips

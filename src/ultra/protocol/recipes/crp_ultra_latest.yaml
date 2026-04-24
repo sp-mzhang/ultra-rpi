@@ -5,7 +5,7 @@ description: >
   Hydrophilic, PBST (120 s chip warm wait + 2-stage fast/slow), Sample Buffer #1, Diluted Sample, Sample Buffer #2.
   Serum is aspirated directly from the tube via centrifuge rotation (50 uL), then serially diluted: 20 uL into S1
   (180 uL Sample Buffer) -> mix -> 20 uL into S2 (180 uL CRP CWP) -> mix -> cart dispense from S2.  Excess from each
-  transfer is either dumped to M12 (waste) or returned to S1.  One tip per reagent (1, 3, 4, 5, 6) with the dilution
+  transfer is either dumped to M12 (waste) or returned to S1.  One tip per reagent (1, 2, 4, 5, 8) with the dilution
   done on the same tip used for the serum pickup.  Pre-flight LLD, analysis trigger fires on the final SampleBuffer #2
   dispense, then lock.  Air slug 25 uL, aspirate 20 uL/s, chip temp 32 C.  Cart dispense volumes match the CSV exactly;
   the 20 uL aspirate cushion on each transfer is returned to the source well at the end.
@@ -63,9 +63,9 @@ phases:
         return_speed: 16.7
         stream: true
       - type: tip_swap
-        label: Tip swap 1 -> 3
+        label: Tip swap 1 -> 2
         from_id: 1
-        to_id: 3
+        to_id: 2
       - type: reagent_transfer
         label: cart_dispense_PBST_fast
         source: M5
@@ -93,8 +93,8 @@ phases:
         assume_at_cart: true
         stream: true
       - type: tip_swap
-        label: Tip swap 3 -> 4
-        from_id: 3
+        label: Tip swap 2 -> 4
+        from_id: 2
         to_id: 4
       - type: reagent_transfer
         label: cart_dispense_SampleBuffer_1
@@ -195,9 +195,9 @@ phases:
         stream: true
         skip_aspirate: true
       - type: tip_swap
-        label: Tip swap 5 -> 6
+        label: Tip swap 5 -> 8
         from_id: 5
-        to_id: 6
+        to_id: 8
       - type: reagent_transfer
         label: cart_dispense_SampleBuffer_2
         source: M11
@@ -218,8 +218,8 @@ phases:
         label: Analysis_Trigger_Post_SampleBuffer2
         event_type: stop
       - type: tip_return
-        label: Return Tip 6
-        tip_id: 6
+        label: Return Tip 8
+        tip_id: 8
       - type: home_close
         label: Home all + close lid
   - name: C
