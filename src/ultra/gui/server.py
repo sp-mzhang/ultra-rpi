@@ -285,6 +285,7 @@ def create_app(application: 'Application') -> FastAPI:
         'peak_data', 'sweep_data', 'timing_marker',
         'protocol_paused', 'protocol_resumed',
         'status_changed',
+        'self_check_substate',
         'door_opened', 'door_closed',
         'pressure_update', 'temperature_update',
         'accel_stream',

@@ -21,6 +21,7 @@
   const elBar = $('#progress-bar');
   const elElapsed = $('#elapsed');
   const elMode = $('#mode-indicator');
+  const elSelfCheck = $('#self-check-banner');
   const elMachine = $('#machine-name');
   const elGrid = $('#wells-grid');
   const elStepList = $('#step-list');
@@ -213,6 +214,12 @@
         break;
       case 'status_changed':
         updateMode(data.state || 'inactive');
+        if ((data.state || '').toUpperCase() !== 'SELF_CHECK') {
+          hideSelfCheckBanner();
+        }
+        break;
+      case 'self_check_substate':
+        renderSelfCheckBanner(data || {});
         break;
       case 'log_line':
         if (Ultra.appendLogLine) {
@@ -392,6 +399,52 @@
       elBtnSmStart.disabled = true;
       elBtnSmStop.disabled = false;
     }
+  }
+
+  function renderSelfCheckBanner(d) {
+    if (!elSelfCheck) return;
+    const sub = d.substate || '';
+    let label = '';
+    let color = 'badge-blue';
+    if (sub === 'awaiting_cartridge') {
+      const reason = d.reason || '';
+      if (reason === 'qr_invalid') {
+        label = 'Awaiting cartridge (QR invalid)';
+        color = 'badge-red';
+      } else if (
+        reason === 'tube_present_before_cartridge_validation'
+      ) {
+        label = 'Remove tube -- load cartridge first';
+        color = 'badge-red';
+      } else {
+        label = 'Awaiting cartridge';
+        if (reason) label += ' (' + reason + ')';
+        color = 'badge-blue';
+      }
+    } else if (sub === 'cartridge_loaded_awaiting_tube') {
+      const qr = d.qr ? ' [' + d.qr + ']' : '';
+      label = 'Cartridge loaded' + qr
+        + ' -- load serum tube';
+      color = 'badge-green';
+    } else if (sub) {
+      label = sub;
+    }
+    if (!label) {
+      hideSelfCheckBanner();
+      return;
+    }
+    if (d.cycle != null) {
+      label += ' (cycle ' + d.cycle + ')';
+    }
+    elSelfCheck.textContent = label;
+    elSelfCheck.className = 'badge ' + color;
+    elSelfCheck.style.display = '';
+  }
+
+  function hideSelfCheckBanner() {
+    if (!elSelfCheck) return;
+    elSelfCheck.style.display = 'none';
+    elSelfCheck.textContent = '';
   }
 
   function updateButtons(running, paused) {
