@@ -238,6 +238,10 @@ RSP_ACCEL_STREAM          = 0x9E03
 
 # Temperature sensors — EXT_NTC1/2, INT_NTC (0x91xx)
 # Response wire ID = 0x9101 + 0x1000 = 0xA101 (not treated as async).
+# OTA firmware update (0x9Fxx) -- 0x9Fxx so responses (0xAFxx) dont collide with 0xA0xx async broadcasts
+CMD_FW_UPDATE_START       = 0x9F01
+CMD_FW_WRITE_BLOCK        = 0x9F02
+
 CMD_TEMP_GET_STATUS       = 0x9101
 RSP_TEMP_STATUS           = 0xA101
 
@@ -385,6 +389,8 @@ CMD_NAME_TO_ID = {
     'accel_stream_stop':    CMD_ACCEL_STREAM_STOP,
     'accel_reset':          CMD_ACCEL_RESET,
     'temp_get_status':      CMD_TEMP_GET_STATUS,
+    'fw_update_start':     CMD_FW_UPDATE_START,
+    'fw_write_block':      CMD_FW_WRITE_BLOCK,
 }
 
 
