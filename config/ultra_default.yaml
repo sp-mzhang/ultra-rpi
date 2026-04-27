@@ -111,7 +111,7 @@ calibration:
 # Acquisition and peak_detect live in each protocol recipe YAML.
 
 protocol:
-  default_recipe: crp_ultra_demo
+  default_recipe: crp_ultra_latest
 
 camera:
   device: /dev/video0
