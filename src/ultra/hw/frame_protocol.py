@@ -68,6 +68,7 @@ CMD_LID_MOVE            = 0x8210
 CMD_READ_Z_DRV          = 0x8211
 CMD_GET_MOTOR_STATUS    = 0x8212
 CMD_SET_MOTOR_TELEM     = 0x8213
+CMD_VERIFY_X_END        = 0x8214
 
 # Lift stepper (0x8Bxx)
 CMD_LIFT_HOME       = 0x8B01
@@ -309,6 +310,7 @@ CMD_NAME_TO_ID = {
     'set_loc_offset':       CMD_SET_LOC_OFFSET,
     'gantry_tip_swap':      CMD_TIP_SWAP,
     'lid_move':             CMD_LID_MOVE,
+    'verify_x_end':         CMD_VERIFY_X_END,
     'read_z_drv':           CMD_READ_Z_DRV,
     'get_motor_status':     CMD_GET_MOTOR_STATUS,
     'set_motor_telem':      CMD_SET_MOTOR_TELEM,
@@ -751,6 +753,7 @@ def pack_tip_swap(
         retract_um: int = 0,
         xy_speed_01mms: int = 0,
         z_speed_01mms: int = 0,
+        xend_verify: bool = False,
 ) -> bytes:
     '''Pack CMD_TIP_SWAP payload.
 
@@ -769,6 +772,16 @@ def pack_tip_swap(
       z_speed_01mms : Z  cruise speed in 0.1 mm/s; 0 = firmware default
                       (s_tip_z_speed_01mms, typically 6 mm/s).
 
+    xend_verify controls the post-pickup parking position:
+      False (default): pickup parks at slot+eject so the tip is over
+                       the cartridge port and an LLD probe can run
+                       immediately after. Recalibrate the X-axis later
+                       via CMD_VERIFY_X_END (e.g. from inside LLDStep).
+      True           : after pickup, home Z then drive X to OPT_X_END
+                       and recalibrate the X position counter to
+                       GANTRY_X_END_NOMINAL_USTEPS. Use this when the
+                       host is not going to run an LLD next.
+
     Args:
         seq           : sequence number.
         from_id       : tip slot to strip tip into (1-8); 0 = skip return.
@@ -778,10 +791,11 @@ def pack_tip_swap(
         retract_um    : optional Z retract (um); 0 = default.
         xy_speed_01mms: XY cruise speed (0.1 mm/s); 0 = firmware default.
         z_speed_01mms : Z  cruise speed (0.1 mm/s); 0 = firmware default.
+        xend_verify   : opt-in XEND verify + recalibration (default False).
 
     Returns:
-        6 bytes (short form) when all optional params are at defaults;
-        else 22 bytes extended form.
+        6 bytes (short form) when all params are at defaults; else
+        23 bytes extended form including the trailing xend_verify byte.
     '''
     _defaults = (
         x_eject_um == 0
@@ -789,16 +803,39 @@ def pack_tip_swap(
         and retract_um == 0
         and xy_speed_01mms == 0
         and z_speed_01mms == 0
+        and not xend_verify
     )
     if _defaults:
         return struct.pack('<IBB', seq, from_id, to_id)
     return struct.pack(
-        '<IBBHiiiH',
+        '<IBBHiiiHB',
         seq, from_id, to_id,
         xy_speed_01mms,
         x_eject_um, pick_depth_um, retract_um,
         z_speed_01mms,
+        1 if xend_verify else 0,
     )
+
+
+def pack_verify_x_end(seq: int) -> bytes:
+    '''Pack CMD_VERIFY_X_END payload.
+
+    Instructs the firmware to drive X+ to OPT_SENSOR_X_END, recalibrate
+    the X position counter to GANTRY_X_END_NOMINAL_USTEPS, and park at
+    XEND. The caller must ensure Z is homed before issuing — the helper
+    only drives X.
+
+    Typical use: invoked after CMD_LLD_PERFORM (which leaves Z homed)
+    when the carriage is at slot+eject from a prior tip_swap with
+    xend_verify=False.
+
+    Args:
+        seq: sequence number.
+
+    Returns:
+        4 bytes — proto_cmd_verify_x_end_t {seq}.
+    '''
+    return struct.pack('<I', seq)
 
 
 def pack_lid_move(

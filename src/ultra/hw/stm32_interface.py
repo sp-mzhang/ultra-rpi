@@ -1057,7 +1057,10 @@ class STM32Interface:
                 z_speed_01mms=int(
                     cmd.get('z_speed_01mms', 0),
                 ),
+                xend_verify=bool(cmd.get('xend_verify', False)),
             )
+        if cmd_name == 'verify_x_end':
+            return fp.pack_verify_x_end(seq=seq)
         if cmd_name == 'lid_move':
             return fp.pack_lid_move(
                 seq=seq,
@@ -1846,6 +1849,37 @@ class STM32Interface:
         )
         LOG.info(f'LLD result: {resp}')
         return resp
+
+    def verify_x_end(
+            self,
+            timeout_s: float = 30.0,
+    ) -> Optional[dict]:
+        '''Drive X+ to OPT_SENSOR_X_END and recalibrate the X-axis.
+
+        Sends CMD_VERIFY_X_END. Firmware drives the X-axis in the
+        positive direction until OPT_SENSOR_X_END triggers, then
+        forces the position counter to GANTRY_X_END_NOMINAL_USTEPS so
+        cumulative step loss across prior moves is corrected. The
+        carriage parks at XEND on success.
+
+        Caller is responsible for ensuring Z is homed before calling
+        (the helper only drives X). After CMD_LLD_PERFORM, Z is
+        already homed, so it is safe to call directly.
+
+        A persistent miss is logged as a warning by the firmware but
+        the command still completes successfully — the host should
+        treat the result as advisory.
+
+        Args:
+            timeout_s: Async wait-done timeout (seconds).
+
+        Returns:
+            DONE response dict, or None on timeout.
+        '''
+        return self.send_command_wait_done(
+            cmd={'cmd': 'verify_x_end'},
+            timeout_s=timeout_s,
+        )
 
     def smart_aspirate(
             self,

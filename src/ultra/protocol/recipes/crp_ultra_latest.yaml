@@ -47,9 +47,15 @@ phases:
       - type: tip_pick
         label: Pick Tip 1
         tip_id: 1
+        # xend_verify omitted (default false) so the carriage parks at
+        # slot+eject -- the LLD step below probes Z over the cartridge
+        # port. The explicit verify_x_end step that follows then
+        # recalibrates X (mirrors xend_verify=true on the other swaps).
       - type: lld
         label: Pre-flight LLD
         threshold: 15
+      - type: verify_x_end
+        label: Recalibrate X after pre-flight LLD
       - type: reagent_transfer
         label: cart_dispense_Hydrophilic
         source: S7
@@ -66,6 +72,8 @@ phases:
         label: Tip swap 1 -> 2
         from_id: 1
         to_id: 2
+        # No LLD follows -- recalibrate X-axis to OPT_X_END after pickup.
+        xend_verify: true
       - type: reagent_transfer
         label: cart_dispense_PBST_fast
         source: M5
@@ -96,6 +104,7 @@ phases:
         label: Tip swap 2 -> 4
         from_id: 2
         to_id: 4
+        xend_verify: true
       - type: reagent_transfer
         label: cart_dispense_SampleBuffer_1
         source: M11
@@ -112,6 +121,7 @@ phases:
         label: Tip swap 4 -> 5
         from_id: 4
         to_id: 5
+        xend_verify: true
       - type: move_to_location
         label: Move to serum port
         well: SERUM
@@ -198,6 +208,7 @@ phases:
         label: Tip swap 5 -> 8
         from_id: 5
         to_id: 8
+        xend_verify: true
       - type: reagent_transfer
         label: cart_dispense_SampleBuffer_2
         source: M11

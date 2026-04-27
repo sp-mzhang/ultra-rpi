@@ -22,11 +22,11 @@ LOG = logging.getLogger(__name__)
 
 # Default absolute gantry Z (mm, negative = below home) used by every
 # recipe-driven `lid_move` (the `lid` step and the implicit close inside
-# `home_close`).  -6.0 mm is 1 mm deeper than the firmware default
+# `home_close`).  -7.0 mm is 2 mm deeper than the firmware default
 # (s_lid_z_engage_mm = -5.0 mm) and reliably catches the lid lip across
 # the current cartridge population.  Per-step `z_engage_mm` overrides
 # this on the `lid` step; `home_close` always uses this constant.
-LID_DEFAULT_Z_ENGAGE_MM: float = -6.0
+LID_DEFAULT_Z_ENGAGE_MM: float = -7.0
 
 STEP_REGISTRY: dict[str, type[StepExecutor]] = {}
 
@@ -721,7 +721,7 @@ class LidStep(StepExecutor):
         open (bool, default True):
             True  -> open the lid (notch-closed -> notch-open + extra X).
             False -> close the lid (notch-open -> notch-closed).
-        z_engage_mm (float, default -6.0):
+        z_engage_mm (float, default -7.0):
             Absolute gantry Z target (mm, negative = below home) at
             which the toolhead engages the lid notch during the X
             pivot. Lowered from the firmware default of -5.0 mm so
@@ -789,14 +789,16 @@ def _tip_swap_cfg(params: dict, runner: Any) -> dict:
     Resolution order (first non-None wins):
       1. Per-step ``params`` override in the recipe step
          (``pick_depth_mm``, ``retract_mm``, ``x_eject_mm``,
-         ``xy_speed_mms``, ``z_speed_mms``).
+         ``xy_speed_mms``, ``z_speed_mms``, ``xend_verify``).
       2. App config ``gantry.tip_swap.*`` (set in
          ``config/ultra_default.yaml``).
-      3. Firmware default (0 / firmware constant).
+      3. Firmware default (0 / firmware constant; xend_verify=False).
 
     Returns a dict ready to merge into the ``gantry_tip_swap``
     command payload with keys ``pick_depth_um``, ``retract_um``,
-    ``x_eject_um``, ``xy_speed_01mms``, ``z_speed_01mms``.
+    ``x_eject_um``, ``xy_speed_01mms``, ``z_speed_01mms``, and
+    ``xend_verify`` (only set when the recipe / config explicitly
+    requests it).
     '''
     cfg = runner.config.get('gantry', {}).get('tip_swap', {})
 
@@ -823,6 +825,14 @@ def _tip_swap_cfg(params: dict, runner: Any) -> dict:
     zs = _pick('z_speed_mms', 'z_speed_mms')
     if zs is not None:
         out['z_speed_01mms'] = int(round(zs * 10.0))
+    # xend_verify: when true, firmware homes Z and drives X to
+    # OPT_X_END after pickup (recalibrates the X position counter).
+    # Default is false so a tip pickup followed by LLD parks at
+    # slot+eject -- LLDStep then issues verify_x_end on its own.
+    if 'xend_verify' in params:
+        out['xend_verify'] = bool(params['xend_verify'])
+    elif 'xend_verify' in cfg:
+        out['xend_verify'] = bool(cfg['xend_verify'])
     return out
 
 
@@ -948,7 +958,11 @@ class LLDStep(StepExecutor):
     back to ``default_cartridge_z_mm`` from recipe
     constants so the dispense can still reach the port.
 
-    Always homes Z after the probe, matching sway.
+    Always homes Z after the probe, matching sway. The
+    X-axis is *not* recalibrated here -- callers that care
+    about cumulative step loss (any tip_pick that parks at
+    slot+eject for LLD) should follow this step with an
+    explicit ``verify_x_end`` recipe step.
     '''
 
     def execute(self, params, runner) -> bool:
@@ -1537,6 +1551,26 @@ class HomeZStep(StepExecutor):
         return _ok(r)
 
 
+@step_type('verify_x_end')
+class VerifyXEndStep(StepExecutor):
+    '''Recalibrate the X-axis by driving to OPT_X_END.
+
+    Drives +X until the X-end optical sensor is hit, then
+    forces the position counter to ``GANTRY_X_END_NOMINAL_USTEPS``
+    so cumulative step loss is corrected. Used after a tip
+    pickup that parks at slot+eject (e.g. when an LLD probe
+    needs to land over the cartridge port and the firmware-
+    side ``xend_verify`` flag was therefore left false).
+
+    Advisory: the firmware logs an out-of-tolerance miss but
+    the step still succeeds so the recipe keeps running.
+    '''
+
+    def execute(self, params, runner) -> bool:
+        runner.stm32.verify_x_end()
+        return True
+
+
 @step_type('well_dispense')
 class WellDispenseStep(StepExecutor):
     '''Dispense into a well at the given location.
@@ -1936,6 +1970,7 @@ STEP_DESCRIPTIONS: dict[str, str] = {
     'well_to_chip':            'Aspirate from well, cart-dispense to chip',
     'tip_mix':                 'Mix reagent in a well by repeated asp/disp cycles',
     'home_z':                  'Home Z axis only (retract tip before rotation)',
+    'verify_x_end':            'Recalibrate X-axis by driving to OPT_X_END',
     'well_dispense':           'Dispense into a well at the given location',
     'smart_aspirate':          'Smart-aspirate from a well with LLD and piston reset',
     'dilution_transfer':       'Smart-aspirate from source, dispense to dest',
@@ -1981,7 +2016,7 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('open', 'boolean', default=True),
         # Absolute gantry Z (mm, negative) at which the toolhead
         # engages the lid notch.  Default is LID_DEFAULT_Z_ENGAGE_MM
-        # (-6.0 mm) -- 1 mm deeper than the firmware default
+        # (-7.0 mm) -- 2 mm deeper than the firmware default
         # (s_lid_z_engage_mm = -5.0 mm) -- because the shallower
         # firmware default sometimes failed to catch the lid lip
         # on tighter cartridges.  Override per-step if a cartridge
@@ -1996,10 +2031,12 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
     ],
     'tip_pick': [
         _p('tip_id', default=4),
+        _p('xend_verify', 'boolean', default=False),
     ],
     'tip_swap': [
         _p('from_id', default=4),
         _p('to_id', default=5),
+        _p('xend_verify', 'boolean', default=False),
     ],
     'tip_return': [
         _p('tip_id', default=5),
@@ -2069,6 +2106,7 @@ STEP_SCHEMAS: dict[str, list[dict]] = {
         _p('pull_vol', default=0),
     ],
     'home_z': [],
+    'verify_x_end': [],
     'well_dispense': [
         _p('well', 'string', well_ref=True, required=True),
         _p('volume', required=True, volume_in=True),
